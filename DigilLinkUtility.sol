@@ -60,6 +60,9 @@ contract DigilLinkUtility {
     constructor() {}
     
     /// @notice Gets the default Links for a given Token 
+    /// @dev    A Token with an ID of 1 is assumed to be the Void Token, a special token where any unused charge is drained to when Link Values are being calculated.
+    /// @param  tokenId The ID of the Token to get Links for
+    /// @return results A collection of Token Links
     function getDefaultLinks(uint256 tokenId) public pure returns (DigilToken.TokenLink[] memory results) {
         if (tokenId >= 16) {
             results = new DigilToken.TokenLink[](3);
@@ -90,7 +93,15 @@ contract DigilLinkUtility {
         }
     }
 
-    /// @notice Gets the Links for a given Token 
+    /// @notice Calculates the Value of the Links for a given Token. In the context of a Token Link, Value is in Coins, not Ether (wei).
+    /// @dev    If the Token is being Discharged, attempts to use up the entirety of the charge parameter when calculating the Values.
+    ///         If the Token is not being Discharged, the Probability of a Link executing is capped to 64 (of 255), any Value generated is essentially a bonus.
+    ///         It is assumed that there are a maximum of 16 Token Links passed in (any Token Links after the 16th will not generate Value).
+    /// @param  tokenId The ID of the Token to get Link Values for
+    /// @param  discharge Boolean indicating whether the Token is being Discharged
+    /// @param  links A collection of Links (assumed to be attached to the Token), used to calculate the Link Values
+    /// @param  charge The available Charge to generate Value from
+    /// @return results A collection of Token Links with Values calculated
     function getLinkValues(uint256 tokenId, bool discharge, DigilToken.TokenLink[] memory links, uint256 charge) external view returns (DigilToken.TokenLink[16] memory results) {
         if (charge == 0) {
             return results;
@@ -105,7 +116,6 @@ contract DigilLinkUtility {
             return results;
         }
 
-        uint256 totalValue;
         uint256 linkIndex = (linksLength < 16 ? linksLength : 16) - 1;
         uint256 probabilityCap = discharge ? 255 : (64 - linkIndex * 4);
         for (linkIndex; linkIndex >= 0; linkIndex--) {
@@ -123,7 +133,7 @@ contract DigilLinkUtility {
             bool linked;
             uint256 destinationId = link.destination;
             uint256 sourceId = link.source;
-            if (willExecute(link.probability, sourceId, destinationId)) { 
+            if (willExecute(link.probability, sourceId, destinationId, charge)) { 
                 if (tokenId == destinationId) {
                     linked = true;                       
                 } else if (sourceId == tokenId) {
@@ -140,13 +150,12 @@ contract DigilLinkUtility {
                 uint256 value = charge / 100 * (haveEffieiencyBonus ? 100 : efficiency);
                 result.value = value + (charge / 100 * (haveEffieiencyBonus ? efficiency - 100 : 0));
                 if (discharge) {
-                    if (value >= charge) {
+                    if (charge >= value) {
                         charge -= value;
                     } else {
                         charge = 0;
                     }
                 }                
-                totalValue += result.value;                
             }
 
             results[linkIndex] = result;
@@ -160,9 +169,16 @@ contract DigilLinkUtility {
     }
 
     /// @notice Determines whether a Token Link overcomes the Probility Threshold
-    function willExecute(uint256 probability, uint256 source, uint256 destination) public view returns (bool) {
+    /// @dev    While this function is meant to be "random," the fact that it is somewhat deterministic is not terribly important
+    ///         as there are various caps in place to limit generated Value, and or it is assumed that any bonuses would have been "paid for" (in Coins)
+    /// @param  probability The Probability that the Token Link should be executed
+    /// @param  sourceId The ID of the source Token
+    /// @param  destinationId The ID of the destination Token
+    /// @param  charge The Charge being checked
+    /// @return A boolean indicating whether a Token Link should have Value generated from its charge
+    function willExecute(uint256 probability, uint256 sourceId, uint256 destinationId, uint256 charge) public view returns (bool) {
         if (probability == 0) { return false; }
-        uint256 probabilityThreshold = uint256(uint(keccak256(abi.encodePacked(block.timestamp, block.difficulty, source, destination))) % 250);
+        uint256 probabilityThreshold = uint256(uint(keccak256(abi.encodePacked(block.timestamp, block.difficulty, sourceId, destinationId, charge))) % 250);
         return probability > probabilityThreshold;
     } 
 }
