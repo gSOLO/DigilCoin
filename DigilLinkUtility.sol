@@ -32,7 +32,7 @@ interface DigilToken is IERC721 {
     struct ContractToken {
         uint256 externalTokenId;
         uint256 internalTokenId;
-        uint256 eTokenIndex;
+        bool returnable;
     }
 
     // Token information
@@ -168,7 +168,7 @@ contract DigilLinkUtility {
         return results;
     }
 
-    /// @notice Determines whether a Token Link overcomes the Probility Threshold
+    /// @notice Determines whether a Token Link overcomes the Probability Threshold
     /// @dev    While this function is meant to be "random," the fact that it is somewhat deterministic is not terribly important
     ///         as there are various caps in place to limit generated Value, and or it is assumed that any bonuses would have been "paid for" (in Coins)
     /// @param  probability The Probability that the Token Link should be executed
