@@ -180,5 +180,23 @@ contract DigilLinkUtility {
         if (probability == 0) { return false; }
         uint256 probabilityThreshold = uint256(uint(keccak256(abi.encodePacked(block.timestamp, block.difficulty, sourceId, destinationId, charge))) % 250);
         return probability > probabilityThreshold;
-    } 
+    }
+
+    function _linkRate(uint256 rate, uint256 cutoff) internal pure returns(uint256) {
+        uint256 e = rate > cutoff ? rate - cutoff : 0;
+        return rate + (e * (e + 1) / 2);
+    }
+
+    /// @notice Returns the number of Coins required to Link two Tokens
+    ///         Base Efficiency: Efficiency + Summation of Efficiency;
+    ///         Bonus Efficiency: (Base Efficiency + Summation of Efficiency > 100) * Coin Rate;
+    ///         Base Probability: (Probability + Summation of Probability > 64) * 10% of Coin Rate;
+    ///         For example, assuming a Coin Rate of 100,
+    ///         a Link with an Efficiency of 1 and a Probability of 32 would require 421 Coins (~12.5% chance of 1% bonus Coins),
+    ///         Efficiency 105 and Probability 128 would require 39645 Coins (~50% chance of 105% bonus Coins).
+    /// @param  efficiency The Link Efficiency
+    /// @param  probability The Link Probability
+    function getLinkRate(uint256 efficiency, uint256 probability, uint256 coins) public pure returns (uint256) {
+        return _linkRate(efficiency, 1) + _linkRate(efficiency, 100) * coins + _linkRate(probability, 64) * coins / 10;
+    }
 }
