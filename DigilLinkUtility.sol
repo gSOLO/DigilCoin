@@ -20,15 +20,16 @@ interface DigilToken is IERC721 {
         uint256 probability;
     }
 
-    // Information about how much was contributed to a Token's charge
+    // Information about how much was Contributed to a Token's Charge
     struct TokenContribution {
         uint256 charge;
         uint256 value;
         bool exists;
         bool distributed;
+        bool whitelisted;
     }
 
-    // Illustrates the relationship between an external ERC721 token and an internal Token.
+    // Illustrates the relationship between an external ERC721 token and an internal Token
     struct ContractToken {
         uint256 externalTokenId;
         uint256 internalTokenId;
@@ -45,13 +46,14 @@ interface DigilToken is IERC721 {
         mapping(address => TokenContribution) contributions;
 
         uint256 activationThreshold;
-        bool activateOnCharge;
         bool active;
 
         TokenLink[] links;
         
         bytes data;
         string uri;
+
+        bool whitelistEnabled;
     }
 }
 
@@ -60,7 +62,7 @@ contract DigilLinkUtility {
     constructor() {}
     
     /// @notice Gets the default Links for a given Token 
-    /// @dev    A Token with an ID of 1 is assumed to be the Void Token, a special token where any unused charge is drained to when Link Values are being calculated.
+    /// @dev    A Token with an ID of 1 is assumed to be the Void Token, a special token where any unused Charge is drained into when Link Values are being calculated.
     /// @param  tokenId The ID of the Token to get Links for
     /// @return results A collection of Token Links
     function getDefaultLinks(uint256 tokenId) public pure returns (DigilToken.TokenLink[] memory results) {
