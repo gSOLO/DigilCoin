@@ -57,6 +57,9 @@ interface DigilToken is IERC721 {
     }
 }
 
+/// @title Digil Link Utility
+/// @author gSOLO
+/// @notice Utility functions used to retrieve and calculate values for Token Links
 /// @custom:security-contact security@digil.co.in
 contract DigilLinkUtility {
     constructor() {}
@@ -66,7 +69,7 @@ contract DigilLinkUtility {
     /// @param  tokenId The ID of the Token to get Links for
     /// @return results A collection of Token Links
     function getDefaultLinks(uint256 tokenId) public pure returns (DigilToken.TokenLink[] memory results) {
-        if (tokenId >= 16) {
+        if (tokenId >= 18) {
             results = new DigilToken.TokenLink[](3);
             results[0] = DigilToken.TokenLink(tokenId, 1, 0, 100, 255);
             results[1] = DigilToken.TokenLink(2, tokenId, 0, 1, 16);
@@ -98,13 +101,13 @@ contract DigilLinkUtility {
     /// @notice Calculates the Value of the Links for a given Token. In the context of a Token Link, Value is in Coins, not Ether (wei).
     /// @dev    If the Token is being Discharged, attempts to use up the entirety of the charge parameter when calculating the Values.
     ///         If the Token is not being Discharged, the Probability of a Link executing is capped to 64 (of 255), any Value generated is essentially a bonus.
-    ///         It is assumed that there are a maximum of 16 Token Links passed in (any Token Links after the 16th will not generate Value).
+    ///         It is assumed that there are a maximum of 8 Token Links passed in (any Token Links after the 8th will not generate Value).
     /// @param  tokenId The ID of the Token to get Link Values for
     /// @param  discharge Boolean indicating whether the Token is being Discharged
     /// @param  links A collection of Links (assumed to be attached to the Token), used to calculate the Link Values
     /// @param  charge The available Charge to generate Value from
     /// @return results A collection of Token Links with Values calculated
-    function getLinkValues(uint256 tokenId, bool discharge, DigilToken.TokenLink[] memory links, uint256 charge) external view returns (DigilToken.TokenLink[16] memory results) {
+    function getLinkValues(uint256 tokenId, bool discharge, DigilToken.TokenLink[] memory links, uint256 charge) external view returns (DigilToken.TokenLink[8] memory results) {
         if (charge == 0) {
             return results;
         }
@@ -118,8 +121,12 @@ contract DigilLinkUtility {
             return results;
         }
 
-        uint256 linkIndex = (linksLength < 16 ? linksLength : 16) - 1;
-        uint256 probabilityCap = discharge ? 255 : (64 - linkIndex * 4);
+        return discharge ? _getDischargeValues(tokenId, links, charge) : _getBonusValues(tokenId, links, charge);
+    }
+
+    function _getDischargeValues(uint256 tokenId, DigilToken.TokenLink[] memory links, uint256 charge) internal view returns (DigilToken.TokenLink[8] memory results) {
+        uint256 linksLength = uint256(links.length);
+        uint256 linkIndex = (linksLength < 8 ? linksLength : 8) - 1;
         for (linkIndex; linkIndex >= 0; linkIndex--) {
             DigilToken.TokenLink memory link = links[linkIndex];
 
@@ -127,40 +134,27 @@ contract DigilLinkUtility {
             if (efficiency == 0) {
                 continue;
             }
-            
-            if (link.probability > probabilityCap) {
-                link.probability = probabilityCap;
-            }
 
-            bool linked;
             uint256 destinationId = link.destination;
             uint256 sourceId = link.source;
-            if (willExecute(link.probability, sourceId, destinationId, charge)) { 
-                if (tokenId == destinationId) {
-                    linked = true;                       
-                } else if (sourceId == tokenId) {
-                    linked = true;
-                    sourceId = destinationId;
-                    destinationId = tokenId;
-                }
-            }
 
-            DigilToken.TokenLink memory result = DigilToken.TokenLink(sourceId, destinationId, 0, 0, 0);
-
-            if (linked) {
+            uint256 probabilityThreshold = uint256(uint(keccak256(abi.encodePacked(block.timestamp, block.difficulty, destinationId, charge))) % 250);
+            if (sourceId == tokenId && link.probability > probabilityThreshold) {
+                uint256 iCharge = charge / 100;
                 bool haveEffieiencyBonus = efficiency > 100;
-                uint256 value = charge / 100 * (haveEffieiencyBonus ? 100 : efficiency);
-                result.value = value + (charge / 100 * (haveEffieiencyBonus ? efficiency - 100 : 0));
-                if (discharge) {
-                    if (charge >= value) {
+                if (haveEffieiencyBonus) {
+                    results[linkIndex] = DigilToken.TokenLink(sourceId, destinationId, charge, iCharge * (efficiency - 100), 0);
+                    charge = 0;
+                } else {
+                    uint256 value = iCharge * efficiency;
+                    results[linkIndex] = DigilToken.TokenLink(sourceId, destinationId, value, 0, 0);
+                     if (charge >= value) {
                         charge -= value;
                     } else {
                         charge = 0;
-                    }
-                }                
+                    }      
+                }    
             }
-
-            results[linkIndex] = result;
 
             if (linkIndex == 0) {
                 break;
@@ -170,35 +164,51 @@ contract DigilLinkUtility {
         return results;
     }
 
-    /// @notice Determines whether a Token Link overcomes the Probability Threshold
-    /// @dev    While this function is meant to be "random," the fact that it is somewhat deterministic is not terribly important
-    ///         as there are various caps in place to limit generated Value, and or it is assumed that any bonuses would have been "paid for" (in Coins)
-    /// @param  probability The Probability that the Token Link should be executed
-    /// @param  sourceId The ID of the source Token
-    /// @param  destinationId The ID of the destination Token
-    /// @param  charge The Charge being checked
-    /// @return A boolean indicating whether a Token Link should have Value generated from its charge
-    function willExecute(uint256 probability, uint256 sourceId, uint256 destinationId, uint256 charge) public view returns (bool) {
-        if (probability == 0) { return false; }
-        uint256 probabilityThreshold = uint256(uint(keccak256(abi.encodePacked(block.timestamp, block.difficulty, sourceId, destinationId, charge))) % 250);
-        return probability > probabilityThreshold;
-    }
+    function _getBonusValues(uint256 tokenId, DigilToken.TokenLink[] memory links, uint256 charge) internal view returns (DigilToken.TokenLink[8] memory results) {
+        uint256 linksLength = uint256(links.length);
+        uint256 linkIndex = (linksLength < 8 ? linksLength : 8) - 1;
+        for (linkIndex; linkIndex >= 0; linkIndex--) {
+            DigilToken.TokenLink memory link = links[linkIndex];
 
-    function _linkRate(uint256 rate, uint256 cutoff) internal pure returns(uint256) {
-        uint256 e = rate > cutoff ? rate - cutoff : 0;
-        return rate + (e * (e + 1) / 2);
-    }
+            uint256 efficiency = link.efficiency;
+            if (efficiency == 0) {
+                continue;
+            }
+            
+            uint256 probability = link.probability;
+            if (probability > 64) {
+                probability = 64;
+            }
 
-    /// @notice Returns the number of Coins required to Link two Tokens
-    ///         Base Efficiency: Efficiency + Summation of Efficiency;
-    ///         Bonus Efficiency: (Base Efficiency + Summation of Efficiency > 100) * Coin Rate;
-    ///         Base Probability: (Probability + Summation of Probability > 64) * 10% of Coin Rate;
-    ///         For example, assuming a Coin Rate of 100,
-    ///         a Link with an Efficiency of 1 and a Probability of 32 would require 421 Coins (~12.5% chance of 1% bonus Coins),
-    ///         Efficiency 105 and Probability 128 would require 39645 Coins (~50% chance of 105% bonus Coins).
-    /// @param  efficiency The Link Efficiency
-    /// @param  probability The Link Probability
-    function getLinkRate(uint256 efficiency, uint256 probability, uint256 coins) public pure returns (uint256) {
-        return _linkRate(efficiency, 1) + _linkRate(efficiency, 100) * coins + _linkRate(probability, 64) * coins / 10;
+            bool linked;
+            uint256 destinationId = link.destination;            
+            uint256 probabilityThreshold = uint256(uint(keccak256(abi.encodePacked(block.timestamp, block.difficulty, destinationId, charge))) % 250);
+            if (probability > probabilityThreshold) { 
+                uint256 sourceId = link.source;
+                if (tokenId == destinationId) {
+                    linked = true;                       
+                } else if (sourceId == tokenId) {
+                    linked = true;
+                    sourceId = destinationId;
+                    destinationId = tokenId;
+                }
+            }
+
+            if (linked) {
+                uint256 value = charge / 100 * efficiency;
+                results[linkIndex] = DigilToken.TokenLink(0, destinationId, value, 0, 0);
+                if (charge >= value) {
+                    charge -= value;
+                } else {
+                    charge = 0;
+                }  
+            }
+
+            if (linkIndex == 0) {
+                break;
+            }
+        }
+
+        return results;
     }
 }
