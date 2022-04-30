@@ -59,7 +59,7 @@ interface DigilToken is IERC721 {
 
 /// @title Digil Link Utility
 /// @author gSOLO
-/// @notice Utility functions used to retrieve and calculate values for Token Links
+/// @notice Utility functions used to retrieve, calculate values, and rates for Token Links 
 /// @custom:security-contact security@digil.co.in
 contract DigilLinkUtility {
     constructor() {}
