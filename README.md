@@ -8,7 +8,4 @@ Web3 Layer of the Digil Project
 
 ## Digil Token | ERC721 Token (NFT)
 **Symbol**: DiGiL  
-**Contract Address**: _Not Yet Deployed_  
-
-## Digil Link Utility
-**Contract Address**: _Not Yet Deployed_  
+**Contract Address**: _Not Yet Deployed_
