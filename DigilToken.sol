@@ -215,7 +215,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         uint256 chargeRate = _incrementalValue;
         uint256 transferRate = _transferRate;
         uint256 incrementalValue = value / chargeRate;
-        uint256 valueRate = transferRate - chargeRate;
+        uint256 valueRate = chargeRate - transferRate;
         _addValue(incrementalValue * valueRate);
         _addValue(addr, incrementalValue * transferRate, coins);
     }
@@ -494,15 +494,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         return tokenId;
     }
 
-    /// @notice Creates a new Token
+    /// @notice Creates a new Token.
+    ///         Linking to a plane other than the 4 elemental planes (4-7; fire, air, earth, water) requires a Coin transfer:
+    ///             void, karmic, and kaotic planes (1-3; void, karma, kaos): 10x Coin Rate
+    ///             paraelemental planes (8-11; ice, lightning, metal, nature): 1x Coin Rate
+    ///             energy planes (11-16; harmony, discord, entropy, exergy, magick): 100x Coin Rate
     /// @dev    Data stored with the Token cannot be udpated.
     /// @param  incrementalValue the Value (in wei), required to be sent with each Coin used to Charge the Token. Can be 0 or a multiple of the default Incremental Value
-    /// @param  activationThreshold the number of Coins required for the Token to be Activated
+    /// @param  activationThreshold the number of Coins required for the Token to be Activated (decimals excluded)
     /// @param  restricted Boolean indicating whether a address must be Whitelisted to Contribute to a Token
+    /// @param  plane The planar Token to link to
     /// @param  data Optional data to store with the Token
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) public payable returns(uint256) {
         address addr = _msgSender();
-        uint256 tokenId = _createToken(addr, incrementalValue, activationThreshold, data);
+        uint256 tokenId = _createToken(addr, incrementalValue, activationThreshold * _coinDecimals, data);
         Token storage t = _tokens[tokenId];
         uint256 value = msg.value;
 
@@ -512,6 +517,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         if (plane > 0) {
             require (plane <= 16);
+            if (plane < 4) {
+                _coinsFromSender(_coinRate * 10);
+            } else if (plane > 11) {
+                _coinsFromSender(_coinRate * 100);
+            } else if (plane > 7) {
+                _coinsFromSender(_coinRate);
+            }
             t.links.push(plane);
             t.linkEfficiency[plane] = 100;
         }
@@ -521,7 +533,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             t.restricted = restricted;
             emit Update(tokenId);
         }
-        
 
         return tokenId;
     }
@@ -577,18 +588,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///             A Value sent of at least the Token's Incremental Value plus the default Incremental Value
     /// @param  tokenId The ID of the Token to Update
     /// @param  incrementalValue The Value (in wei), required to be sent with each Coin used to Charge the Token. Can be 0 or a multiple of the default Incremental Value
-    /// @param  activationThreshold The number of Coins required for the Token to be Activated
+    /// @param  activationThreshold The number of Coins required for the Token to be Activated (decimals excluded)
     function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, string calldata uri) public payable approved(tokenId) {
         Token storage t = _tokens[tokenId];
         bool haveCharge = t.charge > 0;
         uint256 tChargeRate = t.incrementalValue;
+        activationThreshold *= _coinDecimals;
 
-        require(tChargeRate == incrementalValue && haveCharge || !haveCharge);
-        require(t.activationThreshold == activationThreshold || !haveCharge);
+        if (haveCharge) {
+            require(tChargeRate == incrementalValue && t.activationThreshold == activationThreshold);
+        }
 
         bool overwriteUri = bytes(uri).length > 0;
         if (overwriteUri && !_ownerIsSender()) {
-            require(_transferCoinsFrom(_msgSender(), _this, _coinRate * 2500));
+            require(_coinsFromSender(_coinRate * 2500));
         }
 
         uint256 value = msg.value;
@@ -671,8 +684,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
                 return false;
             }
         } else {
-            require(validContribution);
-            _coinsFromSender(coins);
+            require(validContribution && _coinsFromSender(coins));
         }
 
         if (t.active) {
@@ -709,7 +721,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @notice Charge Token.
     ///         Requires a Value sent greater than or equal to the Token's Incremental Value for each Coin.
     /// @param  tokenId The ID of the Token to Charge
-    /// @param  coins The Coins used to Charge the Token 
+    /// @param  coins The Coins used to Charge the Token (decimals excluded)
     function chargeToken(uint256 tokenId, uint256 coins) public payable {
         chargeToken(_msgSender(), tokenId, coins);
     }
@@ -718,7 +730,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///         Requires a Value sent greater than or equal to the Token's Incremental Value for each Coin.
     /// @param  contributor The address to record as the contributor of this Charge
     /// @param  tokenId The ID of the Token to Charge
-    /// @param  coins The Coins used to Charge the Token
+    /// @param  coins The Coins used to Charge the Token (decimals excluded)
     function chargeToken(address contributor, uint256 tokenId, uint256 coins) public payable operatorEnabled(contributor) {
         require(coins > 0);
         _chargeToken(contributor, tokenId, coins * _coinDecimals, msg.value, false);
@@ -735,10 +747,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         emit Activate(tokenId);
 
         _distribute(tokenId, false);
-
-        if (t.charge > 0) {
-            //_executeLinks(tokenId, true);
-        }
     }
 
     /// @notice Deactivates an Active Token.
@@ -768,7 +776,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         uint256 distribution;
         uint256 cIndex;
         uint256 cLength = t.contributors.length;
-        uint256 incrementalValue = tValue / (tCharge / _coinDecimals + 1);
+        uint256 incrementalValue = tCharge > 0 && tCharge >= _coinDecimals ? tValue / (tCharge / _coinDecimals) : 0;
         for (cIndex; cIndex < cLength; cIndex++) {
             address contributor = t.contributors[cIndex];
             TokenContribution storage contribution = t.contributions[contributor];
@@ -783,14 +791,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
                 if (destroy) {
                     _addValue(contributor, contributedValue, contributedCharge);
                 } else {
-                    distribution += contributedValue;                    
+                    distribution += contributedValue;
                     uint256 distributableTokenValue = incrementalValue * contributedCharge / _coinDecimals;
                     tValue -= distributableTokenValue;
                     _addValue(contributor, distributableTokenValue, 1 * _coinDecimals);
                 }
             }
         }
-
+        
         if (destroy) {
             t.linkedCharge = 0;
             _addDistribution(tokenOwner, tValue, 0);
@@ -833,7 +841,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         }
         
         uint256 e = efficiency > 100 ? efficiency - 100 : 0;
-        _coinsFromSender((efficiency + (e * (e + 1) / 2)) * _coinRate);
+        require(_coinsFromSender((efficiency + (e * (e + 1) / 2)) * _coinRate));
 
         t.linkEfficiency[linkId] = efficiency;
         emit Link(tokenId, linkId, efficiency);
