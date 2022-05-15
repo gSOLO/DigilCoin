@@ -18,6 +18,7 @@ interface DigilCoin is IERC20 {
 /// @custom:security-contact security@digil.co.in
 contract DigilToken is ERC721, Ownable, IERC721Receiver {
     using Strings for uint256;
+    
     IERC20 private _erc20 = DigilCoin(0xa4101FEDAd52A85FeE0C85BcFcAB972fb7Cc7c0e);
     uint256 private _coinDecimals = 10 ** 18;
     uint256 private _coinRate = 100 * 10 ** 18;
@@ -159,6 +160,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         }
 
         _tokens[0].restricted = true;
+        _tokens[17].restricted = true;
     }
 
     /// @notice Accepts all payments.
@@ -185,7 +187,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         if (value > 0 || balanceOf(addr) > 0 || _erc20.balanceOf(addr) > 0) {
             uint256 lastBonus = distribution.time;
             distribution.time = block.timestamp;
-            uint256 bonus = (block.timestamp - lastBonus) / 15 minutes;
+            uint256 bonus = (block.timestamp - lastBonus) / 15 minutes * _coinDecimals;
             coins += (bonus < _coinRate ? bonus : _coinRate);
         }
 
