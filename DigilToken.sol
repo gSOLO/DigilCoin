@@ -14,7 +14,7 @@ interface DigilCoin is IERC20 {
 
 /// @title Digil Token (NFT)
 /// @author gSOLO
-/// @notice NFT contract used for the creation, charging, and activation of Digital Sigils
+/// @notice NFT contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
 /// @custom:security-contact security@digil.co.in
 contract DigilToken is ERC721, Ownable, IERC721Receiver {
     using Strings for uint256;
@@ -90,9 +90,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @dev Contract was Unpaused
     event Unpause(address admin);
 
-    /// @dev Address was added to or removed from the contract Blacklist
+    /// @dev Address was added to the contract Blacklist
     event Blacklist(address indexed account);
 
+    /// @dev Address was removed from the contract Blacklist
     event Whitelist(address indexed account);
 
     /// @dev Address was added to a Token's Whitelist
@@ -125,11 +126,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     constructor() ERC721("Digil Token", "DiGiL") {
         _this = address(this);
         _erc20.approve(_this, ~uint256(0));
-
-        string memory base = _baseURI();
         
-        string[18] memory plane;
-        plane[0] = "null";
+        address sender = msg.sender;
+        string memory baseURI = "https://digil.co.in/token/";
+        
+        string[21] memory plane;
+        plane[0] = "";
         plane[1] = "void";
         plane[2] = "karma";
         plane[3] = "kaos";
@@ -146,21 +148,24 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         plane[14] = "entropy";
         plane[15] = "exergy";
         plane[16] = "magick";
-        plane[17] = "ilxr";
+        plane[17] = "aether";
+        plane[18] = "world";
+        plane[19] = "virtual";
+        plane[20] = "ilxr";
         
         unchecked {
-            for (uint256 tokenIndex; tokenIndex < 18; tokenIndex++) {
+            for (uint256 tokenIndex; tokenIndex < 21; tokenIndex++) {
                 uint256 tokenId = _tokenIdCounter.current();
                 _tokenIdCounter.increment();
-                _mint(msg.sender, tokenId);
+                _mint(sender, tokenId);
                 Token storage t = _tokens[tokenId];
                 t.active = true;
-                t.uri = string(abi.encodePacked(base, plane[tokenIndex])); 
+                t.uri = string(abi.encodePacked(baseURI, plane[tokenIndex]));
             }
         }
 
         _tokens[0].restricted = true;
-        _tokens[17].restricted = true;
+        _tokens[20].restricted = true;
     }
 
     /// @notice Accepts all payments.
@@ -289,12 +294,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     function _afterTokenTransfer(address from, address to, uint256 tokenId) internal enabled override
     {
         super._afterTokenTransfer(from, to, tokenId);
-        Token storage t = _tokens[tokenId];
-        TokenContribution storage c = t.contributions[to];
-        if (!c.whitelisted) {
-            c.whitelisted = true;
-            emit Whitelist(to, tokenId);
-        }
+        _tokens[tokenId].contributions[to].whitelisted = true;
     }
 
     function _approvedOrOwner(uint256 tokenId) private view returns(bool) {
@@ -445,8 +445,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     // Token Information
-    function _baseURI() internal pure override returns (string memory) {
-        return "https://digil.co.in/token/";
+    function _baseURI() internal view override returns (string memory) {
+        return _tokens[0].uri;
     }
 
     /// @notice If the URI of the Token is explicitly set, it will be returned. 
@@ -475,12 +475,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         return (t.value, t.charge, t.incrementalValue * t.charge / _coinDecimals, t.linkedCharge, t.data);
     }
 
-    function _tokenExists(uint256 tokenId) private view {
-        require(_exists(tokenId));
-    }
-
     modifier tokenExists(uint256 tokenId) {
-        _tokenExists(tokenId);
+        require(_exists(tokenId));
         _;
     }
 
@@ -501,6 +497,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///             void, karmic, and kaotic planes (1-3; void, karma, kaos): 10x Coin Rate
     ///             paraelemental planes (8-11; ice, lightning, metal, nature): 1x Coin Rate
     ///             energy planes (11-16; harmony, discord, entropy, exergy, magick): 100x Coin Rate
+    ///             ethereal planes (17-18; aether, world): 250x Coin Rate
     /// @dev    Data stored with the Token cannot be udpated.
     /// @param  incrementalValue the Value (in wei), required to be sent with each Coin used to Charge the Token. Can be 0 or a multiple of the default Incremental Value
     /// @param  activationThreshold the number of Coins required for the Token to be Activated (decimals excluded)
@@ -518,9 +515,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         }
 
         if (plane > 0) {
-            require (plane <= 16);
+            require (plane <= 18);
             if (plane < 4) {
                 _coinsFromSender(_coinRate * 10);
+            } else if (plane > 16) {
+                _coinsFromSender(_coinRate * 250);
             } else if (plane > 11) {
                 _coinsFromSender(_coinRate * 100);
             } else if (plane > 7) {
@@ -539,19 +538,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         return tokenId;
     }
 
-    /// @dev    Add accounts to a Token's Whitelist.
-    /// param   tokenId The ID of the 
+    /// @notice Add accounts to a Token's Whitelist.
+    ///         Requires a Value sent greater than or equal to the larger of the Token's Incremental Value or the default Incremental Value to be Restricted. 
+    /// @param  tokenId The ID of the 
     /// @param  accounts The addresses to Whitelist
-    /// @param  restricted A boolean indicating whether a Token's Whitelist is enabled
-    function whitelist(uint256 tokenId, address[] memory accounts, bool restricted) public payable approved(tokenId) {
+    /// @param  restrict A boolean indicating whether a Token's Whitelist is enabled
+    function whitelist(uint256 tokenId, address[] memory accounts, bool restrict) public payable approved(tokenId) {
         uint256 value = msg.value;
         Token storage t = _tokens[tokenId];
         bool wasRestricted = t.restricted;
-        if (restricted != wasRestricted) {
-            if (restricted) {
+        if (restrict != wasRestricted) {
+            if (restrict) {
                 require(value >= t.incrementalValue && value >= _incrementalValue);
             }
-            t.restricted = restricted;
+            t.restricted = restrict;
             emit Update(tokenId);
         }
         if (value > 0) {
@@ -821,7 +821,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @param  linkId The ID of the Token to Link to (destination)
     /// @param  efficiency The Efficiency of the Link
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) public payable senderEnabled approved(tokenId) {
-        require(tokenId != linkId && linkId > 16 && efficiency > 0);
+        require(tokenId != linkId && linkId > 18 && efficiency > 0);
         
         Token storage t = _tokens[tokenId];
         Token storage d = _tokens[linkId];
