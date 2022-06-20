@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.11;
+pragma solidity ^0.8.14;
 
 import "github/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
@@ -218,13 +218,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         emit PendingDistribution(addr, coins, value);
     }
 
+    /// @dev    Adds a percentage of the value to be Distributed to the contract, and the rest to the address specified.
+    ///         Adds all the Coins to be Distributed to the address specified along with an additional number of bonus coins based on the value to be Distributed.
+    ///         An example 1 eth, 100 Coin distribution with a chargeRate of 100 and a transferRate of 95 would:
+    ///             Add 0.05 eth to the contract.
+    ///             Add 0.95 eth to the address specified.
+    ///             Add 1100 Coins to the address specified (1000 bonus Coins)
     function _addDistribution(address addr, uint256 value, uint256 coins) internal {
-        uint256 chargeRate = _incrementalValue;
-        uint256 transferRate = _transferRate;
-        uint256 incrementalValue = value / chargeRate;
-        uint256 valueRate = chargeRate - transferRate;
-        _addValue(incrementalValue * valueRate);
-        _addValue(addr, incrementalValue * transferRate, coins);
+        uint256 incrementalDistribution = value / _incrementalValue;
+        uint256 contractRate = _incrementalValue - _transferRate;
+        _addValue(incrementalDistribution * contractRate);
+        uint256 bonusCoins = _coinRate / 1000 * incrementalDistribution;
+        _addValue(addr, incrementalDistribution * _transferRate, coins + bonusCoins);
     }
 
     function _createValue(uint256 tokenId, uint256 value) internal {
@@ -464,15 +469,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     /// @notice Get the total Value of the Token and any associated Data
+    /// @dev    The Value and Charged Value can be added  together to give the Token's Total Value.
+    ///         The Charged Value is derived from the Token's Charge and Incremental Value (Charge (decimals excluded) * Incremental Value)
     /// @param  tokenId The ID of the token whose Value and Data is to be returned
     /// @return value The current Value the Token
     /// @return charge The current Charge of the Token
-    /// @return chargedValue The Value of the Token derived from the Token's Charge (Charge * Incremental Value)
+    /// @return incrementalValue The Incremental Value of the Token
     /// @return linkedCharge The current Charge of the Token generated from Links
     /// @return data The Token's Data
-    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(uint256 value, uint256 charge, uint256 chargedValue, uint256 linkedCharge, bytes memory data) {
+    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(uint256 value, uint256 charge, uint256 incrementalValue, uint256 linkedCharge, bytes memory data) {
         Token storage t = _tokens[tokenId]; 
-        return (t.value, t.charge, t.incrementalValue * t.charge / _coinDecimals, t.linkedCharge, t.data);
+        return (t.value, t.charge, t.incrementalValue, t.linkedCharge, t.data);
     }
 
     modifier tokenExists(uint256 tokenId) {
