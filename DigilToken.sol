@@ -51,7 +51,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         bool whitelisted;
     }
 
-    /// @dev Illustrates the relationship between an external ERC721 token and an internal Token
+    /// @dev Illustrates the relationship between an external ERC721 token and a Digil Token
     struct ContractToken {
         uint256 externalTokenId;
         uint256 internalTokenId;
@@ -88,10 +88,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     event Configure(uint256 chargeRate, uint256 transferRate);
 
     /// @dev Contract was Paused
-    event Pause(address admin);
+    event Pause();
 
     /// @dev Contract was Unpaused
-    event Unpause(address admin);
+    event Unpause();
 
     /// @dev Address was added to the contract Blacklist
     event Blacklist(address indexed account);
@@ -219,10 +219,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     function _addValue(address addr, uint256 value, uint256 coins) private {
-        Distribution storage distribution = _distributions[addr];
-        distribution.value += value;
-        distribution.coins += coins;
-        emit PendingDistribution(addr, coins, value);
+        if (value > 0 || coins > 0) {
+            Distribution storage distribution = _distributions[addr];
+            distribution.value += value;
+            distribution.coins += coins;
+            emit PendingDistribution(addr, coins, value);
+        }
     }
 
     /// @dev    Adds a percentage of the value to be Distributed to the contract, and the rest to the address specified.
@@ -334,13 +336,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @dev Pause the contract
     function pause() public admin {
         _paused = true;
-        emit Pause(_msgSender());
+        emit Pause();
     }
 
     /// @dev Unpause the contract
     function unpause() public admin {
         _paused = false;
-        emit Unpause(_msgSender());
+        emit Unpause();
     }
 
     // Blacklist
