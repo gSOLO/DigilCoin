@@ -190,23 +190,25 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         value = distribution.value;
         distribution.value = 0;
+        bool haveValue = value > 0;
 
         coins = distribution.coins;
         distribution.coins = 0;
 
-        if (value > 0 || balanceOf(addr) > 0 || _coins.balanceOf(addr) > 0) {
-            uint256 lastBonus = distribution.time;
+        if (haveValue || balanceOf(addr) > 0 || _coins.balanceOf(addr) > 0) {
+            uint256 lastBonusTime = distribution.time;
             distribution.time = block.timestamp;
-            uint256 bonus = (block.timestamp - lastBonus) / 15 minutes * _coinDecimals;
+            uint256 bonus = (block.timestamp - lastBonusTime) / 15 minutes * _coinDecimals;
             coins += (bonus < _coinRate ? bonus : _coinRate);
         }
 
-        if (value > 0) {            
+        if (haveValue) {            
             Address.sendValue(payable(addr), value);
         }
 
-        if (coins > 0) {
-            _transferCoinsFrom(_this, addr, coins);
+        if (coins > 0 && !_transferCoinsFrom(_this, addr, coins)) {
+            distribution.coins = coins;
+            coins = 0;
         }
 
         return (coins, value);
@@ -217,9 +219,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     function _addValue(address addr, uint256 value, uint256 coins) private {
-        Distribution storage d = _distributions[addr];
-        d.value += value;
-        d.coins += coins;
+        Distribution storage distribution = _distributions[addr];
+        distribution.value += value;
+        distribution.coins += coins;
         emit PendingDistribution(addr, coins, value);
     }
 
@@ -303,24 +305,24 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         _tokens[tokenId].contributions[to].whitelisted = true;
     }
 
-    function _approvedOrOwner(uint256 tokenId) private view returns(bool) {
-        return _isApprovedOrOwner(_msgSender(), tokenId);
-    }
-
-    modifier approved(uint256 tokenId) {
-        _whenNotPaused();
-        _notOnBlacklist(_msgSender());
-        require(_approvedOrOwner(tokenId));
-        _;
-    }
-
     function _whenNotPaused() private view {
         require(_paused == false);
     }
 
-    modifier operatorEnabled(address account) {
+    function _enabled(address account) private view {
         _whenNotPaused();
         _notOnBlacklist(account);
+    }
+
+    modifier approved(uint256 tokenId) {
+        address account = _msgSender();
+        _enabled(account);
+        require(_isApprovedOrOwner(account, tokenId));
+        _;
+    }
+
+    modifier operatorEnabled(address account) {
+        _enabled(account);
         _;
     }
 
@@ -385,7 +387,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @dev    When an ERC721 token is sent to this contract, creates a new Token representing the token received.
     ///         The Incremental Value of the Token is set to the Minimum Non-Zero Incremental Value, with an Activation Threshold of 0.
     ///         The account (ERC721 contract address), and external token ID are appended to the Token URI as a query string.
-    ///         Any data sent is stored with the Token and forwarded during Safe Transfer when recallToken is called.
+    ///         Any data sent is stored with the Token and forwarded during Safe Transfer when {recallToken} is called.
     ///         If the ERC721 recieved is a DigilToken it is linked to the new Token.
     /// @param  operator The address which called safeTransferFrom on the ERC721 token contract
     /// @param  from The previous owner of the ERC721 token
@@ -647,7 +649,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         _destroy(tokenId);        
     }
 
-    /// @notice Discharge an existing Token. 
+    /// @notice Discharge an existing Token and reset all Contributions.
     ///         If the Token has been Activated: Any Contributed Value that has not yet been Distributed will be Distributed.
     ///         If the Token has not been Activated: Any Contributed Value that has not yet been Distributed will be returned to its Contributors, any additional Token Value to its owner.
     ///         Requires a Value sent greater than or equal to the larger of the Token's Incremental Value or the Minimum Incremental Value to be Discharged.
@@ -673,10 +675,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             contribution.exists = false;
             contribution.distributed = false;
 
-            ContractToken storage contractToken = cIndex == 0 ? _getContractToken(contributor, tokenId, false) : _nullContractToken;
-            if (contractToken.internalTokenId != 0) {
-                contractTokenAddress = contributor;
-                contractToken.recallable = false;
+            if (cIndex == 0) {
+                ContractToken storage contractToken =  _getContractToken(contributor, tokenId, false);
+                if (contractToken.internalTokenId != 0) {
+                    contractTokenAddress = contributor;
+                    contractToken.recallable = false;
+                }
             }
         }
 
@@ -820,7 +824,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     // Token Distribution
-    function _distribute(uint256 tokenId, bool destroy) internal {
+    function _distribute(uint256 tokenId, bool discharge) internal {
         address tokenOwner = ownerOf(tokenId);
 
         Token storage t = _tokens[tokenId];
@@ -846,7 +850,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
             } else if (!distributed) {
 
-                if (destroy) {
+                if (discharge) {
 
                     _addValue(contributor, contribution.value, contribution.charge);
 
@@ -862,7 +866,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             }
         }
         
-        if (destroy) {
+        if (discharge) {
 
             t.linkedCharge = 0;
             _addDistribution(tokenOwner, tValue, 0);
