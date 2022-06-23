@@ -175,8 +175,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
     /// @notice Will transfer any pending Coin and Value Distributions associated with the sender.
     ///         A number of bonus Coins are available every 15 minutes for those who already hold Coins, Tokens, or have any pending Value distributions.
-    /// @return coins The number of Coins transfered
-    /// @return value The Value transfered
+    /// @return coins The number of Coins transferred
+    /// @return value The Value transferred
     function withdraw() public enabled returns(uint256 coins, uint256 value) {
         address addr = _msgSender();
         _notOnBlacklist(addr);
@@ -385,7 +385,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///         The Incremental Value of the Token is set to the Minimum Non-Zero Incremental Value, with an Activation Threshold of 0.
     ///         The account (ERC721 contract address), and external token ID are appended to the Token URI as a query string.
     ///         Any data sent is stored with the Token and forwarded during Safe Transfer when {recallToken} is called.
-    ///         If the ERC721 recieved is a DigilToken it is linked to the new Token.
+    ///         If the ERC721 received is a DigilToken it is linked to the new Token.
     /// @param  operator The address which called safeTransferFrom on the ERC721 token contract
     /// @param  from The previous owner of the ERC721 token
     /// @param  tokenId The ID of the ERC721 token
@@ -502,7 +502,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///             paraelemental planes (8-11; ice, lightning, metal, nature): 1x Coin Rate
     ///             energy planes (12-16; harmony, discord, entropy, exergy, magick): 100x Coin Rate
     ///             ethereal planes (17-18; aether, world): 250x Coin Rate
-    /// @dev    Data stored with the Token cannot be udpated.
+    /// @dev    Data stored with the Token cannot be updated.
     /// @param  incrementalValue the Value (in wei), required to be sent with each Coin used to Charge the Token. Can be 0 or a multiple of the Minimum Incremental Value
     /// @param  activationThreshold the number of Coins required for the Token to be Activated (decimals excluded)
     /// @param  restricted Boolean indicating whether a address must be Whitelisted to Contribute to a Token

@@ -17,9 +17,9 @@ A Digil is a Digital Sigil. So what is a Sigil?
 
 ### Contract Configuration
 
-**Coin Rate**: The maximum number of bonus Coins distributed on withdrawl, and the rate used to determin the cost of certain Actions (Opt-Out; Linking Tokens; Overwriting a Token's URI).  
+**Coin Rate**: The maximum number of bonus Coins distributed on withdrawal, and the rate used to determine the cost of certain Actions (Opt-Out; Linking Tokens; Overwriting a Token's URI).  
 
-**Minimum Incremental Value**: The minium value that can be used to Charge a Payable Token. Is also used to determin the cost of certain Actions (Opt-Out; Restricting, Discharging, or Destroying a Token; Overwriting a Token's URI).  
+**Minimum Incremental Value**: The minimum value that can be used to Charge a Payable Token. Is also used to determine the cost of certain Actions (Opt-Out; Restricting, Discharging, or Destroying a Token; Overwriting a Token's URI).  
 
 **Transfer Rate**: A fraction of the Minimum Incremental Value that will be used to calculate value distributions.   
 
@@ -28,16 +28,16 @@ A Digil is a Digital Sigil. So what is a Sigil?
 #### Basic Properties
 
 **Charge**: The value in Coins used to Charge the Token  
-**Activation Threshhold**: The number of Coins required before a Token can be Activated  
+**Activation Threshold**: The number of Coins required before a Token can be Activated  
 
-**Incremental Value**: The value in eth required in tandeum with each Coin to Charge the Token (can be zero)  
+**Incremental Value**: The value in eth required in tandem with each Coin to Charge the Token (can be zero)  
 **Incremental Charge Value**: The value in eth derived from the number of Coins used to Charge the Token, and its Incremental Value  
 **Value**: The value in eth above and beyond the Incremental Charge Value that is associated with this Token  
 
 **Contributions**: Addresses that contribute to the Token's Charge are tracked, so that any contributions can be returned when a Token is Destroyed or Discharged, or when a Token's Value is being distributed after the Token has been Activated
 
-**Links**: A colleciton of Tokens that this Token Links to
-**Linked Charge**: Charge that was transfered to this Token from a Linked Token  
+**Links**: A collection of Tokens that this Token Links to
+**Linked Charge**: Charge that was transferred to this Token from a Linked Token  
 
 #### Planes
 
@@ -53,44 +53,40 @@ Planes are special Tokens that can be linked to at Token Creation.
 
 **Aether**<sup>17</sup>, **World**<sup>18</sup>  
 
-#### Actions
+#### Creation
 
-When **Creating** a Token, you specify its Incremental Value, Activation Threshhold, whether or not the Token Contributions should be restricted to those on a whitelist, the Plane to link it to (if any), and the Data to store with the Token. Any eth sent at Token creation will be stored as the Token's Value. A Token's Incremental Value, Activation Threshhold, and Restricted State can be **Updated** after creation, however, its Data cannot.  
+When **Creating** a Token, you specify its Incremental Value, Activation Threshold, whether or not the Token Contributions should be restricted to those on a whitelist, the Plane to link it to (if any), and the Data to store with the Token. Any eth sent at Token creation will be stored as the Token's Value. A Token's Incremental Value, Activation Threshold, and Restricted State can be **Updated** after creation, however, its Data cannot.  
 
-Digil Coins can be used to **Charge** a Token. If a Token has an Incremental Value, that value must also be sent for each Coin that is used to Charge the Token. Any additional eth sent beyond that which is required by the Incremental Charge Value, will be added to the Token's Value. When an Inactive Token is **Discharged**, any Contributions will be distributed to their Contributors, with the Token's Value being distributed to its owner regardless of its source. When an Active Token is Discharged, 
+#### Charging
 
-###### Charging a Token
+Digil Coins can be used to **Charge** a Token. If a Token has an Incremental Value, that value must also be sent for each Coin that is used to Charge the Token. Any additional eth sent beyond that which is required by the Incremental Charge Value, will be added to the Token's Value. When a Token is **Discharged** that has not yet been Activated, any Contributions will be redistributed to their Contributors, with the Token's Value being distributed to its owner regardless of its source. When an Active Token is Discharged, the sum of Token's Incremental Charge Value will be distributed to the Token's owner, while the Token's Value will be divided amongst the Token's Contributors. **Destroying** a Token will first Discharge it before Burning it, making it inaccessible.
 
-###### Discharging a Token
+#### Linking
 
-###### Destroying a Token
+Tokens can be **Linked** and **Unlinked** from one another in order to facilitate the generation or transferring of Coins on Charge or Activation. This allows one to Charge multiple Tokens at once. Links have an Efficiency that determines the number of Coins generated when the Link is executed.
 
-###### Activating a Token
+#### Activation
 
-###### Deactivating a Token
-
-###### Linking a Token
-
-###### Unlinking a Token
+Once a Token has a Charge that is greater than or equal to its Activation Threshold, it can be **Activated**. Activating the Token distributes its Value to those who have Contributed, and distributes its Charge Value to the owner of the Token. Once a Token has been Activated, it can be **Deactivated**
 
 #### Restricted Token
 
-Tokens have the ability to be **restricted**. Addresses must be added to a Restricted Token's **whitelist** before they can Contribute to (Charge), or Link to a Token. Once an address has been added to a Token's whitelist, it cannot be removed. An address is automatically added to a Token's whitelist upon siccessful transfer to said address. A token can be restricted at creation, or its restricted state can be set at any time by the Token's owner.  
+Tokens have the ability to be **restricted**. Addresses must be added to a Restricted Token's **whitelist** before they can Contribute to (Charge), or Link to a Token. Once an address has been added to a Token's whitelist, it cannot be removed. An address is automatically added to a Token's whitelist upon successful transfer to said address. A token can be restricted at creation, or its restricted state can be set at any time by the Token's owner.  
 
-Because restricting a Token limits who can Contribute to it, it also limits who can recieve a portion of the Token's Value when it is Activated.  
+Because restricting a Token limits who can Contribute to it, it also limits who can receive a portion of the Token's Value when it is Activated.  
 
 #### Contract Token
 
-**External ERC721 Tokens** (NFTs), can be sent to this contract and will be Linked to a newly created Digil Token. The Extrernal Token can then be **recalled** (sent to the current Digil Token owner), but only after the Digil Token has been either Activated or Destroyed.  
+**External ERC721 Tokens** (NFTs), can be sent to this contract and will be Linked to a newly created Digil Token. The External Token can then be **Recalled** (sent to the current Digil Token owner), but only after the Digil Token has been either Activated or Destroyed.  
 
 ### Withdrawls
 
-When a Token is Activated, Destroyed, Discharged, or an Active Token is Charged, it has the potential to generate value in the form of eth and or Coins. This value is stored as a Pendiong Distribution which can then be **withdrawn**.  
+When a Token is Activated, Destroyed, Discharged, or an Active Token is Charged, it has the potential to generate value in the form of eth and or Coins. This value is stored as a Pending Distribution which can then be **withdrawn**.  
 
 In addition to Pending Distributions, a bonus Coin is available every 15 minutes (up to the maximum as set by the Coin Rate), for those who already hold Coins, Tokens, or have any pending eth distributions.  
 
 ### Blacklist and Opt-Out
 
-There are two ways an address can be **blacklisted**. The first is if the contract admin adds the address to the blacklist. The second is if the address **opts-out** of the contract. In both cases, being placed on the blacklist blocks withdrawls, and prevents Tokens from being trensfered to or from the address. Those on the blacklist are also prevented from Creating, Charging, Destroying, Discharging, Activating, Deactivating, Linking, and Unlinking Tokens.  
+There are two ways an address can be **blacklisted**. The first is if the contract admin adds the address to the blacklist. The second is if the address **opts-out** of the contract. In both cases, being placed on the blacklist blocks withdrawals, and prevents Tokens from being transferred to or from the address. Those on the blacklist are also prevented from Creating, Charging, Destroying, Discharging, Activating, Deactivating, Linking, and Unlinking Tokens.  
 
 An address can only be removed from the blacklist by being **whitelisted** by the contract admin.  
