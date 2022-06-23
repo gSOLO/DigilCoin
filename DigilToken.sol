@@ -830,7 +830,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         } else if (contractTokenAddress != address(0)) {
 
             t.contributors.push(contractTokenAddress);
-            
+
         }
     }
 
@@ -889,7 +889,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     /// @notice Links two Tokens together in order to generate or transfer Coins on Charge or Token Activation.
-    ///         A Link between Tokens (from source to destination) must not already exist, and both Tokens must have less than 8 Links each.
     ///         Requires a Value greater than or equal to the larger of the source or destination Token's Incremental Value.
     ///         Any Value contributed is split between and added to the source and destination Token.
     ///         Requires a summation of Coins at the Coin Rate depending on the Link Efficiency (>1).
@@ -898,14 +897,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @param  linkId The ID of the Token to Link to (destination)
     /// @param  efficiency The Efficiency of the Link
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) public payable approved(tokenId) {
-        require(tokenId != linkId && linkId > 18 && efficiency > 0);
-        
         Token storage t = _tokens[tokenId];
-        Token storage d = _tokens[linkId];
-
-        require(!d.restricted || d.contributions[_msgSender()].whitelisted);
-
         uint8 linkEfficiency = t.linkEfficiency[linkId];
+
+        require(tokenId != linkId && linkId > 18 && efficiency > linkEfficiency);
+        
+        Token storage d = _tokens[linkId];
+        require(!d.restricted || d.contributions[_msgSender()].whitelisted);
 
         uint256 value = msg.value;
         uint256 tIncrementalValue = t.incrementalValue;
@@ -914,6 +912,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             _createValue(tokenId, value / 2);
             _createValue(linkId, value / 2);
         }
+
+        t.linkEfficiency[linkId] = efficiency;
+        emit Link(tokenId, linkId, efficiency);
         
         if (linkEfficiency == 0) {
             t.links.push(linkId);
@@ -921,9 +922,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         
         uint256 e = efficiency > 100 ? efficiency - 100 : 0;
         require(_coinsFromSender((efficiency + (e * (e + 1) / 2)) * _coinRate));
-
-        t.linkEfficiency[linkId] = efficiency;
-        emit Link(tokenId, linkId, efficiency);
     }
 
     /// @notice Unlinks Tokens
