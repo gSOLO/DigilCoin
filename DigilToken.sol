@@ -100,8 +100,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @notice Token was Restricted
     event Restrict(uint256 indexed tokenId);
 
-    /// @notice Token was Unrestricted
-    event Unrestrict(uint256 indexed tokenId);
+    /// @notice Token was Opened after being Restricted
+    event Open(uint256 indexed tokenId);
 
     /// @notice Token was Updated
     event Update(uint256 indexed tokenId);
@@ -563,7 +563,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
                 require(value >= t.incrementalValue && value >= _incrementalValue);
                 emit Restrict(tokenId);
             } else {
-                emit Unrestrict(tokenId);
+                emit Open(tokenId);
             }
         }
 
@@ -893,7 +893,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @notice Links two Tokens together in order to generate or transfer Coins on Charge or Token Activation.
     ///         Requires a Value greater than or equal to the larger of the source and destination Token's Incremental Value.
     ///         Any Value contributed is split between and added to the source and destination Token.
-    ///         Requires a summation of Coins at the Coin Rate depending on the Link Efficiency (>1).
+    ///         Requires a summation of Coins at the Coin Rate depending on the number of existing Links.
     ///         An Efficiency of 1 is meant to indicate a Coin generation or transfer of 1%; 100 would be 100%; 200 would be 200%; et. cetera.
     /// @param  tokenId The ID of the Token to Link (source)
     /// @param  linkId The ID of the Token to Link to (destination)
