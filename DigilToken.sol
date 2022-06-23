@@ -854,9 +854,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @notice Activate an Inactive Token, Distributes Value, Coins, and execute Links.
     ///         Requires the Token have a Charge greater than or equal to the Token's Activation Threshold.
     /// @param  tokenId The ID of the Token to activate.
-    function activateToken(uint256 tokenId) public approved(tokenId) {
+    function activateToken(uint256 tokenId) public payable approved(tokenId) {
         Token storage t = _tokens[tokenId];
         require(t.active == false && t.charge >= t.activationThreshold);
+
+        uint256 value = msg.value;
+        if (value > 0) {
+            _createValue(tokenId, value);
+        }
 
         t.active = true;
         t.activated = true;
