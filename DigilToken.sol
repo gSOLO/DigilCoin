@@ -624,70 +624,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         _updateToken(tokenId, incrementalValue, activationThreshold, uri, overwriteUri, bytes(""), false);
     }
 
-    // Destroy Token
-    function _destroy(uint256 tokenId) internal {
-        _distribute(tokenId, true);
-
-        delete _tokens[tokenId];
-
-        _burn(tokenId);
-    }
-
-    /// @notice Destroy (burn), an existing Token.
-    ///         Any Contributed Value that has not yet been Distributed will be returned to its Contributors, any additional Token Value to its owner.
-    ///         Requires a Value sent greater than or equal to the larger of the Token's Incremental Value or the Minimum Incremental Value to be Destroyed.
-    /// @param  tokenId The ID of the Token to Destroy
-    function destroyToken(uint256 tokenId) public payable approved(tokenId) {
-        uint256 value = msg.value;
-        require(value >= _incrementalValue && value >= _tokens[tokenId].incrementalValue);
-
-        _addValue(value);
-        
-        _destroy(tokenId);        
-    }
-
-    /// @notice Discharge an existing Token and reset all Contributions.
-    ///         If the Token has been Activated: Any Contributed Value that has not yet been Distributed will be Distributed.
-    ///         If the Token has not been Activated: Any Contributed Value that has not yet been Distributed will be returned to its Contributors, any additional Token Value to its owner.
-    ///         Requires a Value sent greater than or equal to the larger of the Token's Incremental Value or the Minimum Incremental Value to be Discharged.
-    /// @param  tokenId The ID of the Token to Discharge
-    function dischargeToken(uint256 tokenId) public payable approved(tokenId) {
-        uint256 value = msg.value;
-        Token storage t = _tokens[tokenId];
-        require(value >= _incrementalValue && value >= t.incrementalValue);
-        _addValue(value);
-
-        _distribute(tokenId, !t.activated);
-
-        address contractTokenAddress;
-
-        uint256 cIndex;
-        uint256 cLength = t.contributors.length;
-        for (cIndex; cIndex < cLength; cIndex++) {
-            address contributor = t.contributors[cIndex];
-            TokenContribution storage contribution = t.contributions[contributor];
-
-            contribution.charge = 0;
-            contribution.value = 0;
-            contribution.exists = false;
-            contribution.distributed = false;
-
-            if (cIndex == 0) {
-                ContractToken storage contractToken =  _getContractToken(contributor, tokenId, false);
-                if (contractToken.internalTokenId != 0) {
-                    contractTokenAddress = contributor;
-                    contractToken.recallable = false;
-                }
-            }
-        }
-
-        delete t.contributors;
-
-        if (contractTokenAddress != address(0)) {
-            t.contributors.push(contractTokenAddress);
-        }
-    }
-
+    // Charge Token
     function _chargeActiveToken(address contributor, uint256 tokenId, uint256 coins, uint256 value, bool link) internal {
         Token storage t = _tokens[tokenId];
 
@@ -792,34 +729,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         _chargeToken(contributor, tokenId, coins * _coinDecimals, msg.value, false);
     }
 
-    /// @notice Activate an Inactive Token, Distributes Value, Coins, and execute Links.
-    ///         Requires the Token have a Charge greater than or equal to the Token's Activation Threshold.
-    /// @param  tokenId The ID of the Token to activate.
-    function activateToken(uint256 tokenId) public approved(tokenId) {
-        Token storage t = _tokens[tokenId];
-        require(t.active == false && t.charge >= t.activationThreshold);
-
-        t.active = true;
-        t.activated = true;
-        emit Activate(tokenId);
-
-        _distribute(tokenId, false);
-    }
-
-    /// @notice Deactivates an Active Token.
-    ///         Requires the Token have zero Charge, and a Value sent greater than or equal to the Token's Incremental Value.
-    /// @param  tokenId The ID of the token to Deactivate
-    function deactivateToken(uint256 tokenId) public payable approved(tokenId) {
-        Token storage t = _tokens[tokenId];
-        uint256 value = msg.value;
-        require(t.active == true && t.charge == 0 && value >= t.incrementalValue);
-
-        t.active = false;       
-        emit Dectivate(tokenId);
-
-        _addValue(value);
-    }
-
     // Token Distribution
     function _distribute(uint256 tokenId, bool discharge) internal {
         address tokenOwner = ownerOf(tokenId);
@@ -875,6 +784,99 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             _addValue(tValue);
             
         }
+    }
+
+    // Discharge Token
+    function _discharge(uint256 tokenId, bool burn) internal {
+        uint256 value = msg.value;
+        Token storage t = _tokens[tokenId];
+        require(value >= _incrementalValue && value >= t.incrementalValue);
+        _addValue(value);
+        
+        _distribute(tokenId, burn || !t.activated);
+
+        address contractTokenAddress;
+
+        uint256 cIndex;
+        uint256 cLength = t.contributors.length;
+        for (cIndex; cIndex < cLength; cIndex++) {
+            address contributor = t.contributors[cIndex];
+            TokenContribution storage contribution = t.contributions[contributor];
+
+            contribution.charge = 0;
+            contribution.value = 0;
+            contribution.exists = false;
+            contribution.distributed = false;
+
+            if (cIndex == 0) {
+                ContractToken storage contractToken =  _getContractToken(contributor, tokenId, false);
+                if (contractToken.internalTokenId != 0) {
+                    contractTokenAddress = contributor;
+                    contractToken.recallable = false;  
+                    if (burn) {
+                        contractToken.internalTokenId = 0;  
+                    }                    
+                }
+            }
+        }
+
+        delete t.contributors;
+
+        if (contractTokenAddress != address(0)) {
+            t.contributors.push(contractTokenAddress);
+        }
+
+        if (burn) {
+            delete _tokens[tokenId];
+            _burn(tokenId);
+        }
+    }
+
+    /// @notice Discharge an existing Token and reset all Contributions.
+    ///         If the Token has been Activated: Any Contributed Value that has not yet been Distributed will be Distributed.
+    ///         If the Token has not been Activated: Any Contributed Value that has not yet been Distributed will be returned to its Contributors, any additional Token Value to its owner.
+    ///         Requires a Value sent greater than or equal to the larger of the Token's Incremental Value or the Minimum Incremental Value to be Discharged.
+    /// @param  tokenId The ID of the Token to Discharge
+    function dischargeToken(uint256 tokenId) public payable approved(tokenId) {
+        _discharge(tokenId, false); 
+    }
+
+    /// @notice Destroy (burn), an existing Token.
+    ///         If the Token has been Activated: Any Contributed Value that has not yet been Distributed will be Distributed.
+    ///         If the Token has not been Activated: Any Contributed Value that has not yet been Distributed will be returned to its Contributors, any additional Token Value to its owner.
+    ///         Any Contract Tokens Linked to this Token that have yet to be Recalled, cannot be Recalled.
+    ///         Requires a Value sent greater than or equal to the larger of the Token's Incremental Value or the Minimum Incremental Value to be Destroyed.
+    /// @param  tokenId The ID of the Token to Destroy
+    function destroyToken(uint256 tokenId) public payable approved(tokenId) {        
+        _discharge(tokenId, true);
+    }
+
+    /// @notice Activate an Inactive Token, Distributes Value, Coins, and execute Links.
+    ///         Requires the Token have a Charge greater than or equal to the Token's Activation Threshold.
+    /// @param  tokenId The ID of the Token to activate.
+    function activateToken(uint256 tokenId) public approved(tokenId) {
+        Token storage t = _tokens[tokenId];
+        require(t.active == false && t.charge >= t.activationThreshold);
+
+        t.active = true;
+        t.activated = true;
+        emit Activate(tokenId);
+
+        _distribute(tokenId, false);
+    }
+
+    /// @notice Deactivates an Active Token.
+    ///         Requires the Token have zero Charge, and a Value sent greater than or equal to the Token's Incremental Value.
+    /// @param  tokenId The ID of the token to Deactivate
+    function deactivateToken(uint256 tokenId) public payable approved(tokenId) {
+        Token storage t = _tokens[tokenId];
+        uint256 value = msg.value;
+        require(t.active == true && t.charge == 0 && value >= t.incrementalValue);
+
+        t.active = false;       
+        emit Dectivate(tokenId);
+
+        _addValue(value);
     }
 
     /// @notice Links two Tokens together in order to generate or transfer Coins on Charge or Token Activation.
