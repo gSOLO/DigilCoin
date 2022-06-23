@@ -59,7 +59,9 @@ When **Creating** a Token, you specify its Incremental Value, Activation Thresho
 
 #### Charging
 
-Digil Coins can be used to **Charge** a Token. If a Token has an Incremental Value, that value must also be sent for each Coin that is used to Charge the Token. Any additional eth sent beyond that which is required by the Incremental Charge Value, will be added to the Token's Value. When a Token is **Discharged** that has not yet been Activated, any Contributions will be redistributed to their Contributors, with the Token's Value being distributed to its owner regardless of its source. When an Active Token is Discharged, the sum of Token's Incremental Charge Value will be distributed to the Token's owner, while the Token's Value will be divided amongst the Token's Contributors. **Destroying** a Token will first Discharge it before Burning it, making it inaccessible.
+Digil Coins can be used to **Charge** a Token. If a Token has an Incremental Value, that value must also be sent for each Coin that is used to Charge the Token. Any additional eth sent beyond that which is required by the Incremental Charge Value, will be added to the Token's Value.  
+
+When a Token is **Discharged** that has not yet been Activated, any Contributions will be redistributed to their Contributors, with the Token's Value being distributed to its owner regardless of its source. When an Active Token is Discharged, the sum of Token's Incremental Charge Value will be distributed to the Token's owner, while the Token's Value will be divided amongst the Token's Contributors. **Destroying** a Token will first Discharge it before Burning it, making it inaccessible.
 
 #### Linking
 
