@@ -643,7 +643,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             for(linkIndex; linkIndex < linksLength; linkIndex++) {                
                 uint256 linkId = links[linkIndex];
                 uint256 linkedCoins = coins / 100 * t.linkEfficiency[linkId];
-                bool charged = _chargeToken(contributor, linkId, linkedCoins, linkedValue, true);
+                bool charged = _exists(linkId) && _chargeToken(contributor, linkId, linkedCoins, linkedValue, true);
                 if (charged) {
                     value -= linkedValue;
                 } else {
@@ -822,13 +822,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         delete t.contributors;
 
-        if (contractTokenAddress != address(0)) {
-            t.contributors.push(contractTokenAddress);
-        }
-
         if (burn) {
+
             delete _tokens[tokenId];
             _burn(tokenId);
+
+        } else if (contractTokenAddress != address(0)) {
+
+            t.contributors.push(contractTokenAddress);
+            
         }
     }
 
@@ -878,10 +880,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         uint256 value = msg.value;
         require(t.active == true && t.charge == 0 && value >= t.incrementalValue);
 
+        if (value > 0) {
+            _addValue(value);
+        }
+
         t.active = false;       
         emit Dectivate(tokenId);
-
-        _addValue(value);
     }
 
     /// @notice Links two Tokens together in order to generate or transfer Coins on Charge or Token Activation.
@@ -889,7 +893,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///         Requires a Value greater than or equal to the larger of the source or destination Token's Incremental Value.
     ///         Any Value contributed is split between and added to the source and destination Token.
     ///         Requires a summation of Coins at the Coin Rate depending on the Link Efficiency (>1).
-    ///         An Efficiency of 1 is meant to indicate a Coin generation or transfer of 1%. 200 would be 200% et. cetera.
+    ///         An Efficiency of 1 is meant to indicate a Coin generation or transfer of 1%; 100 would be 100%; 200 would be 200%; et. cetera.
     /// @param  tokenId The ID of the Token to Link (source)
     /// @param  linkId The ID of the Token to Link to (destination)
     /// @param  efficiency The Efficiency of the Link
