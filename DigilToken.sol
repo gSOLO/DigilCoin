@@ -7,11 +7,6 @@ import "github/OpenZeppelin/openzeppelin-contracts/contracts/access/Ownable.sol"
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @dev Coin used for Charging Tokens
-interface DigilCoin is IERC20 {
-    
-}
-
 /// @title Digil Token (NFT)
 /// @author gSOLO
 /// @notice NFT contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
@@ -19,7 +14,7 @@ interface DigilCoin is IERC20 {
 contract DigilToken is ERC721, Ownable, IERC721Receiver {
     using Strings for uint256;
     
-    IERC20 private _coins = DigilCoin(0xa4101FEDAd52A85FeE0C85BcFcAB972fb7Cc7c0e);
+    IERC20 private _coins = IERC20(0xa4101FEDAd52A85FeE0C85BcFcAB972fb7Cc7c0e);
     uint256 private _coinDecimals = 10 ** 18;
     uint256 private _coinRate = 100 * 10 ** 18;
 
