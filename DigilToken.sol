@@ -19,7 +19,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     uint256 private _coinRate = 100 * 10 ** 18;
 
     uint256 private _incrementalValue = 100 * 1000 gwei;
-    uint256 private _transferRate = 95 * 1000 gwei;
+    uint256 private _transferValue = 95 * 1000 gwei;
 
     bool _paused;
     address _this;
@@ -80,7 +80,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     Counters.Counter private _tokenIdCounter;
 
     /// @dev Configuration was updated
-    event Configure(uint256 chargeRate, uint256 transferRate);
+    event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue);
 
     /// @dev Contract was Paused
     event Pause();
@@ -193,22 +193,23 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     /// @dev    Update contract configuration.
-    /// @param  chargeRate Represents a number of values:
-    ///                    The maximum number of bonus Coins a user can withdraw.
-    ///                    The multiplier used when determining the number of Coins required to update a Token URI.
-    ///                    The multiplier used when determining the number of Coins required to link a Token with an efficiency greater than 100.
-    ///                    The minimum Value used to charge a Token, update a Token URI, or skip executing Links (* 1k gwei)
-    /// @param  transferRate The Value to be distributed when a Token is Activated as a percentage of the chargeRate (* 1k gwei)
-    function configure(uint256 chargeRate, uint256 transferRate) public admin {
-        require(chargeRate > 0 && transferRate <= chargeRate && transferRate >= (chargeRate / 2));
+    /// @param  coins Used to determine a number of values:
+    ///                     Maximum number of bonus Coins a user can withdraw.
+    ///                     Number of Coins required to Update a Token URI.
+    ///                     Number of Coins required to Link a Token.
+    ///                     Number of Coins required to Opt-Out.
+    /// @param  value The minimum value (in twei) used to charge a Token, update a Token URI, or skip executing Links
+    /// @param  valueTransferred The value (in twei) to be distributed when a Token is Activated as a percentage of the minimum value
+    function configure(uint256 coins, uint256 value, uint256 valueTransferred) public admin {
+        require(coins > 0 && valueTransferred <= value && valueTransferred >= (value / 2));
 
         _coins.approve(_this, ~uint256(0));
-        _coinRate = chargeRate * _coinDecimals;
+        _coinRate = coins * _coinDecimals;
 
-        _incrementalValue = chargeRate * 1000 gwei;
-        _transferRate = transferRate * 1000 gwei;
+        _incrementalValue = value * 1000 gwei;
+        _transferValue = valueTransferred * 1000 gwei;
         
-        emit Configure(chargeRate, transferRate);
+        emit Configure(_coinRate, _incrementalValue, _transferValue);
     }
 
     // Coin Transfers
@@ -282,9 +283,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///             Add 1100 Coins to the address specified (1000 bonus Coins)
     function _addDistribution(address addr, uint256 value, uint256 coins) internal {
         uint256 incrementalDistribution = value / _incrementalValue;
-        _addValue(incrementalDistribution * (_incrementalValue - _transferRate));
+        _addValue(incrementalDistribution * (_incrementalValue - _transferValue));
         uint256 bonusCoins = _coinRate / 1000 * incrementalDistribution;
-        _addValue(addr, incrementalDistribution * _transferRate, coins + bonusCoins);
+        _addValue(addr, incrementalDistribution * _transferValue, coins + bonusCoins);
     }
 
     function _createValue(uint256 tokenId, uint256 value) internal {
@@ -297,7 +298,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @param  value The Value to add to the Token
     function createValue(uint256 tokenId, uint256 value) public payable admin {
         _addValue(msg.value);
-        
+
         _distributions[_this].value -= value;
 
         _createValue(tokenId, value);
