@@ -27,8 +27,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     mapping(uint256 => Token) private _tokens;
     mapping(address => bool) private _blacklisted;
     mapping(address => Distribution) private _distributions;
-    mapping(ERC721 => ContractToken[]) private _contractTokenAlias;
-    ContractToken private _nullContractToken = ContractToken(0, 0, false);
+    mapping(address => mapping(uint256 => bool)) private _contractTokenExists;
+    mapping(address => mapping(uint256 => ContractToken)) private _contractTokens;
 
     /// @dev Pending Coin and Value Distributions, and the Time of the last Distribution
     struct Distribution {
@@ -48,8 +48,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
     /// @dev Illustrates the relationship between an external ERC721 token and a Digil Token
     struct ContractToken {
-        uint256 externalTokenId;
-        uint256 internalTokenId;
+        uint256 tokenId;
         bool recallable;
     }
 
@@ -132,7 +131,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
     constructor() ERC721("Digil Token", "DiGiL") {
         _this = address(this);
-        _coins.approve(_this, ~uint256(0));
+        _coins.approve(_this, type(uint256).max);
         
         address sender = msg.sender;
         string memory baseURI = "https://digil.co.in/token/";
@@ -396,21 +395,22 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @param  tokenId The ID of the ERC721 token
     /// @param  data Optional data sent from the ERC721 token contract
     function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external operatorEnabled(operator) returns (bytes4) {
-        address account = _msgSender();        
-        require(_getContractToken(account, tokenId, false).externalTokenId == 0);
+        address account = _msgSender();     
+        require(!_contractTokenExists[account][tokenId]);
+        _contractTokenExists[account][tokenId] = true;
 
-        uint256 internalTokenId = _createToken(from, 0, 0, data);        
-        _contractTokenAlias[ERC721(account)].push(ContractToken(tokenId, internalTokenId, false));
+        uint256 internalId = _createToken(from, 0, 0, data);        
+        _contractTokens[account][internalId].tokenId = tokenId;
 
-        Token storage t = _tokens[internalTokenId];
-        t.uri = string(abi.encodePacked(tokenURI(internalTokenId), "?account=", Strings.toHexString(uint160(account), 20), "&tokenId=", tokenId.toString()));
+        Token storage t = _tokens[internalId];
+        t.uri = string(abi.encodePacked(tokenURI(internalId), "?account=", Strings.toHexString(uint160(account), 20), "&tokenId=", tokenId.toString()));
         t.contributors.push(account);
 
         uint256 minimumIncrementalValue = _incrementalValue;
         if (account == _this) {
             Token storage d = _tokens[tokenId];
-            d.links.push(internalTokenId);
-            d.linkEfficiency[internalTokenId] = uint8(100 / d.links.length);
+            d.links.push(internalId);
+            d.linkEfficiency[internalId] = uint8(100 / d.links.length);
             uint256 dIncrementalValue = d.incrementalValue;
             if (minimumIncrementalValue < dIncrementalValue) {
                 minimumIncrementalValue = dIncrementalValue;
@@ -421,35 +421,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         return this.onERC721Received.selector;
     }
 
-    /// @notice Return the Contract Token to the current owner. The Token the Contract Token is attached to must have been Activasted or Destroyed.
+    /// @notice Return the Contract Token to the current owner. The Token the Contract Token is attached to must have been Activated or Destroyed.
     ///         Requires a Value sent greater than or equal to the Token's Incremental Value.
-    function recallToken(address account, uint256 tokenId) public payable {
-        ContractToken memory contractToken = _getContractToken(account, tokenId, true);
+    function recallToken(address account, uint256 tokenId) public approved(tokenId) {
+        ContractToken storage contractToken = _contractTokens[account][tokenId];
+        require(contractToken.recallable);
 
-        Token storage t = _tokens[tokenId];
-        uint256 value = msg.value;
-        require (contractToken.recallable && value >= t.incrementalValue);
-        _addValue(value);
+        uint256 contractTokenId = contractToken.tokenId;
+        contractToken.tokenId = 0;
+        contractToken.recallable = false;
 
-        ERC721(account).safeTransferFrom(_this, ownerOf(tokenId), contractToken.externalTokenId, t.data);
-    }
+        ERC721(account).safeTransferFrom(_this, ownerOf(tokenId), contractTokenId, _tokens[tokenId].data);
 
-    function _getContractToken(address account, uint256 tokenId, bool pop) internal returns(ContractToken storage) {
-        ContractToken[] storage eTokens = _contractTokenAlias[ERC721(account)];
-        uint256 eTokenIndex;
-        uint256 eTokensLength = eTokens.length;
-        for (eTokenIndex; eTokenIndex < eTokensLength; eTokenIndex++) {
-            ContractToken storage eToken = eTokens[eTokenIndex];
-            uint256 internalTokenId = eToken.internalTokenId;
-            if (internalTokenId == tokenId) {
-                if (pop) {
-                    eTokens[eTokenIndex] = eTokens[eTokensLength - 1];
-                    eTokens.pop();
-                }
-                return eToken;
-            }
-        }
-        return _nullContractToken;
+        _contractTokenExists[account][contractTokenId] = false;
     }
 
     // Token Information
@@ -755,8 +739,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             bool distributed = contribution.distributed;
             contribution.distributed = true;
 
-            ContractToken storage contractToken = cIndex == 0 ? _getContractToken(contributor, tokenId, false) : _nullContractToken;
-            if (contractToken.internalTokenId != 0) {
+            ContractToken storage contractToken = _contractTokens[contributor][tokenId];
+            if (contractToken.tokenId != 0) {
 
                 contractToken.recallable = true;
 
@@ -814,12 +798,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             contribution.distributed = false;
 
             if (cIndex == 0) {
-                ContractToken storage contractToken =  _getContractToken(contributor, tokenId, false);
-                if (contractToken.internalTokenId != 0) {
+                ContractToken storage contractToken =  _contractTokens[contributor][tokenId];
+                if (contractToken.tokenId != 0) {
                     contractTokenAddress = contributor;
                     contractToken.recallable = false;  
                     if (burn) {
-                        contractToken.internalTokenId = 0;  
+                        contractToken.tokenId = 0;
                     }                    
                 }
             }
