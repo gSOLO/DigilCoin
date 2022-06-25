@@ -128,7 +128,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     event PendingDistribution(address indexed addr, uint256 coins, uint256 value);
 
     /// @notice Value was Contributed to a Token
-    event Contribution(address indexed addr, uint256 indexed tokenId);
+    event Contribution(address indexed addr, uint256 indexed tokenId, uint256 value);
 
     constructor() ERC721("Digil Token", "DiGiL") {
         _this = address(this);
@@ -161,20 +161,64 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         plane[20] = "ilxr";
         
         unchecked {
-            for (uint256 tokenIndex; tokenIndex < 21; tokenIndex++) {
-                uint256 tokenId = _tokenIdCounter.current();
+            uint256 tokenId;
+            while (tokenId < 20) {
+                tokenId = _tokenIdCounter.current();
                 _tokenIdCounter.increment();
+
                 _mint(sender, tokenId);
+
                 Token storage t = _tokens[tokenId];
                 t.active = true;
                 t.activated = true;
-                t.uri = string(abi.encodePacked(baseURI, plane[tokenIndex]));
+                t.uri = string(abi.encodePacked(baseURI, plane[tokenId]));
             }
         }
 
         _tokens[0].restricted = true;
         _tokens[20].restricted = true;
     }
+
+    function _ownerIsSender() private view returns(bool) {
+        return owner() == _msgSender();
+    }
+
+    function _onlyOwner() private view {
+        require(_ownerIsSender());
+    }
+
+    modifier admin() {
+        _onlyOwner();
+        _;
+    }
+
+    /// @dev    Update contract configuration.
+    /// @param  chargeRate Represents a number of values:
+    ///                    The maximum number of bonus Coins a user can withdraw.
+    ///                    The multiplier used when determining the number of Coins required to update a Token URI.
+    ///                    The multiplier used when determining the number of Coins required to link a Token with an efficiency greater than 100.
+    ///                    The minimum Value used to charge a Token, update a Token URI, or skip executing Links (* 1k gwei)
+    /// @param  transferRate The Value to be distributed when a Token is Activated as a percentage of the chargeRate (* 1k gwei)
+    function configure(uint256 chargeRate, uint256 transferRate) public admin {
+        require(chargeRate > 0 && transferRate <= chargeRate && transferRate >= (chargeRate / 2));
+
+        _coins.approve(_this, ~uint256(0));
+        _coinRate = chargeRate * _coinDecimals;
+
+        _incrementalValue = chargeRate * 1000 gwei;
+        _transferRate = transferRate * 1000 gwei;
+        
+        emit Configure(chargeRate, transferRate);
+    }
+
+    // Coin Transfers
+    function _coinsFromSender(uint256 coins) internal returns(bool) {
+        return _transferCoinsFrom(_msgSender(), _this, coins);
+    }
+
+    function _transferCoinsFrom(address from, address to, uint256 coins) internal returns(bool) {
+        return _coins.transferFrom(from, to, coins);
+    } 
 
     /// @notice Accepts all payments.
     /// @dev    The origin of the payment is not tracked by the contract, but the accumulated balance can be used by the admin to add Value to Tokens.
@@ -199,7 +243,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         distribution.coins = 0;
 
         if (value > 0 || balanceOf(addr) > 0 || _coins.balanceOf(addr) > 0) {
-            uint256 lastBonusTime = distribution.time;
+            uint256 lastBonusTime = distribution.time;            
             distribution.time = block.timestamp;
             uint256 bonus = (block.timestamp - lastBonusTime) / 15 minutes * _coinDecimals;
             coins += (bonus < _coinRate ? bonus : _coinRate);
@@ -245,7 +289,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
     function _createValue(uint256 tokenId, uint256 value) internal {
         _tokens[tokenId].value += value;
-        emit Contribution(_this, tokenId);
+        emit Contribution(_this, tokenId, value);
     }
 
     /// @dev    Adds Value to the specified Token using the contract's available balance.
@@ -253,45 +297,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @param  value The Value to add to the Token
     function createValue(uint256 tokenId, uint256 value) public payable admin {
         _addValue(msg.value);
-        Distribution storage distribution = _distributions[_this];
-        uint256 balance = distribution.value;
-        require(value <= balance);
-        distribution.value -= value;
-
-        _tokens[tokenId].value += value;
-        emit Contribution(_this, tokenId);
-    }
-
-    function _ownerIsSender() private view returns(bool) {
-        return owner() == _msgSender();
-    }
-
-    function _onlyOwner() private view {
-        require(_ownerIsSender());
-    }
-
-    modifier admin() {
-        _onlyOwner();
-        _;
-    }
-
-    /// @dev    Update contract configuration.
-    /// @param  chargeRate Represents a number of values:
-    ///                    The maximum number of bonus Coins a user can withdraw.
-    ///                    The multiplier used when determining the number of Coins required to update a Token URI.
-    ///                    The multiplier used when determining the number of Coins required to link a Token with an efficiency greater than 100.
-    ///                    The minimum Value used to charge a Token, update a Token URI, or skip executing Links (* 1k gwei)
-    /// @param  transferRate The Value to be distributed when a Token is Activated as a percentage of the chargeRate (* 1k gwei)
-    function configure(uint256 chargeRate, uint256 transferRate) public admin {
-        require(chargeRate > 0 && transferRate <= chargeRate && transferRate >= (chargeRate / 2));
-
-        _coins.approve(_this, ~uint256(0));
-        _coinRate = chargeRate * _coinDecimals;
-
-        _incrementalValue = chargeRate * 1000 gwei;
-        _transferRate = transferRate * 1000 gwei;
         
-        emit Configure(chargeRate, transferRate);
+        _distributions[_this].value -= value;
+
+        _createValue(tokenId, value);
     }
 
     function _beforeTokenTransfer(address from, address to, uint256 tokenId) internal enabled override
@@ -375,15 +384,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         _blacklisted[account] = false;
         emit Whitelist(account);
     }
-
-    // Coin
-    function _coinsFromSender(uint256 coins) internal returns(bool) {
-        return _transferCoinsFrom(_msgSender(), _this, coins);
-    }
-
-    function _transferCoinsFrom(address from, address to, uint256 coins) internal returns(bool) {
-        return _coins.transferFrom(from, to, coins);
-    } 
 
     /// @dev    When an ERC721 token is sent to this contract, creates a new Token representing the token received.
     ///         The Incremental Value of the Token is set to the Minimum Non-Zero Incremental Value, with an Activation Threshold of 0.
@@ -705,7 +705,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             }
 
             if (contribution > 0 || valueContribution > 0) {
-                emit Contribution(contributor, tokenId);
+                emit Contribution(contributor, tokenId, valueContribution);
             }
             t.charge += coins;
 
