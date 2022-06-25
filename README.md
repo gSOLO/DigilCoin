@@ -79,7 +79,7 @@ Because restricting a Token limits who can Contribute to it, it also limits who 
 
 #### Contract Token
 
-**External ERC721 Tokens** (NFTs), can be sent to this contract and will be Linked to a newly created Digil Token. The External Token can then be **Recalled** (sent to the current Digil Token owner), but only after the Digil Token has been either Activated or Destroyed.  
+**ERC721 Tokens** (NFTs), can be sent to this contract and will be Linked to a newly created Digil Token. The Digil Token that is created has an initial Incremental Value equal to the Minimum Incremental Value, or, if the Token sent itself is a Digil Token, the greater of either the Minimum Incremental Value or the Digil Token's Incremental Value. The ERC721 Token can then be **Recalled** (sent to the current Digil Token owner), but only after the new Digil Token has been either Activated or Destroyed.  
 
 ### Withdrawls
 
