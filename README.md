@@ -1,5 +1,5 @@
 # Digital Sigils on the Ethereum Blockchain
-Web3 Layer of the Digil Project  
+Web3 Layer of the [Digil Project](https://digil.app)  
 **Website**: [digil.co.in](https://digil.co.in)
 
 ### What is a Digil?
@@ -21,7 +21,7 @@ A Digil is a Digital Sigil. So what is a Sigil?
 
 **Minimum Incremental Value**: The minimum value that can be used to Charge a Payable Token. Is also used to determine the cost of certain Actions (Opt-Out; Restricting, Discharging, or Destroying a Token; Overwriting a Token's URI).  
 
-**Transfer Rate**: A fraction of the Minimum Incremental Value that will be used to calculate value distributions.   
+**Transfer Value**: A fraction of the Minimum Incremental Value that will be used to calculate value distributions.   
 
 ### Tokens
 
