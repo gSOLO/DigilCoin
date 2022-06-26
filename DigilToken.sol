@@ -114,6 +114,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @notice Token was Charged
     event Charge(uint256 indexed tokenId);
 
+    /// @notice Token was Discharged
+    event Discharge(uint256 indexed tokenId);
+
     /// @notice Token was Linked to a Plane
     event Link(uint256 indexed tokenId, uint256 indexed linkId);
 
@@ -202,7 +205,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     function configure(uint256 coins, uint256 value, uint256 valueTransferred) public admin {
         require(coins > 0 && valueTransferred <= value && valueTransferred >= (value / 2));
 
-        _coins.approve(_this, ~uint256(0));
         _coinRate = coins * _coinDecimals;
 
         _incrementalValue = value * 1000 gwei;
@@ -437,6 +439,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     // Token Information
+    modifier tokenExists(uint256 tokenId) {
+        require(_exists(tokenId));
+        _;
+    }
+
     function _baseURI() internal view override returns (string memory) {
         return _tokens[0].uri;
     }
@@ -462,16 +469,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @return value The current Value the Token
     /// @return charge The current Charge of the Token
     /// @return incrementalValue The Incremental Value of the Token
+    /// @return activationThreshold The Activation Threshold of the Token
     /// @return linkedCharge The current Charge of the Token generated from Links
     /// @return data The Token's Data
-    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(uint256 value, uint256 charge, uint256 incrementalValue, uint256 linkedCharge, bytes memory data) {
+    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(uint256 value, uint256 charge, uint256 incrementalValue, uint256 activationThreshold, uint256 linkedCharge, bytes memory data) {
         Token storage t = _tokens[tokenId]; 
-        return (t.value, t.charge, t.incrementalValue, t.linkedCharge, t.data);
-    }
-
-    modifier tokenExists(uint256 tokenId) {
-        require(_exists(tokenId));
-        _;
+        return (t.value, t.charge, t.incrementalValue, t.activationThreshold, t.linkedCharge, t.data);
     }
 
     // Create Token
@@ -501,10 +504,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         address addr = _msgSender();
         uint256 tokenId = _createToken(addr, incrementalValue, activationThreshold * _coinDecimals, data);
         Token storage t = _tokens[tokenId];
-        uint256 value = msg.value;
 
-        if (value > 0) {
-            _createValue(tokenId, value);
+        if (msg.value > 0) {
+            _createValue(tokenId, msg.value);
         }
 
         if (plane > 0) {
@@ -524,7 +526,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         }
         
         if (restricted) {
-            require(value >= t.incrementalValue && value >= _incrementalValue);
+            require(msg.value >= t.incrementalValue && msg.value >= _incrementalValue);
             t.restricted = restricted;
             emit Restrict(tokenId);
         }
@@ -609,8 +611,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         uint256 minimumValue = overwriteUri ? (tChargeRate + _incrementalValue) : 0;
         require(msg.value >= minimumValue);
-
         _addValue(msg.value);
+        
         _updateToken(tokenId, incrementalValue, activationThreshold, uri, overwriteUri, bytes(""), false);
     }
 
@@ -811,6 +813,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         delete t.contributors;
 
+        emit Discharge(tokenId);
+
         if (burn) {
 
             delete _tokens[tokenId];
@@ -829,7 +833,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///         Requires a Value sent greater than or equal to the larger of the Token's Incremental Value or the Minimum Incremental Value to be Discharged.
     /// @param  tokenId The ID of the Token to Discharge
     function dischargeToken(uint256 tokenId) public payable approved(tokenId) {
-        _discharge(tokenId, false); 
+        _discharge(tokenId, false);
     }
 
     /// @notice Destroy (burn), an existing Token.
