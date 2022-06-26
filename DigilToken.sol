@@ -55,19 +55,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @dev Token information
     struct Token {
         uint256 charge;
+        uint256 activeCharge;
+        uint256 value;
         uint256 incrementalValue;
-        uint256 value;        
         
-        uint256 linkedCharge;
         uint256[] links;
         mapping(uint256 => uint8) linkEfficiency;
 
         address[] contributors;
         mapping(address => TokenContribution) contributions;
 
-        uint256 activationThreshold;
         bool active;
         bool activated;
+        uint256 activationThreshold;
         
         bytes data;
         string uri;
@@ -99,17 +99,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @notice Token was Restricted
     event Restrict(uint256 indexed tokenId);
 
-    /// @notice Token was Opened after being Restricted
-    event Open(uint256 indexed tokenId);
-
     /// @notice Token was Updated
     event Update(uint256 indexed tokenId);
 
     /// @notice Token was Activated
     event Activate(uint256 indexed tokenId);
-
-    /// @notice Token was Deactivated
-    event Dectivate(uint256 indexed tokenId);
 
     /// @notice Token was Charged
     event Charge(uint256 indexed tokenId);
@@ -448,7 +442,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         return _tokens[0].uri;
     }
 
-    /// @notice If the URI of the Token is explicitly set, it will be returned. 
+    /// @notice Get the URI of a Token
+    /// @dev    If the URI of the Token is explicitly set, it will be returned. 
     ///         If the URI of the Token is not set, a concatenation of the base URI and the Token ID is returned (the default behavior).
     /// @param  tokenId The ID of the Token to retrieve the URI for
     /// @return The Token URI if the Token exists. 
@@ -462,19 +457,34 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         return super.tokenURI(tokenId);
     }
 
-    /// @notice Get the total Value of the Token and any associated Data
-    /// @dev    The Value and Charged Value can be added  together to give the Token's Total Value.
+    /// @notice Get the Charge and Value of a Token
+    /// @dev    The Value and Charged Value can be added together to give the Token's Total Value.
     ///         The Charged Value is derived from the Token's Charge and Incremental Value (Charge (decimals excluded) * Incremental Value)
-    /// @param  tokenId The ID of the token whose Value and Data is to be returned
-    /// @return value The current Value the Token
+    /// @param  tokenId The ID of the token whose Data is to be returned
     /// @return charge The current Charge of the Token
+    /// @return activeCharge The current Charge of the Token generated from Links
+    /// @return value The current Value the Token
     /// @return incrementalValue The Incremental Value of the Token
     /// @return activationThreshold The Activation Threshold of the Token
-    /// @return linkedCharge The current Charge of the Token generated from Links
-    /// @return data The Token's Data
-    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(uint256 value, uint256 charge, uint256 incrementalValue, uint256 activationThreshold, uint256 linkedCharge, bytes memory data) {
+    function tokenCharge(uint256 tokenId) public view tokenExists(tokenId) returns(uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold) {
         Token storage t = _tokens[tokenId]; 
-        return (t.value, t.charge, t.incrementalValue, t.activationThreshold, t.linkedCharge, t.data);
+        return (t.charge, t.activeCharge, t.value, t.incrementalValue, t.activationThreshold);
+    }
+
+    /// @notice Get the Status and additional Data associated with a Token
+    /// @dev    The Active Status is different from the Activated Status in that once Activated,
+    ///         the latter will always remain true, even if the Token is Deactivated.
+    ///         Contributors may still be greater than zero after Discharge if this is a Contract Token,
+    ///         as the first contributor will be an ERC721 address until the underlying Token is Recalled.
+    /// @param  tokenId The ID of the token whose Data is to be returned
+    /// @return active The Active Status of the Token
+    /// @return restricted The Restricted Status of the Token
+    /// @return links The number of Tokens this Token Links to
+    /// @return contributors The number of addresses that have Contributed to the Token
+    /// @return data The Token's Data
+    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(bool active, bool restricted, uint256 links, uint256 contributors, bytes memory data) {
+        Token storage t = _tokens[tokenId]; 
+        return (t.active, t.restricted, t.links.length, t.contributors.length, t.data);
     }
 
     // Create Token
@@ -549,8 +559,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             if (restrict) {
                 require(value >= t.incrementalValue && value >= _incrementalValue);
                 emit Restrict(tokenId);
-            } else {
-                emit Open(tokenId);
             }
         }
 
@@ -625,7 +633,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         if (linksLength == 0 || link) {
 
-            t.linkedCharge += coins;
+            t.activeCharge += coins;
             emit Charge(tokenId);
 
         } else {    
@@ -639,7 +647,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
                 if (charged) {
                     value -= linkedValue;
                 } else {
-                    t.linkedCharge += linkedCoins;
+                    t.activeCharge += linkedCoins;
                 }
             }
 
@@ -766,12 +774,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         
         if (discharge) {
 
-            t.linkedCharge = 0;
+            t.activeCharge = 0;
             _addDistribution(tokenOwner, tValue, 0);
 
         } else {
 
-            t.linkedCharge += tCharge;
+            t.activeCharge += tCharge;
             _addDistribution(tokenOwner, distribution, 0);
             _addValue(tValue);
             
@@ -875,8 +883,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             _addValue(msg.value);
         }
 
-        t.active = false;       
-        emit Dectivate(tokenId);
+        t.active = false;
     }
 
     /// @notice Links two Tokens together in order to generate or transfer Coins on Charge or Token Activation.
