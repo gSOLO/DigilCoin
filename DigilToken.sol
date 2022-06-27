@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.14;
 
+// Strip Revet Strings
 import "github/OpenZeppelin/openzeppelin-contracts/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "github/OpenZeppelin/openzeppelin-contracts/contracts/access/Ownable.sol";
+// OpenZeppelin Interfaces and Utilities
+import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
@@ -233,12 +235,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     // Coin Transfers
-    function _coinsFromSender(uint256 coins) internal returns(bool) {
-        return _transferCoinsFrom(_msgSender(), _this, coins);
+    function _coinsFromSender(uint256 coins) internal {
+        require(_transferCoinsFrom(_msgSender(), _this, coins));
     }
 
-    function _transferCoinsFrom(address from, address to, uint256 coins) internal returns(bool) {
-        return _coins.transferFrom(from, to, coins);
+    function _transferCoinsFrom(address from, address to, uint256 coins) internal returns(bool success) {
+        try _coins.transferFrom(from, to, coins) returns (bool _success) {
+            success = _success;
+        } catch { }
     } 
 
     /// @notice Accepts all payments.
@@ -639,7 +643,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         bool overwriteUri = bytes(uri).length > 0;
         if (overwriteUri && !_ownerIsSender()) {
-            require(_coinsFromSender(_coinRate * 2500));
+            _coinsFromSender(_coinRate * 2500);
         }
 
         uint256 minimumValue = overwriteUri ? (tChargeRate + _incrementalValue) : 0;
@@ -700,7 +704,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         } else {
 
-            require(validContribution && _coinsFromSender(coins));
+            require(validContribution);
+            _coinsFromSender(coins);
 
         }
 
@@ -941,7 +946,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         
         uint256 linkScale = 200 / t.links.length;
         uint256 e = efficiency > linkScale ? efficiency - linkScale : 0;
-        require(_coinsFromSender((efficiency + (e * (e + 1) / 2)) * _coinRate));
+        _coinsFromSender((efficiency + (e * (e + 1) / 2)) * _coinRate);
     }
 
     /// @notice Unlinks Tokens
