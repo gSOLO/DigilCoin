@@ -66,7 +66,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         mapping(address => TokenContribution) contributions;
 
         bool active;
-        bool activated;
         uint256 activationThreshold;
         
         bytes data;
@@ -106,6 +105,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     event Activate(uint256 indexed tokenId);
 
     /// @notice Token was Charged
+    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins);
+
+    /// @notice Active Token was Charged
     event Charge(uint256 indexed tokenId);
 
     /// @notice Token was Discharged
@@ -189,7 +191,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
                 Token storage t = _tokens[tokenId];
                 t.active = true;
-                t.activated = true;
                 t.uri = string(abi.encodePacked(baseURI, plane[tokenId]));
                 t.data = data[tokenId];
             }
@@ -703,9 +704,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         }
 
-        if (t.activated) {
+        if (t.active) {
 
-            _chargeActiveToken(contributor, tokenId, coins, value, link || !t.active);
+            _chargeActiveToken(contributor, tokenId, coins, value, link);
 
         } else {
 
@@ -718,9 +719,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
             uint256 valueContribution = value - contribution;
             if (valueContribution > 0) {
-                uint256 currentValue = t.value;
-                uint256 newValue = currentValue + valueContribution;
-                t.value = newValue;
+                t.value += valueContribution;
             }
 
             if (contribution > 0 || valueContribution > 0) {
@@ -728,7 +727,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             }
             t.charge += coins;
 
-            emit Charge(tokenId);
+            emit Charge(contributor, tokenId, coins);
 
         }
 
@@ -740,17 +739,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @param  tokenId The ID of the Token to Charge
     /// @param  coins The Coins used to Charge the Token (decimals excluded)
     function chargeToken(uint256 tokenId, uint256 coins) public payable {
-        chargeToken(_msgSender(), tokenId, coins);
+        chargeTokenAs(_msgSender(), tokenId, coins * _coinDecimals);
     }
 
-    /// @notice Charge Token on behalf of a contributor.
+    /// @notice Charge Token on behalf of a Contributor.
     ///         Requires a Value sent greater than or equal to the Token's Incremental Value for each Coin.
     /// @param  contributor The address to record as the contributor of this Charge
     /// @param  tokenId The ID of the Token to Charge
-    /// @param  coins The Coins used to Charge the Token (decimals excluded)
-    function chargeToken(address contributor, uint256 tokenId, uint256 coins) public payable operatorEnabled(contributor) {
-        require(coins > 0);
-        _chargeToken(contributor, tokenId, coins * _coinDecimals, msg.value, false);
+    /// @param  coins The Coins used to Charge the Token
+    function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable operatorEnabled(contributor) {
+        require(coins >= _coinDecimals);
+        _chargeToken(contributor, tokenId, coins, msg.value, false);
     }
 
     // Token Distribution
@@ -798,7 +797,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         
         if (discharge) {
 
-            t.activeCharge = 0;
             _addDistribution(tokenOwner, tValue, 0);
 
         } else {
@@ -816,7 +814,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         require(msg.value >= _incrementalValue && msg.value >= t.incrementalValue);
         _addValue(msg.value);
         
-        _distribute(tokenId, burn || !t.activated);
+        _distribute(tokenId, burn || !t.active);
 
         address contractTokenAddress;
 
@@ -890,7 +888,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         }
 
         t.active = true;
-        t.activated = true;
         emit Activate(tokenId);
 
         _distribute(tokenId, false);
