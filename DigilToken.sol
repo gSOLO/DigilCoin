@@ -155,6 +155,29 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         plane[18] = "world";
         plane[19] = "virtual";
         plane[20] = "ilxr";
+
+        bytes[21] memory data;
+        data[0] = "."; // null
+        data[1] = "X"; // void
+        data[2] = "K.N"; // karma
+        data[3] = "K.S"; // kaos
+        data[4] = "X.S"; // fire
+        data[5] = "X.E"; // air
+        data[6] = "X.N"; // earth
+        data[7] = "X.W"; // water
+        data[8] = "X.NW"; // ice
+        data[9] = "X.NE"; // lightning
+        data[10] = "X.NNE"; // metal
+        data[11] = "X.NNW"; // nature
+        data[12] = "X.SE";  // harmony
+        data[13] = "X.SW"; // discord
+        data[14] = "K.W"; // entropy
+        data[15] = "K.E"; // negentropy/exergy
+        data[16] = "K"; // magick/kosmos
+        data[17] = "K.X"; // aether
+        data[18] = "X.R"; // external reality
+        data[19] = ".XR"; // extended reality
+        data[20] = ".ILXR"; // digil reality
         
         unchecked {
             uint256 tokenId;
@@ -168,6 +191,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
                 t.active = true;
                 t.activated = true;
                 t.uri = string(abi.encodePacked(baseURI, plane[tokenId]));
+                t.data = data[tokenId];
             }
         }
 
@@ -194,7 +218,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///                     Number of Coins required to Update a Token URI.
     ///                     Number of Coins required to Link a Token.
     ///                     Number of Coins required to Opt-Out.
-    /// @param  value The minimum value (in twei) used to charge a Token, update a Token URI, or skip executing Links
+    /// @param  value The minimum value (in twei) used to Charge, Activate a Token, update a Token URI
     /// @param  valueTransferred The value (in twei) to be distributed when a Token is Activated as a percentage of the minimum value
     function configure(uint256 coins, uint256 value, uint256 valueTransferred) public admin {
         require(coins > 0 && valueTransferred <= value && valueTransferred >= (value / 2));
@@ -537,7 +561,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         
         if (restricted) {
             require(msg.value >= t.incrementalValue && msg.value >= _incrementalValue);
-            t.restricted = restricted;
+            t.restricted = true;
             emit Restrict(tokenId);
         }
 
@@ -911,11 +935,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         }
 
         t.linkEfficiency[linkId] = efficiency;
-        emit Link(tokenId, linkId, efficiency);
         
         if (linkEfficiency == 0) {
             t.links.push(linkId);
         }
+
+        emit Link(tokenId, linkId, efficiency);
         
         uint256 linkScale = 200 / t.links.length;
         uint256 e = efficiency > linkScale ? efficiency - linkScale : 0;
