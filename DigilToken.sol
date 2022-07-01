@@ -52,6 +52,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         bool recallable;
     }
 
+    struct LinkEfficiency {
+        uint8 base;
+        uint256 affinityBonus;
+    }
+
     /// @dev Token information
     struct Token {
         uint256 charge;
@@ -60,7 +65,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         uint256 incrementalValue;
         
         uint256[] links;
-        mapping(uint256 => uint8) linkEfficiency;
+        mapping(uint256 => LinkEfficiency) linkEfficiency;
 
         address[] contributors;
         mapping(address => TokenContribution) contributions;
@@ -108,7 +113,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins);
 
     /// @notice Active Token was Charged
-    event Charge(uint256 indexed tokenId);
+    event ActiveCharge(uint256 indexed tokenId, uint256 coins);
 
     /// @notice Token was Discharged
     event Discharge(uint256 indexed tokenId);
@@ -117,7 +122,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     event Link(uint256 indexed tokenId, uint256 indexed linkId);
 
     /// @notice Token was Linked
-    event Link(uint256 indexed tokenId, uint256 indexed linkId, uint8 efficiency);
+    event Link(uint256 indexed tokenId, uint256 indexed linkId, uint8 efficiency, uint256 affinityBonus);
 
     /// @notice Token was Unlinked
     event Unlink(uint256 indexed tokenId, uint256 indexed linkId);
@@ -125,8 +130,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @notice Coins and Value was generated for a given address
     event PendingDistribution(address indexed addr, uint256 coins, uint256 value);
 
-    /// @notice Value was Contributed to a Token
+    /// @notice Charged Value was Contributed to a Token
     event Contribution(address indexed addr, uint256 indexed tokenId, uint256 value);
+
+    /// @notice Value was Contributed Directly to a Token
+    event ValueContribution(address indexed addr, uint256 indexed tokenId, uint256 value);
 
     constructor() ERC721("Digil Token", "DiGiL") {
         _this = address(this);
@@ -384,6 +392,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     function _blacklist(address account) private {
+        _notOnBlacklist(account);
         _blacklisted[account] = true;
         emit Blacklist(account);
     }
@@ -396,9 +405,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     /// @notice Opt-Out to prevent Token transfers to/from sender.
-    ///         Requires Incremental Value of half the current Coin Rate.
+    ///         Requires Incremental Value at the current Coin Rate.
     function optOut() public payable {
-        require(msg.value >= _incrementalValue * _coinRate / _coinDecimals / 2, "DiGiL: Insufficient Funds");
+        require(msg.value >= _incrementalValue * _coinRate / _coinDecimals, "DiGiL: Insufficient Funds");
         _blacklist(_msgSender());
         _addValue(msg.value);
     }
@@ -406,6 +415,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @dev    Remove account from Blacklist.
     /// @param  account The address to Whitelist
     function whitelist(address account) public admin {
+        require(_blacklisted[account], "DiGiL: Whitelisted");
         _blacklisted[account] = false;
         emit Whitelist(account);
     }
@@ -435,7 +445,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         if (account == _this) {
             Token storage d = _tokens[tokenId];
             d.links.push(internalId);
-            d.linkEfficiency[internalId] = uint8(100 / d.links.length);
+            d.linkEfficiency[internalId] = LinkEfficiency(uint8(100 / d.links.length), 0);
             uint256 dIncrementalValue = d.incrementalValue;
             if (minimumIncrementalValue < dIncrementalValue) {
                 minimumIncrementalValue = dIncrementalValue;
@@ -548,7 +558,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         }
 
         if (plane > 0) {
-            require (plane <= 18);
+            require(plane <= 18, "DiGiL: Invalid Plane");
             if (plane < 4) {
                 _coinsFromSender(_coinRate * 10);
             } else if (plane > 16) {
@@ -559,7 +569,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
                 _coinsFromSender(_coinRate);
             }
             t.links.push(plane);
-            t.linkEfficiency[plane] = 100;
+            t.linkEfficiency[plane] = LinkEfficiency(100, 0);
             emit Link(tokenId, plane);
         }
         
@@ -655,7 +665,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     // Charge Token
-    function _chargeActiveToken(address contributor, uint256 tokenId, uint256 coins, uint256 value, bool link) internal {
+    function _chargeActiveToken(address contributor, uint256 tokenId, uint256 coins, uint256 activeCoins, uint256 value, bool link) internal {
         Token storage t = _tokens[tokenId];
 
         uint256[] storage links = t.links;
@@ -663,8 +673,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         if (linksLength == 0 || link) {
 
-            t.activeCharge += coins;
-            emit Charge(tokenId);
+            t.activeCharge += coins + activeCoins;
+            emit ActiveCharge(tokenId, coins + activeCoins);
 
         } else {    
 
@@ -672,8 +682,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             uint256 linkIndex;
             for(linkIndex; linkIndex < linksLength; linkIndex++) {                
                 uint256 linkId = links[linkIndex];
-                uint256 linkedCoins = coins / 100 * t.linkEfficiency[linkId];
-                bool charged = _exists(linkId) && _chargeToken(contributor, linkId, linkedCoins, linkedValue, true);
+                uint256 linkedCoins = coins / 100 * t.linkEfficiency[linkId].base;
+                uint256 bonusCoins = coins / 100 * t.linkEfficiency[linkId].affinityBonus;
+                bool charged = _exists(linkId) && _chargeToken(contributor, linkId, linkedCoins, bonusCoins, linkedValue, true);
                 if (charged) {
                     value -= linkedValue;
                 } else {
@@ -688,51 +699,80 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         }
     }
 
-    function _chargeToken(address contributor, uint256 tokenId, uint256 coins, uint256 value, bool link) internal returns(bool) {
+    function _chargeToken(address contributor, uint256 tokenId, uint256 coins, uint256 activeCoins, uint256 value, bool link) internal returns(bool) {
         Token storage t = _tokens[tokenId];
 
         TokenContribution storage c = t.contributions[contributor];
         bool whitelisted = !t.restricted || c.whitelisted;
 
-        uint256 contribution = t.incrementalValue * coins / _coinDecimals;
-        bool validContribution = value >= contribution;
+        uint256 incrementalValue = t.incrementalValue;
+        // The minimum Value required to Charge this Token based on the number of Coins specified
+        uint256 minimumValue = incrementalValue * coins / _coinDecimals;
+
+        // The minimum number of Coins required to Charge this Token based on the Value specified
+        // If the Incremental Value is 0, all Coins will be used to charge this Token
+        uint256 minimumCoins;
+        if (incrementalValue > 0) {
+            minimumCoins = value < incrementalValue || value == 0 ? coins : value / incrementalValue * _coinDecimals;
+
+            // Minimum value cannot be less than the Token's Incremental Value
+            if (minimumValue < incrementalValue) {
+                minimumValue = incrementalValue;
+            }
+        }
+
+        // Minimum number of Coins cannot be less than 1
+        if (minimumCoins < _coinDecimals) {
+            minimumCoins = _coinDecimals;
+        }
 
         if (link) {
-
-            if (!validContribution || !whitelisted) {
+            
+            // Linked Charging can use Active Coins to meet the requirements of the minimum Charge  
+            // If the Contributor isn't Whitelisted, or not enough Coins are supplied by the Link, the Token will not be Charged
+            if (!whitelisted || minimumCoins > (coins + activeCoins)) {
                 return false;
             }
+            minimumValue = value;
 
         } else {
-            require(whitelisted, "DiGiL: Restricted");
-            require(validContribution, "DiGiL: Invalid Contribution");
+
+            require(whitelisted, "DiGiL: Restricted");            
+            require(value >= minimumValue, "DiGiL: Insufficient Funds");
             _coinsFromSender(coins);
 
         }
 
         if (t.active) {
 
-            _chargeActiveToken(contributor, tokenId, coins, value, link);
+            _chargeActiveToken(contributor, tokenId, coins, activeCoins, value, link);
 
         } else {
 
             if (!c.exists) {
-            c.exists = true;
+                c.exists = true;
                 t.contributors.push(contributor);
+            }            
+
+            if (minimumValue > 0) {
+                c.value += minimumValue;
+                emit Contribution(contributor, tokenId, minimumValue);
             }
+            
+            if (value > minimumValue) {
+                t.value += value - minimumValue;
+                emit ValueContribution(contributor, tokenId, value - minimumValue);
+            }
+
+            // If the number of Coins supplied is greater than the minimum required, any excess are added to the Token's Active Charge.
+            if (coins > minimumCoins) {
+                t.activeCharge += coins - minimumCoins;
+                emit ActiveCharge(tokenId, coins - minimumCoins);
+                coins = minimumCoins;
+            }
+
             c.charge += coins;
-            c.value += contribution;
-
-            uint256 valueContribution = value - contribution;
-            if (valueContribution > 0) {
-                t.value += valueContribution;
-            }
-
-            if (contribution > 0 || valueContribution > 0) {
-                emit Contribution(contributor, tokenId, valueContribution);
-            }
             t.charge += coins;
-
             emit Charge(contributor, tokenId, coins);
 
         }
@@ -755,13 +795,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @param  coins The Coins used to Charge the Token
     function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable operatorEnabled(contributor) {
         require(coins >= _coinDecimals, "DiGiL: Insufficient Charge");
-        _chargeToken(contributor, tokenId, coins, msg.value, false);
+        _chargeToken(contributor, tokenId, coins, 0, msg.value, false);
     }
 
     // Token Distribution
     function _distribute(uint256 tokenId, bool discharge) internal {
-        address tokenOwner = ownerOf(tokenId);
-
         Token storage t = _tokens[tokenId];
         uint256 tCharge = t.charge;
         t.charge = 0;
@@ -771,9 +809,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         uint256 distribution;
         uint256 cIndex;
         uint256 cLength = t.contributors.length;
-        uint256 incrementalValue = tCharge > 0 && tCharge >= _coinDecimals ? tValue / (tCharge / _coinDecimals) : 0;
+        uint256 incrementalValue = tCharge >= _coinDecimals ? tValue / (tCharge / _coinDecimals) : 0;
         for (cIndex; cIndex < cLength; cIndex++) {
             address contributor = t.contributors[cIndex];
+            if (contributor == address(0)) {
+                break;
+            }
+
             TokenContribution storage contribution = t.contributions[contributor];
             bool distributed = contribution.distributed;
             contribution.distributed = true;
@@ -803,12 +845,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         
         if (discharge) {
 
-            _addDistribution(tokenOwner, tValue, 0);
+            _addDistribution(ownerOf(tokenId), tValue, 0);
 
         } else {
 
-            t.activeCharge += tCharge;
-            _addDistribution(tokenOwner, distribution, 0);
+            if (tCharge > 0) {
+                t.activeCharge += tCharge;
+                emit ActiveCharge(tokenId, tCharge);
+            }
+            _addDistribution(ownerOf(tokenId), distribution, 0);
             _addValue(tValue);
             
         }
@@ -828,6 +873,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         uint256 cLength = t.contributors.length;
         for (cIndex; cIndex < cLength; cIndex++) {
             address contributor = t.contributors[cIndex];
+            if (contributor == address(0)) {
+                break;
+            }
+            
             TokenContribution storage contribution = t.contributions[contributor];
 
             contribution.charge = 0;
@@ -924,9 +973,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @param  efficiency The Efficiency of the Link
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) public payable approved(tokenId) {
         Token storage t = _tokens[tokenId];
-        uint8 linkEfficiency = t.linkEfficiency[linkId];
+        uint8 baseEfficiency = t.linkEfficiency[linkId].base;
+        uint256 bonusEfficiency = t.linkEfficiency[linkId].affinityBonus;
 
-        require(tokenId != linkId && linkId > 18 && efficiency > linkEfficiency, "DiGiL: Invalid Link");
+        require(tokenId != linkId && linkId > 18 && efficiency > baseEfficiency, "DiGiL: Invalid Link");
         
         Token storage d = _tokens[linkId];
         require(!d.restricted || d.contributions[_msgSender()].whitelisted, "DiGiL: Restricted");
@@ -938,27 +988,76 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             _createValue(linkId, value / 2);
         }
 
-        t.linkEfficiency[linkId] = efficiency;
+        uint256 sourcePlane = t.links[0];
+        uint256 destinationPlane = d.links[0];
+        if (sourcePlane > 0 && sourcePlane <= 18 && destinationPlane > 0 && destinationPlane <= 18) {            
+            uint256 bonus = _affinityBonus(sourcePlane, destinationPlane, efficiency);
+            bonusEfficiency = bonus > bonusEfficiency ? bonus : bonusEfficiency;
+        }
+
+        t.linkEfficiency[linkId].base = efficiency;
+        t.linkEfficiency[linkId].affinityBonus = bonusEfficiency;
         
-        if (linkEfficiency == 0) {
+        if (baseEfficiency == 0) {
             t.links.push(linkId);
         }
 
-        emit Link(tokenId, linkId, efficiency);
+        emit Link(tokenId, linkId, efficiency, bonusEfficiency);
         
         uint256 linkScale = 200 / t.links.length;
         uint256 e = efficiency > linkScale ? efficiency - linkScale : 0;
         _coinsFromSender((efficiency + (e * (e + 1) / 2)) * _coinRate);
     }
 
-    /// @notice Unlinks Tokens
+    function _affinityBonus(uint256 sourceId, uint256 destinationId, uint8 efficiency) internal view returns (uint256 _bonus) {
+        if (           sourceId == 1
+                   || (sourceId == 4 && (destinationId == 5 || destinationId == 9))
+                   || (sourceId == 5 && (destinationId == 4 || destinationId == 9))
+                   || (sourceId == 6 && (destinationId == 7 || destinationId == 11))
+                   || (sourceId == 7 && (destinationId == 6 || destinationId == 11))) {
+                       // void and elemental
+                       _bonus = uint256(efficiency);
+
+        } else if (   (sourceId == 8 && destinationId == 10)
+                   || (sourceId == 9 && (destinationId == 4 || destinationId == 5))
+                   || (sourceId == 10 && destinationId == 8)
+                   || (sourceId == 11 && (destinationId == 6 || destinationId == 7))) {
+                       // paraelemental
+                       _bonus = uint256(efficiency) * 2;
+
+        } else if (    sourceId == 17
+                   || (sourceId == 2 && (destinationId == 3 || destinationId == 1))
+                   || (sourceId == 3 && (destinationId == 2 || destinationId == 1))) {
+                       // aether, karma and kaos
+                       _bonus = uint256(efficiency) * 3;
+
+        } else if (  (sourceId == 12 && (destinationId == 2 || destinationId == 13))
+                   || sourceId == 13 && (destinationId == 3 || destinationId == 12)) {
+                       // energy
+                       _bonus = uint256(efficiency) * 4;
+
+        } else if (    sourceId == 18) {
+                       // world
+                       _bonus = uint256(efficiency) * 5;
+
+        } else if (    sourceId == destinationId) {
+                       _bonus = uint256(efficiency) / 2;
+        }
+
+        if (destinationId == 1 || destinationId == 17 || (_bonus > 0 && _tokens[sourceId].activeCharge < _tokens[destinationId].activeCharge)) {
+            _bonus *= 2;
+        }
+        return _bonus;
+    }
+
+    /// @notice Unlink Tokens
     /// @param  tokenId The ID of the Token to Unlink (source)
     /// @param  linkId The ID of the Token to Unlink (destination)
     function unlinkToken(uint256 tokenId, uint256 linkId) public approved(tokenId) {
         Token storage t = _tokens[tokenId];
-        require(linkId > 0 && t.linkEfficiency[linkId] > 0, "DiGiL: Invalid Link");
+        require(linkId > 0 && t.linkEfficiency[linkId].base > 0, "DiGiL: Invalid Link");
 
-        t.linkEfficiency[linkId] = 0;
+        t.linkEfficiency[linkId] = LinkEfficiency(0, 0);
 
         uint256[] storage links = t.links;
         uint256 linkIndex;
