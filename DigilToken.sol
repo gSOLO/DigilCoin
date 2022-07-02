@@ -306,8 +306,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     function _addValue(uint256 value) private {
-        _addValue(_this, value, 0);
-        emit ContractDistribution(value);
+        if (value > 0) {
+            _addValue(_this, value, 0);
+            emit ContractDistribution(value);
+        }
     }
 
     function _addValue(address addr, uint256 value, uint256 coins) private {
@@ -732,7 +734,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         // The minimum number of Coins required to Charge this Token based on the Value specified
         // If the Incremental Value is 0, all Coins will be used to charge this Token
-        uint256 minimumCoins;
+        uint256 minimumCoins = coins;
         if (incrementalValue > 0) {
             minimumCoins = value < incrementalValue || value == 0 ? coins : value / incrementalValue * _coinDecimals;
 
