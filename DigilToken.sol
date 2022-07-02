@@ -144,16 +144,16 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         string memory baseURI = "https://digil.co.in/token/";
         
         string[21] memory plane;
-        plane[0] = "";
-        plane[1] = "void";
-        plane[2] = "karma";
-        plane[3] = "kaos";
-        plane[4] = "fire";
-        plane[5] = "air";
-        plane[6] = "earth";
-        plane[7] = "water";
-        plane[8] = "ice";
-        plane[9] = "lightning";
+        plane[0] =  "";
+        plane[1] =  "void";
+        plane[2] =  "karma";
+        plane[3] =  "kaos";
+        plane[4] =  "fire";
+        plane[5] =  "air";
+        plane[6] =  "earth";
+        plane[7] =  "water";
+        plane[8] =  "ice";
+        plane[9] =  "lightning";
         plane[10] = "metal";
         plane[11] = "nature";
         plane[12] = "harmony";
@@ -167,25 +167,25 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         plane[20] = "ilxr";
 
         bytes[21] memory data;
-        data[0] = "."; // null
-        data[1] = "X"; // void
-        data[2] = "K.N"; // karma
-        data[3] = "K.S"; // kaos
-        data[4] = "X.S"; // fire
-        data[5] = "X.E"; // air
-        data[6] = "X.N"; // earth
-        data[7] = "X.W"; // water
-        data[8] = "X.NW"; // ice
-        data[9] = "X.NE"; // lightning
-        data[10] = "X.NNE"; // metal
-        data[11] = "X.NNW"; // nature
-        data[12] = "X.SE";  // harmony
-        data[13] = "X.SW"; // discord
-        data[14] = "K.W"; // entropy
-        data[15] = "K.E"; // negentropy/exergy
-        data[16] = "K"; // magick/kosmos
-        data[17] = "K.X"; // aether
-        data[18] = "X.R"; // external reality
+        data[0] =  "."; // null
+        data[1] =  "xro|X"; // void
+        data[2] =  "rox|K.N"; // karma
+        data[3] =  "orx|K.S"; // kaos
+        data[4] =  "fal|X.S"; // fire
+        data[5] =  "afl|X.E"; // air
+        data[6] =  "ewn|X.N"; // earth
+        data[7] =  "wen|X.W"; // water
+        data[8] =  "imm|X.NW"; // ice
+        data[9] =  "lfa|X.NE"; // lightning
+        data[10] = "mii|X.NNE"; // metal
+        data[11] = "new|X.NNW"; // nature
+        data[12] = "hrd|X.SE";  // harmony
+        data[13] = "doh|X.SW"; // discord
+        data[14] = "pod|K.W"; // entropy
+        data[15] = "grh|K.E"; // negentropy/exergy
+        data[16] = "kpg|K"; // magick/kosmos
+        data[17] = "txw|K.X"; // aether
+        data[18] = "wxt|X.R"; // external reality
         data[19] = ".XR"; // extended reality
         data[20] = ".ILXR"; // digil reality
         
@@ -541,8 +541,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///         Linking to a plane other than the 4 elemental planes (4-7; fire, air, earth, water) requires a Coin transfer:
     ///             void, karmic, and kaotic planes (1-3; void, karma, kaos): 10x Coin Rate
     ///             paraelemental planes (8-11; ice, lightning, metal, nature): 1x Coin Rate
-    ///             energy planes (12-16; harmony, discord, entropy, exergy, magick): 100x Coin Rate
-    ///             ethereal planes (17-18; aether, world): 250x Coin Rate
+    ///             energy planes (12-16; harmony, discord, entropy, exergy, magick): 25x Coin Rate
+    ///             ethereal planes (17-18; aether, world): 100x Coin Rate
     /// @dev    Data stored with the Token cannot be updated.
     /// @param  incrementalValue the Value (in wei), required to be sent with each Coin used to Charge the Token. Can be 0 or a multiple of the Minimum Incremental Value
     /// @param  activationThreshold the number of Coins required for the Token to be Activated (decimals excluded)
@@ -562,9 +562,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             if (plane < 4) {
                 _coinsFromSender(_coinRate * 10);
             } else if (plane > 16) {
-                _coinsFromSender(_coinRate * 250);
-            } else if (plane > 11) {
                 _coinsFromSender(_coinRate * 100);
+            } else if (plane > 11) {
+                _coinsFromSender(_coinRate * 25);
             } else if (plane > 7) {
                 _coinsFromSender(_coinRate);
             }
@@ -1010,43 +1010,29 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     }
 
     function _affinityBonus(uint256 sourceId, uint256 destinationId, uint8 efficiency) internal view returns (uint256 _bonus) {
-        if (           sourceId == 1
-                   || (sourceId == 4 && (destinationId == 5 || destinationId == 9))
-                   || (sourceId == 5 && (destinationId == 4 || destinationId == 9))
-                   || (sourceId == 6 && (destinationId == 7 || destinationId == 11))
-                   || (sourceId == 7 && (destinationId == 6 || destinationId == 11))) {
-                       // void and elemental
-                       _bonus = uint256(efficiency);
+        bytes storage s = _tokens[sourceId].data;
+        bytes storage d = _tokens[destinationId].data;
 
-        } else if (   (sourceId == 8 && destinationId == 10)
-                   || (sourceId == 9 && (destinationId == 4 || destinationId == 5))
-                   || (sourceId == 10 && destinationId == 8)
-                   || (sourceId == 11 && (destinationId == 6 || destinationId == 7))) {
-                       // paraelemental
-                       _bonus = uint256(efficiency) * 2;
-
-        } else if (    sourceId == 17
-                   || (sourceId == 2 && (destinationId == 3 || destinationId == 1))
-                   || (sourceId == 3 && (destinationId == 2 || destinationId == 1))) {
-                       // aether, karma and kaos
-                       _bonus = uint256(efficiency) * 3;
-
-        } else if (  (sourceId == 12 && (destinationId == 2 || destinationId == 13))
-                   || sourceId == 13 && (destinationId == 3 || destinationId == 12)) {
-                       // energy
-                       _bonus = uint256(efficiency) * 4;
-
-        } else if (    sourceId == 18) {
-                       // world
-                       _bonus = uint256(efficiency) * 5;
-
-        } else if (    sourceId == destinationId) {
-                       _bonus = uint256(efficiency) / 2;
+        if (s[1] == d[0] || s[2] == d[0]) {
+            _bonus = uint256(efficiency) * 2;
+        } else if (sourceId == destinationId || sourceId > 16) {
+            _bonus = uint256(efficiency);
         }
 
-        if (destinationId == 1 || destinationId == 17 || (_bonus > 0 && _tokens[sourceId].activeCharge < _tokens[destinationId].activeCharge)) {
+        if (_bonus == 0) {
+            return _bonus;
+        }
+
+        if (sourceId > 16) {
+            _bonus *= 4;
+        } else if (sourceId > 11) {
             _bonus *= 2;
         }
+
+        if (_tokens[sourceId].activeCharge >= _tokens[destinationId].activeCharge) {
+            _bonus /= 2;
+        }
+
         return _bonus;
     }
 
