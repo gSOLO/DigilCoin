@@ -13,7 +13,7 @@ A Digil is a Digital Sigil. So what is a Sigil?
 
 ## Digil Token | ERC721 Token (NFT)
 **Symbol**: DiGiL  
-**Contract Address**: _Not Yet Deployed_
+**Contract Address**: [0xf16Bd22EB4C1463575D929F98250e4fff8E8D6a2](https://etherscan.io/token/0xf16bd22eb4c1463575d929f98250e4fff8e8d6a2)
 
 ### Contract Configuration
 
