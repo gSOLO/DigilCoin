@@ -15,6 +15,12 @@ A Digil is a Digital Sigil. So what is a Sigil?
 **Symbol**: DiGiL  
 **Contract Address**: [0xf16Bd22EB4C1463575D929F98250e4fff8E8D6a2](https://etherscan.io/token/0xf16bd22eb4c1463575d929f98250e4fff8e8d6a2)
 
+### Solidity Version 0.8.15 Compiler Warnings
+
+This contract is unaffected by the `StorageWriteRemovalBeforeConditionalTermination` Solidity bug introduced in compiler version 0.8.13, as it doesn’t contain any inline assembly block with `return(...)` statements that use a storasge write.
+
+This contract is unaffected by the `AbiReencodingHeadOverflowWithStaticArrayCleanup` Solidity bug introduced in compiler version 0.5.8, as there are no conditions in which it should need to perform ABI-encoding of a statically-sized calldata arrays as the last component of a tuple.  
+
 ### Contract Configuration
 
 **Coin Rate**: The maximum number of bonus Coins distributed on withdrawal, and the rate used to determine the cost of certain Actions (Opt-Out; Linking Tokens; Overwriting a Token's URI).  
