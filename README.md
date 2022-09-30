@@ -7,25 +7,7 @@ Web3 Layer of the [Digil Project](https://digil.app)
 A Digil is a Digital Sigil. So what is a Sigil?
 > A sigil is a type of symbol used in magic. In modern usage, especially in the context of chaos magic, sigil refers to a symbolic representation of the practitioner's desired outcome.<sup>[?](https://en.wikipedia.org/wiki/Sigil)</sup>  
 
-<img src="assets/Coin App@2x.png" width="120" style="float: left;">
-<img src="assets/images/null/image.png" width="60" style="float: left;">
-<img src="assets/images/void/image.png" width="60" style="float: left;">
-<img src="assets/images/karma/image.png" width="60" style="float: left;">
-<img src="assets/images/kaos/image.png" width="60" style="float: left;">
-<img src="assets/images/fire/image.png" width="60" style="float: left;">
-<img src="assets/images/air/image.png" width="60" style="float: left;">
-<img src="assets/images/earth/image.png" width="60" style="float: left;">
-<img src="assets/images/water/image.png" width="60" style="float: left;">
-<img src="assets/images/ice/image.png" width="60" style="float: left;">
-<img src="assets/images/lightning/image.png" width="60" style="float: left;">
-<img src="assets/images/metal/image.png" width="60" style="float: left;">
-<img src="assets/images/nature/image.png" width="60" style="float: left;">
-<img src="assets/images/harmony/image.png" width="60" style="float: left;">
-<img src="assets/images/discord/image.png" width="60" style="float: left;">
-<img src="assets/images/entropy/image.png" width="60" style="float: left;">
-<img src="assets/images/exergy/image.png" width="60" style="float: left;">
-<img src="assets/images/aether/image.png" width="60" style="float: left;">
-<img src="assets/images/world/image.png" width="60" style="float: left;">
+<img src="assets/tokens.png" width="900">
 
 ## Digil Coin | ERC20 Token
 **Symbol**: DIGIL  
