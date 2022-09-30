@@ -5,7 +5,9 @@ Web3 Layer of the [Digil Project](https://digil.app)
 ### What is a Digil?
 
 A Digil is a Digital Sigil. So what is a Sigil?
-> A sigil is a type of symbol used in magic. In modern usage, especially in the context of chaos magic, sigil refers to a symbolic representation of the practitioner's desired outcome.<sup>[?](https://en.wikipedia.org/wiki/Sigil)</sup>
+> A sigil is a type of symbol used in magic. In modern usage, especially in the context of chaos magic, sigil refers to a symbolic representation of the practitioner's desired outcome.<sup>[?](https://en.wikipedia.org/wiki/Sigil)</sup>  
+
+<img src="assets/tokens.png" width="900">
 
 ## Digil Coin | ERC20 Token
 **Symbol**: DIGIL  
