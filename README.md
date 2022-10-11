@@ -55,7 +55,7 @@ Planes are special Tokens that can be linked to at Token Creation.
 
 **Elemental Planes**: Fire<sup>4</sup>, Air<sup>5</sup>, Earth<sup>6</sup>, Water<sup>7</sup>  
 
-**Paraelemental Planes**: Ice<sup>8</sup>, Lightning<sup>9</sup>, Metal<sup>10</sup>, NAture<sup>11</sup>  
+**Paraelemental Planes**: Ice<sup>8</sup>, Lightning<sup>9</sup>, Metal<sup>10</sup>, Nature<sup>11</sup>  
 
 **Harmony**<sup>12</sup>, **Discord**<sup>13</sup>, **Entropy**<sup>14</sup>, **Negentropy/Exergy**<sup>15</sup>, **Magick**<sup>16</sup>  
 
