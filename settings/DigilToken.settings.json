@@ -1,0 +1,31 @@
+{
+  "optimizer": {
+    "details": {
+      "peephole": true,
+      "inliner": true,
+      "jumpdestRemover": true,
+      "orderLiterals": false,
+      "deduplicate": true,
+      "cse": false,
+      "constantOptimizer": true,
+      "yul": false
+    }
+  },
+  "outputSelection": {
+    "*": {
+      "*": [
+        "evm.bytecode",
+        "evm.deployedBytecode",
+        "abi"
+      ]
+    }
+  },
+  "evmVersion": "byzantium",
+  "debug": {
+    "revertStrings": "strip",
+    "debugInfo": [
+      "location",
+      "snippet"
+    ]
+  }
+}
