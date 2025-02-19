@@ -1,0 +1,35 @@
+{
+  "language": "Solidity",
+  "settings": {
+	  "optimizer": {
+		"details": {
+		  "peephole": true,
+		  "inliner": true,
+		  "jumpdestRemover": true,
+		  "orderLiterals": false,
+		  "deduplicate": true,
+		  "cse": false,
+		  "constantOptimizer": true,
+		  "simpleCounterForLoopUncheckedIncrement": true,
+		  "yul": false
+		}
+	  },
+	  "outputSelection": {
+		"*": {
+		  "*": [
+			"evm.bytecode",
+			"evm.deployedBytecode",
+			"abi"
+		  ]
+		}
+	  },
+	  "evmVersion": "cancun",
+	  "debug": {
+		"revertStrings": "strip",
+		"debugInfo": [
+		  "location",
+		  "snippet"
+		]
+	  }
+  }
+}
