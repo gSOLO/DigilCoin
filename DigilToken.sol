@@ -7,25 +7,30 @@ import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 
 /// @title Digil Token (NFT)
 /// @author gSOLO
 /// @notice NFT contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
 /// @custom:security-contact security@digil.co.in
-contract DigilToken is ERC721, Ownable, IERC721Receiver {
+contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     using Strings for uint256;
-    
-    IERC20 private _coins = IERC20(0xd9145CCE52D386f254917e481eB44e9943F39138);
-    uint256 private _coinDecimals = 10 ** 18;
-    uint256 private _coinRate = 100 * 10 ** 18;
 
-    uint256 private _incrementalValue = 100 * 1000 gwei;
-    uint256 private _transferValue = 95 * 1000 gwei;
+    uint256 private constant BONUS_INTERVAL = 15 minutes;
+    uint256 private constant TWEI_MULTIPLIER = 1000 gwei;
+    
+    IERC20 private immutable _coins;
+    address private immutable _this;
+
+    uint256 private immutable _coinDecimals;
+    uint256 private _coinRate;
+
+    uint256 private _incrementalValue = 100 * TWEI_MULTIPLIER;
+    uint256 private _transferValue = 95 * TWEI_MULTIPLIER;
 
     uint16 private _batchCount = 2;
 
-    bool _paused;
-    address _this;
+    bool private _paused;
 
     mapping(uint256 => Token) private _tokens;
     mapping(address => bool) private _blacklisted;
@@ -70,26 +75,28 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         uint256 distributionValue;
         uint256 incrementalValue;
         
-        uint256[] links;
-        mapping(uint256 => LinkEfficiency) linkEfficiency;
-
-        
-        address[] contributors;
-        mapping(address => TokenContribution) contributions;
         uint256 dischargeIndex;
         uint256 distributionIndex;
 
-        bool active;
         uint256 activationThreshold;
+        
+        uint256[] links;
+        mapping(uint256 => LinkEfficiency) linkEfficiency;
+        
+        address[] contributors;
+        mapping(address => TokenContribution) contributions;
         
         bytes data;
         string uri;
 
+        bool active;
         bool restricted;
     }
 
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIdCounter;
+
+    // Events
 
     /// @dev Configuration was updated
     event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchCount);
@@ -120,6 +127,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
     /// @notice Token was Activated
     event Activate(uint256 indexed tokenId, bool complete);
+
+    /// @notice Token was Deactivated
+    event Deactivate(uint256 indexed tokenId);
 
     /// @notice Token was Charged
     event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins);
@@ -157,8 +167,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     /// @notice Value was Added to a Token
     event ContributeValue(uint256 indexed tokenId, uint256 value);
 
-    constructor(address initialOwner) ERC721("Digil Token", "DiGiL") Ownable(initialOwner) {
+    constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digil Token", "DIGIL") Ownable(initialOwner) {
         _this = address(this);
+        _coins = IERC20(coins);
+        _coinDecimals = 10 ** 18;
+        _coinRate = 100 * coinDecimals;
         _coins.approve(_this, type(uint256).max);
         
         address sender = msg.sender;
@@ -265,8 +278,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         _coins.approve(_this, type(uint256).max);
         _coinRate = coins * _coinDecimals;
 
-        _incrementalValue = value * 1000 gwei;
-        _transferValue = valueTransferred * 1000 gwei;
+        _incrementalValue = value * TWEI_MULTIPLIER;
+        _transferValue = valueTransferred * TWEI_MULTIPLIER;
 
         _batchCount = batchCount;
         
@@ -294,7 +307,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
     ///         A number of bonus Coins are available every 15 minutes for those who already hold Coins, Tokens, or have any pending Value distributions.
     /// @return coins The number of Coins transferred
     /// @return value The Value transferred
-    function withdraw() public enabled returns(uint256 coins, uint256 value) {
+    function withdraw() public enabled nonReentrant returns(uint256 coins, uint256 value) {
         address addr = _msgSender();
         _notOnBlacklist(addr);
 
@@ -309,7 +322,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         if (value > 0 || balanceOf(addr) > 0 || _coins.balanceOf(addr) > 0) {
             uint256 lastBonusTime = distribution.time;            
             distribution.time = block.timestamp;
-            uint256 bonus = (block.timestamp - lastBonusTime) / 15 minutes * _coinDecimals;
+            uint256 bonus = (block.timestamp - lastBonusTime) / BONUS_INTERVAL * _coinDecimals;
             coins += (bonus < _coinRate ? bonus : _coinRate);
         }
 
@@ -856,14 +869,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         }
         uint256 incrementalValue = dCharge >= _coinDecimals ? dValue / (dCharge / _coinDecimals) : 0;
 
+        uint256 dIndex = t.distributionIndex;
+
         uint256 distribution;
-        uint256 cEndIndex = t.distributionIndex + _batchCount;
+        
+        uint256 cEndIndex = dIndex + _batchCount;
         if (cEndIndex > t.contributors.length) {
             cEndIndex = t.contributors.length;
         }
         
-        for (t.distributionIndex; t.distributionIndex < cEndIndex; t.distributionIndex++) {
-            address contributor = t.contributors[t.distributionIndex];
+        for (dIndex; dIndex < cEndIndex; dIndex++) {
+            address contributor = t.contributors[dIndex];
             if (contributor == address(0)) {
                 break;
             }
@@ -897,7 +913,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
             }
         }
-
         if (cEndIndex == t.contributors.length) {
 
             // Distribution is complete
@@ -929,6 +944,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
             
         } else {
 
+            t.distributionIndex = dIndex;
+
             if (!discharge && distribution > 0) {
                 // If not Discharging, create a distribution for the Token Owner.
                 _addDistribution(ownerOf(tokenId), distribution, 0);
@@ -955,13 +972,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         address contractTokenAddress;
 
+        uint256 dIndex = t.dischargeIndex;
+
         uint256 cLength = t.contributors.length;
-        uint256 cEndIndex = t.dischargeIndex + _batchCount;
+        uint256 cEndIndex = dIndex + _batchCount;
         if (cEndIndex > cLength) {
             cEndIndex = cLength;
         }
-        for (t.dischargeIndex; t.dischargeIndex < cEndIndex; t.dischargeIndex++) {
-            address contributor = t.contributors[t.dischargeIndex];
+        for (dIndex; dIndex < cEndIndex; dIndex++) {
+            address contributor = t.contributors[dIndex];
             if (contributor == address(0)) {
                 break;
             }
@@ -984,7 +1003,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
                 }
             }
         }
-        
+
         if (cEndIndex == cLength) {
 
             t.dischargeIndex = 0;
@@ -993,6 +1012,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
 
         } else {
 
+            t.dischargeIndex = dIndex;
             emit Discharge(tokenId, false);
             return false;
 
@@ -1075,6 +1095,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver {
         }
 
         t.active = false;
+        emit Deactivate(tokenId);
     }
 
     /// @notice Links two Tokens together in order to generate or transfer Coins on Charge or Token Activation.
