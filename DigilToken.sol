@@ -377,6 +377,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function createValue(uint256 tokenId, uint256 value) public payable admin {
         _addValue(msg.value);
 
+        require(_distributions[_this].value >= value, "DiGiL: Insufficiant Funds");
         _distributions[_this].value -= value;
 
         _createValue(tokenId, value);
