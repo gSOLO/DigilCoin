@@ -30,8 +30,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     uint16 private _batchCount = 2;
 
-    bool private _paused;
-
     mapping(uint256 => Token) private _tokens;
     mapping(address => bool) private _blacklisted;
     mapping(address => Distribution) private _distributions;
@@ -307,7 +305,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         A number of bonus Coins are available every 15 minutes for those who already hold Coins, Tokens, or have any pending Value distributions.
     /// @return coins The number of Coins transferred
     /// @return value The Value transferred
-    function withdraw() public enabled nonReentrant returns(uint256 coins, uint256 value) {
+    function withdraw() public nonReentrant returns(uint256 coins, uint256 value) {
         address addr = _msgSender();
         _notOnBlacklist(addr);
 
@@ -385,7 +383,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _createValue(tokenId, value);
     }
 
-    function _update(address to, uint256 tokenId, address auth) internal enabled override(ERC721) returns (address)
+    function _update(address to, uint256 tokenId, address auth) internal override(ERC721) returns (address)
     {
         _notOnBlacklist(auth);
         _notOnBlacklist(to);
@@ -394,42 +392,16 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return from;
     }
 
-    function _whenNotPaused() private view {
-        require(_paused == false, "DiGiL: Paused");
-    }
-
-    function _enabled(address account) private view {
-        _whenNotPaused();
-        _notOnBlacklist(account);
-    }
-
     modifier approved(uint256 tokenId) {
         address account = _msgSender();
-        _enabled(account);
+        _notOnBlacklist(account);
         require(_isAuthorized(ownerOf(tokenId), account, tokenId), "DiGiL: Not Approved");
         _;
     }
 
     modifier operatorEnabled(address account) {
-        _enabled(account);
+        _notOnBlacklist(account);
         _;
-    }
-
-    modifier enabled() {
-        _whenNotPaused();
-        _;
-    }
-
-    /// @dev Pause the contract
-    function pause() public admin {
-        _paused = true;
-        emit Pause();
-    }
-
-    /// @dev Unpause the contract
-    function unpause() public admin {
-        _paused = false;
-        emit Unpause();
     }
 
     // Blacklist
