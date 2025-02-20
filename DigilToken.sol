@@ -106,10 +106,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     event Unpause();
 
     /// @dev Address was added to the contract Blacklist
-    event Blacklist(address indexed account);
+    event OptOut(address indexed account);
 
     /// @dev Address was removed from the contract Blacklist
-    event Whitelist(address indexed account);
+    event OptIn(address indexed account);
 
     /// @dev Address was added to a Token's Whitelist
     event Whitelist(address indexed account, uint256 indexed tokenId);
@@ -245,7 +245,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         _tokens[0].restricted = true;
-        _tokens[20].restricted = true;
     }
 
     function _ownerIsSender() private view returns(bool) {
@@ -409,29 +408,29 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Blacklist
     function _notOnBlacklist(address account) internal view {
-        require(!_blacklisted[account], "DiGiL: Blacklisted");
+        require(!_blacklisted[account], "DiGiL: Opted Out");
     }
 
     /// @notice Opt-Out to prevent Token transfers to/from sender.
     ///         Requires Incremental Value at the current Coin Rate.
     function optOut() public payable {
         address account = _msgSender();
-        require(!_blacklisted[account], "DiGiL: Blacklisted");
+        require(!_blacklisted[account], "DiGiL: Already Opted Out");
         require(msg.value >= _incrementalValue * _coinRate / _coinDecimals, "DiGiL: Insufficient Funds");
         _addValue(msg.value);
         _blacklisted[account] = true;
-        emit Blacklist(account);
+        emit OptOut(account);
     }
 
     /// @notice Opt-In to allow Token transfers to/from sender.
     ///         Requires Incremental Value at the current Coin Rate.
     function optIn() public payable {
         address account = _msgSender();
-        require(_blacklisted[account], "DiGiL: Whitelisted");
+        require(_blacklisted[account], "DiGiL: Not Opted Out");
         require(msg.value >= _incrementalValue * _coinRate / _coinDecimals, "DiGiL: Insufficient Funds");
         _addValue(msg.value);
         _blacklisted[account] = false;
-        emit Whitelist(account);
+        emit OptIn(account);
     }
 
     /// @dev    When an ERC721 token is sent to this contract, creates a new Token representing the token received.
