@@ -16,14 +16,14 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     using Strings for uint256;
 
-    uint256 private constant BONUS_INTERVAL = 15 minutes;
-    uint256 private constant TWEI_MULTIPLIER = 1000 gwei;
-    
-    IERC20 private immutable _coins;
     address private immutable _this;
+    IERC20 private immutable _coins;
 
     uint256 private immutable _coinDecimals;
     uint256 private _coinRate;
+
+    uint256 private constant BONUS_INTERVAL = 15 minutes;
+    uint256 private constant TWEI_MULTIPLIER = 1000 gwei;
 
     uint256 private _incrementalValue = 100 * TWEI_MULTIPLIER;
     uint256 private _transferValue = 95 * TWEI_MULTIPLIER;
@@ -170,7 +170,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digil Token", "DIGIL") Ownable(initialOwner) {
         _this = address(this);
         _coins = IERC20(coins);
-        _coinDecimals = 10 ** 18;
+        _coinDecimals = coinDecimals;
         _coinRate = 100 * coinDecimals;
         _coins.approve(_this, type(uint256).max);
         
