@@ -385,9 +385,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     function _update(address to, uint256 tokenId, address auth) internal override(ERC721) returns (address)
     {
-        _notOnBlacklist(auth);
+        // Before token tranfer, ensure that all parties are not on the blacklist.
+        _notOnBlacklist(_msgSender());
         _notOnBlacklist(to);
+        // Transfert token
         address from = super._update(to, tokenId, auth);
+        // Whtelist new owner
         _tokens[tokenId].contributions[to].whitelisted = true;
         return from;
     }
@@ -409,31 +412,24 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(!_blacklisted[account], "DiGiL: Blacklisted");
     }
 
-    function _blacklist(address account) private {
-        _notOnBlacklist(account);
+    /// @notice Opt-Out to prevent Token transfers to/from sender.
+    ///         Requires Incremental Value at the current Coin Rate.
+    function optOut() public payable {
+        address account = _msgSender();
+        require(!_blacklisted[account], "DiGiL: Blacklisted");
+        require(msg.value >= _incrementalValue * _coinRate / _coinDecimals, "DiGiL: Insufficient Funds");
+        _addValue(msg.value);
         _blacklisted[account] = true;
         emit Blacklist(account);
     }
 
-    /// @dev    Add account to Blacklist
-    /// @param  account The address to Blacklist
-    function blacklist(address account) public admin {
-        require(account != address(0) && account != owner(), "DiGiL: Invalid Blacklist Address");
-        _blacklist(account);
-    }
-
-    /// @notice Opt-Out to prevent Token transfers to/from sender.
+    /// @notice Opt-In to allow Token transfers to/from sender.
     ///         Requires Incremental Value at the current Coin Rate.
-    function optOut() public payable {
-        require(msg.value >= _incrementalValue * _coinRate / _coinDecimals, "DiGiL: Insufficient Funds");
-        _blacklist(_msgSender());
-        _addValue(msg.value);
-    }
-
-    /// @dev    Remove account from Blacklist.
-    /// @param  account The address to Whitelist
-    function whitelist(address account) public admin {
+    function optIn() public payable {
+        address account = _msgSender();
         require(_blacklisted[account], "DiGiL: Whitelisted");
+        require(msg.value >= _incrementalValue * _coinRate / _coinDecimals, "DiGiL: Insufficient Funds");
+        _addValue(msg.value);
         _blacklisted[account] = false;
         emit Whitelist(account);
     }
