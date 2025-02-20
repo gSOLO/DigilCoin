@@ -94,24 +94,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIdCounter;
 
-    // Events
+    // Events and Errors
 
-    /// @dev Configuration was updated
+    /// @notice Configuration was updated
     event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchCount);
 
-    /// @dev Contract was Paused
-    event Pause();
-
-    /// @dev Contract was Unpaused
-    event Unpause();
-
-    /// @dev Address was added to the contract Blacklist
+    /// @notice Address was added to the contract Blacklist
     event OptOut(address indexed account);
 
-    /// @dev Address was removed from the contract Blacklist
+    /// @notice Address was removed from the contract Blacklist
     event OptIn(address indexed account);
 
-    /// @dev Address was added to a Token's Whitelist
+    /// @notice Address was added to a Token's Whitelist
     event Whitelist(address indexed account, uint256 indexed tokenId);
 
     /// @notice Token was Created
@@ -164,6 +158,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Value was Added to a Token
     event ContributeValue(uint256 indexed tokenId, uint256 value);
+
+    /// @notice Insifficient Value sent
+    error InsufficientFunds(uint256 required);
+
+    /// @notice Coin transfer failed
+    error CoinTransferFailed(uint256 coins);
 
     constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digil Token", "DIGIL") Ownable(initialOwner) {
         _this = address(this);
@@ -285,7 +285,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Coin Transfers
     function _coinsFromSender(uint256 coins) internal {
-        require(_transferCoinsFrom(_msgSender(), _this, coins), "DiGiL: Coin Transfer Failed");
+        if (!_transferCoinsFrom(_msgSender(), _this, coins)) revert CoinTransferFailed(coins);
     }
 
     function _transferCoinsFrom(address from, address to, uint256 coins) internal returns(bool success) {
@@ -377,7 +377,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function createValue(uint256 tokenId, uint256 value) public payable admin {
         _addValue(msg.value);
 
-        require(_distributions[_this].value >= value, "DiGiL: Insufficiant Funds");
+        if (_distributions[_this].value < value) revert InsufficientFunds(value);
+
         _distributions[_this].value -= value;
 
         _createValue(tokenId, value);
@@ -417,7 +418,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function optOut() public payable {
         address account = _msgSender();
         require(!_blacklisted[account], "DiGiL: Already Opted Out");
-        require(msg.value >= _incrementalValue * _coinRate / _coinDecimals, "DiGiL: Insufficient Funds");
+        
+        uint256 required = _incrementalValue * _coinRate / _coinDecimals;
+        if (msg.value < required) revert InsufficientFunds(required);
+
         _addValue(msg.value);
         _blacklisted[account] = true;
         emit OptOut(account);
@@ -428,7 +432,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function optIn() public payable {
         address account = _msgSender();
         require(_blacklisted[account], "DiGiL: Not Opted Out");
-        require(msg.value >= _incrementalValue * _coinRate / _coinDecimals, "DiGiL: Insufficient Funds");
+        
+        uint256 required = _incrementalValue * _coinRate / _coinDecimals;
+        if (msg.value < required) revert InsufficientFunds(required);
+
         _addValue(msg.value);
         _blacklisted[account] = false;
         emit OptIn(account);
@@ -576,6 +583,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 tokenId = _createToken(_msgSender(), incrementalValue, activationThreshold * _coinDecimals, data);
         Token storage t = _tokens[tokenId];
 
+        if (restricted) {
+            uint256 required = t.incrementalValue > _incrementalValue ? t.incrementalValue : _incrementalValue;
+            if (msg.value < required) revert InsufficientFunds(required);
+
+            t.restricted = true;
+            emit Restrict(tokenId);
+        }
+
         if (msg.value > 0) {
             _createValue(tokenId, msg.value);
         }
@@ -596,12 +611,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             emit Link(tokenId, plane);
         }
         
-        if (restricted) {
-            require(msg.value >= t.incrementalValue && msg.value >= _incrementalValue, "DiGiL: Insufficient Funds");
-            t.restricted = true;
-            emit Restrict(tokenId);
-        }
-
         return tokenId;
     }
 
@@ -620,7 +629,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (restrict != wasRestricted) {
             t.restricted = restrict;
             if (restrict) {
-                require(value >= t.incrementalValue && value >= _incrementalValue, "DiGiL: Insufficient Funds");
+                uint256 required = t.incrementalValue > _incrementalValue ? t.incrementalValue : _incrementalValue;
+                if (value < required) revert InsufficientFunds(required);
                 emit Restrict(tokenId);
             }
         }
@@ -668,7 +678,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         uint256 minimumValue = (overwriteData || overwriteUri) ? (t.incrementalValue + _incrementalValue) : 0;
-        require(msg.value >= minimumValue, "DiGiL: Insufficient Funds");
+        if (msg.value < minimumValue) revert InsufficientFunds(minimumValue);
+
         _addValue(msg.value);
 
         t.incrementalValue = incrementalValue;
@@ -760,8 +771,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         } else {
 
-            require(whitelisted, "DiGiL: Restricted");            
-            require(value >= minimumValue, "DiGiL: Insufficient Funds");
+            require(whitelisted, "DiGiL: Restricted");    
+
+            if (value < minimumValue) revert InsufficientFunds(minimumValue);
+
             _coinsFromSender(coins);
 
         }
@@ -928,7 +941,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Discharge Token
     function _discharge(uint256 tokenId, bool burn) internal returns(bool) {
         Token storage t = _tokens[tokenId];
-        require(msg.value >= _incrementalValue && msg.value >= t.incrementalValue, "DiGiL: Insufficient Funds");
+        
+        uint256 required = _incrementalValue > t.incrementalValue ? _incrementalValue : t.incrementalValue;
+        if (msg.value < required) revert InsufficientFunds(required);
+
         _addValue(msg.value);
         
         bool distributionComplete = _distribute(tokenId, burn || !t.active);
@@ -1056,7 +1072,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function deactivateToken(uint256 tokenId) public payable approved(tokenId) {
         Token storage t = _tokens[tokenId];
         require(t.active == true && t.charge == 0, "DiGiL: Token Cannot Be Deactivated");
-        require(msg.value >= t.incrementalValue, "DiGiL: Insufficient Funds");
+        
+        if (msg.value < t.incrementalValue) revert InsufficientFunds(t.incrementalValue);
 
         if (msg.value > 0) {
             _addValue(msg.value);
@@ -1067,7 +1084,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Links two Tokens together in order to generate or transfer Coins on Charge or Token Activation.
-    ///         Requires a Value greater than or equal to the larger of the source and destination Token's Incremental Value.
+    ///         Requires a Value greater than the sum of the source and destination Token's Incremental Value.
     ///         Any Value contributed is split between and added to the source and destination Token.
     ///         Requires a summation of Coins at the Coin Rate depending on the number of existing Links.
     ///         An Efficiency of 1 is meant to indicate a Coin generation or transfer of 1%; 100 would be 100%; 200 would be 200%; et. cetera.
@@ -1088,7 +1105,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(!d.restricted || d.contributions[_msgSender()].whitelisted, "DiGiL: Restricted");
 
         uint256 value = msg.value;
-        require(value >= (t.incrementalValue + d.incrementalValue), "DiGiL: Insufficient Funds");
+        if (value < (t.incrementalValue + d.incrementalValue)) revert InsufficientFunds(t.incrementalValue + d.incrementalValue);
+
         if (value > 0) {
             _createValue(tokenId, value / 2);
             _createValue(linkId, value / 2);
