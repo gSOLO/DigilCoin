@@ -105,6 +105,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Address was removed from the contract Blacklist
     event OptIn(address indexed account);
 
+    /// @notice Token was Rescued
+    event Rescue(address indexed from, address indexed to, uint256 indexed tokenId);
+
     /// @notice Address was added to a Token's Whitelist
     event Whitelist(address indexed account, uint256 indexed tokenId);
 
@@ -117,7 +120,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Token was Updated
     event Update(uint256 indexed tokenId);
 
-    /// @notice Token was Activated
+    /// @notice Token was Activated or is in the process of being Activated
     event Activate(uint256 indexed tokenId, bool complete);
 
     /// @notice Token was Deactivated
@@ -129,10 +132,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Active Token was Charged
     event ActiveCharge(uint256 indexed tokenId, uint256 coins);
 
-    /// @notice Token was Discharged
+    /// @notice Token was Discharged or is in the process of being Discharged
     event Discharge(uint256 indexed tokenId, bool complete);
 
-    /// @notice Token was Destroyed
+    /// @notice Token was Destroyed or is in the process of being Destroyed
     event Destroy(uint256 indexed tokenId, bool complete);
 
     /// @notice Token was Linked to a Plane
@@ -439,6 +442,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(msg.value);
         _blacklisted[account] = false;
         emit OptIn(account);
+    }
+
+    /// @notice Rescues a Token from an account that has opted out.
+    /// @param  tokenId The ID of the Token to Rescue
+    /// @param  to The address to send the Token to
+    function rescueToken(uint256 tokenId, address to) external admin {
+        address currentOwner = ownerOf(tokenId);
+        require(_blacklisted[currentOwner], "DiGiL: Not Opted Out");
+
+        _approve(_this, tokenId, address(0), false);
+        _transfer(currentOwner, to, tokenId);
+        _approve(address(0), tokenId, address(0), false);
+
+        emit Rescue(currentOwner, to, tokenId);
     }
 
     /// @dev    When an ERC721 token is sent to this contract, creates a new Token representing the token received.
