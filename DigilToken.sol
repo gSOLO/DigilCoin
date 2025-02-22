@@ -96,7 +96,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         string uri;                 // Token metadata URI
 
         bool active;                // Indicates if the token is active
-        bool activating;  // Indicates if the token is currently being activated
+        bool activating;            // Indicates if the token is currently being activated
         bool restricted;            // Indicates if contributions are restricted to whitelist
     }
 
@@ -710,18 +710,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Retrieves status and additional data for a token.
     /// @dev    Contributors may still be greater than zero after discharge if this is a contract token,
-    ///         as the first contributor will be an ERC721 address until the underlying Token is Recalled.
+    ///         as the first contributor will be an ERC721 address until the underlying token is recalled.
     /// @param  tokenId The token ID to query.
     /// @return active Whether the token is active.
+    /// @return activating Whether the token is being activated.
     /// @return restricted Whether the token is restricted.
     /// @return links The number of links associated with the token.
     /// @return contributors The number of contributor addresses.
     /// @return dischargeIndex The current discharge index.
     /// @return distributionIndex The current distribution index.
     /// @return data Arbitrary data stored with the token.
-    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(bool active, bool restricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory data) {
+    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(bool active, bool activating, bool restricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory data) {
         Token storage t = _tokens[tokenId]; 
-        return (t.active, t.restricted, t.links.length, t.contributors.length, t.dischargeIndex, t.distributionIndex, t.data);
+        return (t.active, t.activating, t.restricted, t.links.length, t.contributors.length, t.dischargeIndex, t.distributionIndex, t.data);
     }
 
     // Token Creation
