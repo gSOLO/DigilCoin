@@ -929,7 +929,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             uint256 linkIndex;
             for (linkIndex; linkIndex < linksLength; linkIndex++) {                
                 uint256 linkId = links[linkIndex];
-                uint256 linkedCoins = coins / 100 * t.linkEfficiency[linkId].base;
+                // Calculate linkedCoins based on base efficiency applied to the coins split evenly amongst the links
+                uint256 linkedCoins = coins / linksLength / 100 * t.linkEfficiency[linkId].base;
+                // Calculate bonusCoins based on affinity bonus applied to the full coins
                 uint256 bonusCoins = coins / 100 * t.linkEfficiency[linkId].affinityBonus;
                 // Attempt to charge the linked token.
                 bool charged = _ownerOf(tokenId) != address(0) && _chargeToken(contributor, linkId, linkedCoins, bonusCoins, linkedValue, true);
@@ -1317,7 +1319,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  efficiency The efficiency of the link (percentage based).
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) public payable approved(tokenId) tokenExists(linkId) {
         Token storage t = _tokens[tokenId];
-        require(t.links.length <= 18, "DIGIL: Too Many Links");
+        require(t.links.length <= 10, "DIGIL: Too Many Links");
 
         uint8 baseEfficiency = t.linkEfficiency[linkId].base;
         uint256 bonusEfficiency = t.linkEfficiency[linkId].affinityBonus;
