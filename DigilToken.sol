@@ -483,7 +483,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Creates Value for a Token using the contract's available balance.
     /// @dev    Requires that the contract has enough value; deducts the amount from the contract distribution.
-    /// @param   tokenId The token ID to which the value is added.
     /// @param  tokenId The token ID to which the value is added.
     /// @param  value The amount of value (in wei) to add.
     function createValue(uint256 tokenId, uint256 value) public payable onlyOwner {
