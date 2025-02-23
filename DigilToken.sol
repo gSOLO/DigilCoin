@@ -314,6 +314,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
                 // Set token data for each minted token.
                 Token storage t = _tokens[tokenId];
+                // Set last activity
+                t.lastActivity = block.timestamp;
+                // Set active state
                 t.active = true;
                 // Set the token URI using the base URI concatenated with the plane name.
                 t.uri = string(abi.encodePacked(baseURI, plane[tokenId]));
@@ -398,7 +401,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    Bonus coins are calculated based on the time since the last distribution.
     /// @return coins The number of coin units transferred to the sender.
     /// @return value The native Ether value transferred to the sender.
-    function withdraw() public nonReentrant returns(uint256 coins, uint256 value) {
+    function withdraw() public  nonReentrant returns(uint256 coins, uint256 value) {
         address addr = _msgSender();
         // Ensure the sender is not blacklisted.
         _notOnBlacklist(addr);
@@ -461,8 +464,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @dev    Internal function that calculates and assigns distribution amounts between the contract and a specified address.
-    ///         Adds a percentage of the value to be Distributed to the contract, and the rest to the address specified.
-    ///         Adds all the Coins to be Distributed to the address specified along with an additional number of bonus coins based on the value to be Distributed.
+    ///         Adds a percentage of the value to be distributed to the contract, and the rest to the address specified.
+    ///         Adds all the coins to be distributed to the address specified along with an additional number of bonus coins based on the value to be distributed.
     ///         An example 1 eth, 100 Coin distribution with a chargeRate of 100 and a transferRate of 95 would:
     ///             Add 0.05 eth to the contract.
     ///             Add 0.95 eth to the address specified.
@@ -769,7 +772,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         Token storage t = _tokens[tokenId];
 
-        // Update last activity
+        // Set last activity
         t.lastActivity = block.timestamp;
         
         // Set the token parameters.
