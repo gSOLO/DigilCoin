@@ -21,7 +21,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Immutable contract-level variables set during construction
     address private immutable _this;            // This contract's address
     IERC20 private immutable _coins;            // ERC20 token used for coin transfers within the contract
-    uint256 private immutable _coinDecimals;    // Decimals used for coin calculation
+    uint256 private immutable _coinMultiplier;  // Multiplier used for coin calculation
     
     // Coin rate
     uint256 private _coinRate;                                  // Mutable coin rate for various operations
@@ -242,8 +242,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digil Token", "DIGIL") Ownable(initialOwner) {
         _this = address(this);
         _coins = IERC20(coins);
-        _coinDecimals = coinDecimals;
-        _coinRate = 100 * coinDecimals;
+        _coinMultiplier = 10 ** coinDecimals;
+        _coinRate = 100 * _coinMultiplier;
         _coins.approve(_this, type(uint256).max);
         
         string memory baseURI = "https://digil.co.in/token/";
@@ -359,7 +359,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(coins > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchCount > 0, "DIGIL: Invalid Configuration");
 
         _coins.approve(_this, type(uint256).max); // Re-approve coins to allow maximum transfers.
-        _coinRate = coins * _coinDecimals;
+        _coinRate = coins * _coinMultiplier;
 
         _incrementalValue = incrementalValue;
         _transferValue = transferValue;
@@ -418,7 +418,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (value > 0 || balanceOf(addr) > 0 || _coins.balanceOf(addr) > 0) {
             uint256 lastBonusTime = distribution.time;            
             distribution.time = block.timestamp;
-            uint256 bonus = (block.timestamp - lastBonusTime) / BONUS_INTERVAL * _coinDecimals;
+            uint256 bonus = (block.timestamp - lastBonusTime) / BONUS_INTERVAL * _coinMultiplier;
             // Limit the bonus to the current coin rate.
             coins += (bonus < _coinRate ? bonus : _coinRate);
         }
@@ -564,7 +564,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(!_blacklisted[account], "DIGIL: Already Opted Out");
         
         // Calculate required minimum funds for opting out.
-        uint256 required = _incrementalValue * _coinRate / _coinDecimals;
+        uint256 required = _incrementalValue * _coinRate / _coinMultiplier;
         if (msg.value < required) revert InsufficientFunds(required);
 
         // Add the sent value to the contract’s distribution.
@@ -583,7 +583,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(_blacklisted[account], "DIGIL: Not Opted Out");
         
         // Calculate required minimum funds for opting in.
-        uint256 required = _incrementalValue * _coinRate / _coinDecimals;
+        uint256 required = _incrementalValue * _coinRate / _coinMultiplier;
         if (msg.value < required) revert InsufficientFunds(required);
 
         // Add the sent value to the contract’s distribution.
@@ -798,7 +798,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return tokenId The ID of the newly created token.
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) public payable returns(uint256) {
         // Create a new token with the given parameters.
-        uint256 tokenId = _createToken(_msgSender(), incrementalValue, activationThreshold * _coinDecimals, data);
+        uint256 tokenId = _createToken(_msgSender(), incrementalValue, activationThreshold * _coinMultiplier, data);
         Token storage t = _tokens[tokenId];
 
         // If the token is to be restricted, ensure the caller sends the required funds.
@@ -891,7 +891,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Make sure the token isn't currently being discharged or activated
         require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
-        activationThreshold *= _coinDecimals;
+        activationThreshold *= _coinMultiplier;
 
         // If token already has charge, its incremental value and activation threshold cannot be modified.
         if (t.charge > 0) {
@@ -1008,12 +1008,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         uint256 incrementalValue = t.incrementalValue;
         // Calculate minimum required value for the given number of coins.
-        uint256 minimumValue = incrementalValue * coins / _coinDecimals;
+        uint256 minimumValue = incrementalValue * coins / _coinMultiplier;
 
         // Determine minimum coins required; if incrementalValue is nonzero, derive from provided value.
         uint256 minimumCoins = coins;
         if (incrementalValue > 0) {
-            minimumCoins = value < incrementalValue || value == 0 ? coins : value / incrementalValue * _coinDecimals;
+            minimumCoins = value < incrementalValue || value == 0 ? coins : value / incrementalValue * _coinMultiplier;
 
             // Ensure minimumValue is at least the token’s incremental value.
             if (minimumValue < incrementalValue) {
@@ -1022,8 +1022,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Ensure at least one coin unit is counted.
-        if (minimumCoins < _coinDecimals) {
-            minimumCoins = _coinDecimals;
+        if (minimumCoins < _coinMultiplier) {
+            minimumCoins = _coinMultiplier;
         }
 
         if (link) {
@@ -1096,7 +1096,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The number of coin units (decimals excluded) to use.
     function chargeToken(uint256 tokenId, uint256 coins) public payable {
         // Multiply the coin amount by coin decimals and delegate to chargeTokenAs.
-        chargeTokenAs(_msgSender(), tokenId, coins * _coinDecimals);
+        chargeTokenAs(_msgSender(), tokenId, coins * _coinMultiplier);
     }
 
     /// @notice Charges a token on behalf of another contributor.
@@ -1106,7 +1106,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to charge.
     /// @param  coins The coin units used in the charge.
     function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable operatorEnabled(contributor) tokenExists(tokenId) {
-        require(coins >= _coinDecimals, "DIGIL: Insufficient Charge");
+        require(coins >= _coinMultiplier, "DIGIL: Insufficient Charge");
         _chargeToken(contributor, tokenId, coins, 0, msg.value, false);
     }
 
@@ -1133,7 +1133,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Calculate incremental value per coin unit for distribution.
-        uint256 incrementalValue = dCharge >= _coinDecimals ? dValue / (dCharge / _coinDecimals) : 0;
+        uint256 incrementalValue = dCharge >= _coinMultiplier ? dValue / (dCharge / _coinMultiplier) : 0;
 
         uint256 dIndex = t.distributionIndex;
 
@@ -1173,9 +1173,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     // Otherwise, accumulate distribution for the token owner.
                     distribution += contribution.value;
                     // A percentage of the token's intrinsic value is sent back to the contributor 
-                    uint256 distributableTokenValue = incrementalValue * contribution.charge / _coinDecimals;
+                    uint256 distributableTokenValue = incrementalValue * contribution.charge / _coinMultiplier;
                     t.value -= distributableTokenValue;
-                    _addValue(contributor, distributableTokenValue, 1 * _coinDecimals);
+                    _addValue(contributor, distributableTokenValue, 1 * _coinMultiplier);
 
                 }
 
