@@ -656,7 +656,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID of the external ERC721.
     /// @param  data Optional data forwarded with the transfer.
     /// @return bytes4 Selector confirming receipt.
-    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external operatorEnabled(operator) returns (bytes4) {
+    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external operatorEnabled(operator) operatorEnabled(from) returns (bytes4) {
         address account = _msgSender();
         // Ensure that this external token has not been received before.
         require(!_contractTokenExists[account][tokenId], "DIGIL: Contract Token Already Exists");
