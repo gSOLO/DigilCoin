@@ -475,17 +475,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    Internal function that calculates and assigns distribution amounts between the contract and a specified address.
     ///         Adds a percentage of the value to be distributed to the contract, and the rest to the address specified.
     ///         Adds all the coins to be distributed to the address specified along with an additional number of bonus coins based on the value to be distributed.
-    ///         An example 1 eth, 100 Coin distribution with a chargeRate of 100 and a transferRate of 95 would:
+    ///         An example 1 eth, 100 Coin distribution with a incremental value of 100 and a transfer value of 95 would:
     ///             Add 0.05 eth to the contract.
     ///             Add 0.95 eth to the address specified.
-    ///             Add 1100 Coins to the address specified (1000 bonus Coins)
+    ///             Add 10100 Coins to the address specified (10000 bonus Coins)
     function _addDistribution(address addr, uint256 value, uint256 coins) internal {
         // Calculate the incremental distribution multiplier.
         uint256 incrementalDistribution = value / _incrementalValue;
         // Add the non-transferred portion of the value to the contract's distribution.
         _addValue(incrementalDistribution * (_incrementalValue - _transferValue));
         // Calculate bonus coins based on the incremental distribution.
-        uint256 bonusCoins = _coinRate / 1000 * incrementalDistribution;
+        uint256 bonusCoins = _coinRate / 100 * incrementalDistribution;
         // Add the transferred value and coins (including bonus) to the specified address.
         _addValue(addr, incrementalDistribution * _transferValue, coins + bonusCoins);
     }
