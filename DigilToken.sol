@@ -23,8 +23,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     IERC20 private immutable _coins;            // ERC20 token used for coin transfers within the contract
     uint256 private immutable _coinMultiplier;  // Multiplier used for coin calculation
     
-    // Coin rate
+    // Coin rate and bonus rate
     uint256 private _coinRate;                                  // Mutable coin rate for various operations
+    uint256 private constant BONUS_RATE_DIVISOR = 100;      // Factor for determining bonus coins when value is added
 
     // Constants for bonus interval and multiplier
     uint256 private constant BONUS_INTERVAL = 15 minutes;       // Allows 100% of bonus coins to be retrieved every 25 hours 
@@ -38,7 +39,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint16 private _batchCount = 2;                             // Maximum number of distribution or discharge operations per transaction
 
     // Define the inactivity period for rescuing tokens
-    uint256 private constant INACTIVITY_PERIOD = 365 days;      // Allows tokens with eth tied to them to be recovered after a period of time 
+    uint256 private constant INACTIVITY_PERIOD = 365 days;      // Allows tokens with eth tied to them to be recovered after a period of time
+
+    // Max link and affinity bonus scale
+    uint256 private constant MAX_LINKS = 10;                    // Maximum number of links a token can have
+    uint256 private constant AFFINITY_BOOST = 2;                // Factor used in determining affinity bonus increases
+    uint256 private constant AFFINITY_REDUCTION = 2;            // Divisor used in determining affinity bonus reductions
 
     // Mappings for token data, blacklisted addresses, distributions, and contract tokens
     mapping(uint256 => Token) private _tokens;                                      // Mapping from token ID to its associated Token data
@@ -485,7 +491,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Add the non-transferred portion of the value to the contract's distribution.
         _addValue(incrementalDistribution * (_incrementalValue - _transferValue));
         // Calculate bonus coins based on the incremental distribution.
-        uint256 bonusCoins = _coinRate / 100 * incrementalDistribution;
+        uint256 bonusCoins = _coinRate / BONUS_RATE_DIVISOR * incrementalDistribution;
         // Add the transferred value and coins (including bonus) to the specified address.
         _addValue(addr, incrementalDistribution * _transferValue, coins + bonusCoins);
     }
@@ -1377,7 +1383,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  efficiency The efficiency of the link (percentage based).
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) public payable approved(tokenId) tokenExists(linkId) {
         Token storage t = _tokens[tokenId];
-        require(t.links.length <= 10, "DIGIL: Too Many Links");
+        require(t.links.length <= MAX_LINKS, "DIGIL: Too Many Links");
 
         uint8 baseEfficiency = t.linkEfficiency[linkId].base;
         uint256 bonusEfficiency = t.linkEfficiency[linkId].affinityBonus;
@@ -1439,14 +1445,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Base Bonus Calculation
         if (s[1] == d[0] || s[2] == d[0]) {
             // If the source has strong affinity with the destination, provide a bonus of 2x the efficiency.
-            _bonus = uint256(efficiency) * 2;
+            _bonus = uint256(efficiency) * AFFINITY_BOOST;
         } else if (sourceId == destinationId || sourceId > 16) {
             // If the source is the same as the destination,
             // or the source is an ethereal plane (aether, world), provide a bonus of 1x the efficiency.
             _bonus = uint256(efficiency);
         } else if (s[3] == d[0]) {
             // If the source has weak affinity with the destination, provide a bonus of .5x the efficiency.
-            _bonus = uint256(efficiency) / 2;
+            _bonus = uint256(efficiency) / AFFINITY_REDUCTION;
         }
 
         // No Bonus
@@ -1457,18 +1463,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Base Bonus Multipliers
         if (sourceId > 16) {
             // If the source is from an ethereal plane, increase the bonus by 4x.
-            _bonus *= 4;
+            _bonus *= AFFINITY_BOOST * AFFINITY_BOOST;
         } else if (sourceId > 11 || destinationId == 18) {
             // If the source is an energy plane (harmony, discord, entropy, exergy, magick),
             // or the destination is the world plane, increase the bonus by 2x.
-            _bonus *= 2;
+            _bonus *= AFFINITY_BOOST;
         }
 
         // Charge Comparison and Adjustment
         if (_tokens[destinationId].activeCharge > _tokens[sourceId].activeCharge) {
             // Prefer linking to "weaker" planes.
             // If the destination's active charge is greater than the source's, decrease the bonus by .5x.
-            _bonus /= 2;
+            _bonus /= AFFINITY_REDUCTION;
         }
 
         return _bonus;
