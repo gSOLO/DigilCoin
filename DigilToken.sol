@@ -35,7 +35,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // Value transferred during charge operations
 
     // Batch operations limiter
-    uint16 private _batchCount = 2;                             // Maximum number of distribution or discharge operations per transaction             
+    uint16 private _batchCount = 2;                             // Maximum number of distribution or discharge operations per transaction
+
+    // Define the inactivity period for rescuing tokens
+    uint256 private constant INACTIVITY_PERIOD = 365 days;      // Allows tokens with eth tied to them to be recovered after a period of time 
 
     // Mappings for token data, blacklisted addresses, distributions, and contract tokens
     mapping(uint256 => Token) private _tokens;                                      // Mapping from token ID to its associated Token data
@@ -85,6 +88,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 distributionIndex;  // Current index for batch distribution processing
 
         uint256 activationThreshold;// Required charge to activate the token
+        uint256 lastActivity;       // Timestamp of the last significant action
         
         uint256[] links;            // Array of token IDs or plane IDs the token is linked to
         mapping(uint256 => LinkEfficiency) linkEfficiency;  // Mapping of link ID to its efficiency settings
@@ -121,7 +125,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  account The address of the account that opted in
     event OptIn(address indexed account);
 
-    /// @notice Emitted when a token is rescued from a blacklisted account.
+    /// @notice Emitted when a token is rescued from a blacklisted account, 
+    ///         or an inactive token with value goes without significant actions.
     /// @param  tokenId The ID of the token rescued
     event Rescue(uint256 indexed tokenId);
 
@@ -513,8 +518,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _notOnBlacklist(to);
         // Perform the standard ERC721 token update (transfer).
         address from = super._update(to, tokenId, auth);
+        
+        Token storage t = _tokens[tokenId];
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
+
         // Automatically whitelist the new owner for this token.
-        _tokens[tokenId].contributions[to].whitelisted = true;
+        t.contributions[to].whitelisted = true;
         return from;
     }
 
@@ -580,13 +591,28 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         emit OptIn(account);
     }
 
-    /// @notice Rescues a token from an account that has opted out.
-    /// @dev    Only callable by the contract owner. Transfers the token from a blacklisted address to a specified address.
+    /// @notice Rescues a token from an account that has opted out or that hasnt seen significant action.
+    /// @dev    Only callable by the contract owner. Transfers the token from a blacklisted/inactive address to a specified address.
     /// @param  tokenId The token ID to rescue.
     /// @param  to The address to which the token is transferred.
-    function rescueToken(uint256 tokenId, address to) external onlyOwner {
+    function rescueToken(uint256 tokenId, address to) external tokenExists(tokenId) onlyOwner {
+        Token storage t = _tokens[tokenId];
+
         address currentOwner = ownerOf(tokenId);
-        require(_blacklisted[currentOwner], "DIGIL: Not Opted Out");
+        // Conditions for rescue:
+        // - Owner is blacklisted OR
+        // - Token is inactive for the specified period AND meets ETH-related criteria
+        require(
+            _blacklisted[currentOwner] || 
+            (
+                block.timestamp >= t.lastActivity + INACTIVITY_PERIOD && 
+                (
+                    t.value > 0 || 
+                    (t.active == false && t.contributors.length > 0 && t.charge > 0 && t.incrementalValue > 0)
+                )
+            ),
+            "DIGIL: Token Cannot Be Rescued"
+        );
 
         // Remove approvals before transfer.
         _approve(_this, tokenId, address(0), false);
@@ -742,6 +768,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _mint(creator, tokenId);
 
         Token storage t = _tokens[tokenId];
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
         
         // Set the token parameters.
         t.incrementalValue = incrementalValue;
@@ -866,6 +895,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             require(t.incrementalValue == incrementalValue && t.activationThreshold == activationThreshold, "DIGIL: Cannot Update Charged Token");
         }
 
+        // Update last activity
+        t.lastActivity = block.timestamp;
+
         bool needCoins = owner() != _msgSender();
 
         bool overwriteData = bytes(data).length > 0;
@@ -963,6 +995,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
         require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        
+        // Update last activity
+        t.lastActivity = block.timestamp;
 
         TokenContribution storage c = t.contributions[contributor];
         // Check if contribution is allowed (if restricted, the contributor must be whitelisted).
@@ -1199,6 +1234,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 required = (_incrementalValue > t.incrementalValue ? _incrementalValue : t.incrementalValue) * (t.links.length > 0 ? t.links.length : 1);
         if (msg.value < required) revert InsufficientFunds(required);
 
+        // Update last activity
+        t.lastActivity = block.timestamp;
+
         _addValue(msg.value);
         
         // Distribute based on mode
@@ -1271,6 +1309,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function activateToken(uint256 tokenId) public approved(tokenId) returns(bool) {
         Token storage t = _tokens[tokenId];
         require(t.active == false && (t.charge >= t.activationThreshold || t.activating), "DIGIL: Token Cannot Be Activated");
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
         
         t.activating = true; // Set flag at start
         bool distributionComplete = _distribute(tokenId, false);
@@ -1298,6 +1339,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
         
         if (msg.value < t.incrementalValue) revert InsufficientFunds(t.incrementalValue);
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
 
         if (msg.value > 0) {
             _addValue(msg.value);
@@ -1334,6 +1378,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 value = msg.value;
         // Ensure sufficient value is provided for linking.
         if (value < (t.incrementalValue + d.incrementalValue)) revert InsufficientFunds(t.incrementalValue + d.incrementalValue);
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
 
         // Split the value evenly between the two tokens.
         if (value > 0) {
@@ -1419,6 +1466,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function unlinkToken(uint256 tokenId, uint256 linkId) public approved(tokenId) tokenExists(linkId) {
         Token storage t = _tokens[tokenId];
         require(linkId > 0 && t.linkEfficiency[linkId].base > 0, "DIGIL: Invalid Link");
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
 
         // Reset the link efficiency for the specified link.
         t.linkEfficiency[linkId] = LinkEfficiency(0, 0);
