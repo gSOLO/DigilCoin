@@ -1313,7 +1313,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Update last activity
         t.lastActivity = block.timestamp;
         
-        t.activating = true; // Set flag at start
+        // Set flag at start
+        t.activating = true;
         bool distributionComplete = _distribute(tokenId, false);
         
         if (!distributionComplete) {
@@ -1324,7 +1325,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
         
         t.active = true;
-        t.activating = false; // Clear flag on completion
+        // Clear flag on completion
+        t.activating = false;
         emit Activate(tokenId, true);
         return true;
     }
