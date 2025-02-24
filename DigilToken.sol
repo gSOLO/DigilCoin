@@ -1013,7 +1013,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _chargeToken(address contributor, uint256 tokenId, uint256 coins, uint256 activeCoins, uint256 value, bool link) internal returns(bool) {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        bool batchOperationInProgress = t.dischargeIndex > 0 || t.distributionIndex > 0;
+        if (link && batchOperationInProgress) {
+            return false;
+        } else {
+            require(!batchOperationInProgress, "DIGIL: Batch Operation In Progress");
+        }
         
         // Update last activity
         t.lastActivity = block.timestamp;
@@ -1339,8 +1344,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (!distributionComplete) {
             emit Activate(tokenId, false);
             return false;
-        } else {
-            
         }
         
         t.active = true;
