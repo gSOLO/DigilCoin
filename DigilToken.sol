@@ -572,42 +572,29 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Opt In / Opt Out
 
-    /// @notice Allows the sender to opt out of token transfers.
+    /// @notice Allows the sender to opt out or opt in to token transfers.
     ///         Requires sending a value equal to or greater than the current incremental value at the coin rate.
     ///         For example at 0.0001ETH incremental value and 100 coin rate, requires .01ETH
-    function optOut() public payable {
+    /// @param  optOut Send true to opt out, false to opt in
+    function setOptStatus(bool optOut) public payable {
         address account = _msgSender();
-        require(!_blacklisted[account], "DIGIL: Already Opted Out");
-        
-        // Calculate required minimum funds for opting out.
-        uint256 required = _incrementalValue * _coinRate / _coinMultiplier;
-        if (msg.value < required) revert InsufficientFunds(required);
+        require(_blacklisted[account] != optOut, "DIGIL: No Change");
 
+         // Calculate required minimum funds for opting in.
+        uint256 required = _incrementalValue * _coinRate / _coinMultiplier;        
+        if (msg.value < required) revert InsufficientFunds(required);
+        
         // Add the sent value to the contract’s distribution.
         _addValue(msg.value);
-        // Mark the account as blacklisted.
-        _blacklisted[account] = true;
 
-        emit OptOut(account);
-    }
+        // Update the accounts blacklist status.
+        _blacklisted[account] = optOut;
 
-    /// @notice Allows the sender to opt in and re-enable token transfers.
-    ///         Requires sending a value equal to or greater than the current incremental value at the coin rate.
-    ///         For example at 0.0001ETH incremental value and 100 coin rate, requires .01ETH
-    function optIn() public payable {
-        address account = _msgSender();
-        require(_blacklisted[account], "DIGIL: Not Opted Out");
-        
-        // Calculate required minimum funds for opting in.
-        uint256 required = _incrementalValue * _coinRate / _coinMultiplier;
-        if (msg.value < required) revert InsufficientFunds(required);
-
-        // Add the sent value to the contract’s distribution.
-        _addValue(msg.value);
-        // Remove the account from the blacklist.
-        _blacklisted[account] = false;
-
-        emit OptIn(account);
+        if (optOut) {
+            emit OptOut(account);
+        } else {
+            emit OptIn(account);
+        }
     }
 
     /// @notice Rescues a token from an account that has opted out or that hasnt seen significant action.
@@ -656,7 +643,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID of the external ERC721.
     /// @param  data Optional data forwarded with the transfer.
     /// @return bytes4 Selector confirming receipt.
-    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external operatorEnabled(operator) operatorEnabled(from) returns (bytes4) {
+    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external nonReentrant operatorEnabled(operator) operatorEnabled(from) returns (bytes4) {
         address account = _msgSender();
         // Ensure that this external token has not been received before.
         require(!_contractTokenExists[account][tokenId], "DIGIL: Contract Token Already Exists");
