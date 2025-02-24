@@ -622,7 +622,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Remove approvals before transfer.
         _approve(_this, tokenId, address(0), false);
-        // Transfer the token from the blacklisted address.
+        // Transfer the token from the blacklisted or inactive address.
         _transfer(currentOwner, to, tokenId);
         // Clear approvals post-transfer.
         _approve(address(0), tokenId, address(0), false);
