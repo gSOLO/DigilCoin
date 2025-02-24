@@ -681,7 +681,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Requires a value sent greater than or equal to the token's incremental value.
     /// @param  account The address of the external ERC721 contract.
     /// @param  tokenId The internal Digil token ID whose attached contract token is to be recalled.
-    function recallToken(address account, uint256 tokenId) public approved(tokenId) {
+    function recallToken(address account, uint256 tokenId) public nonReentrant approved(tokenId) {
         ContractToken storage contractToken = _contractTokens[account][tokenId];
         require(contractToken.recallable, "DIGIL: Contract Token Is Not Recallable");
 
