@@ -36,7 +36,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // Value transferred during charge operations
 
     // Batch operations limiter
-    uint16 private constant DEFAULT_BATCH_SIZE = 2;             // Default size for batch operations
+    uint16 private constant DEFAULT_BATCH_SIZE = 10;            // Default size for batch operations
     uint16 private _batchCount = DEFAULT_BATCH_SIZE;            // Maximum number of distribution or discharge operations per transaction
 
     // Define the inactivity period for rescuing tokens
@@ -1183,7 +1183,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     // A percentage of the token's intrinsic value is sent back to the contributor 
                     uint256 distributableTokenValue = incrementalValue * contribution.charge / _coinMultiplier;
                     t.value -= distributableTokenValue;
-                    _addValue(contributor, distributableTokenValue, 1 * _coinMultiplier);
+                    _addValue(contributor, distributableTokenValue, 0);
 
                 }
 
@@ -1249,17 +1249,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.lastActivity = block.timestamp;
 
         _addValue(msg.value);
+
+        uint256 dIndex = t.dischargeIndex;
         
         // Distribute based on mode
-        bool distributionComplete = _distribute(tokenId, !t.active);
+        bool distributionComplete = dIndex > 0 || _distribute(tokenId, !t.active);
         if (!distributionComplete) {
             emit Discharge(tokenId, false);
             return false;
         }
 
         address contractTokenAddress;
-
-        uint256 dIndex = t.dischargeIndex;
 
         uint256 cLength = t.contributors.length;
         uint256 cEndIndex = dIndex + _batchCount;
