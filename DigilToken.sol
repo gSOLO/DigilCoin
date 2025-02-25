@@ -1072,7 +1072,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 // New contributor
                 c.exists = true;
                 t.contributors.push(contributor);
-            }            
+            }
+
+            if (c.distributed) {
+                // Existing contributor already recieved a distribution, reset 
+                c.distributed = false;
+                c.charge = 0;
+                c.value = 0;
+            }    
 
             // Add to contribution value
             if (minimumValue > 0) {
@@ -1194,6 +1201,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
             }
         }
+
         if (cEndIndex == t.contributors.length) {
 
             // Finalize distribution if all contributors have been processed.
