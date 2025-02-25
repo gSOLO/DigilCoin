@@ -25,7 +25,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     
     // Coin rate and bonus rate
     uint256 private _coinRate;                                  // Mutable coin rate for various operations
-    uint256 private constant BONUS_RATE_DIVISOR = 100;      // Factor for determining bonus coins when value is added
+    uint256 private constant BONUS_RATE_DIVISOR = 100;          // Factor for determining bonus coins when value is added
 
     // Constants for bonus interval and multiplier
     uint256 private constant BONUS_INTERVAL = 15 minutes;       // Allows 100% of bonus coins to be retrieved every 25 hours 
@@ -37,7 +37,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Batch operations limiter
     uint16 private constant DEFAULT_BATCH_SIZE = 10;            // Default size for batch operations
-    uint16 private _batchCount = DEFAULT_BATCH_SIZE;            // Maximum number of distribution or discharge operations per transaction
+    uint16 private _batchSizeValue = DEFAULT_BATCH_SIZE;        // Maximum number of distribution operations per transaction
+    uint16 private _batchSizeCharge = DEFAULT_BATCH_SIZE * 4;   // Maximum number of discharge operations per transaction
 
     // Define the inactivity period for rescuing tokens
     uint256 private constant INACTIVITY_PERIOD = 365 days;      // Allows tokens with eth tied to them to be recovered after a period of time
@@ -121,8 +122,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coinRate The new coin rate
     /// @param  incrementalValue The new minimum incremental value
     /// @param  transferValue The new transfer value
-    /// @param  batchCount The new batch count
-    event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchCount);
+    /// @param  batchSizeValue The new batch count for distributing 
+    /// @param  batchSizeCharge The new batch count for discharging
+    event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSizeValue, uint16 batchSizeCharge);
 
     /// @notice Emitted when an address opts out (added to the blacklist).
     /// @param  account The address of the account that opted out
@@ -360,10 +362,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///                     Number of Coins required to Opt-Out.
     /// @param  incrementalValue The minimum value (in wei) used to Charge, Activate a Token, update a Token URI
     /// @param  transferValue The value (in wei) to be distributed when a Token is Activated as a percentage of the minimum value
-    /// @param  batchCount The number of discharge or distribute calls that can be made per transaction 
-    function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchCount) public onlyOwner {
+    /// @param  batchSizeValue The number of distribute calls that can be made per transaction 
+    /// @param  batchSizeCharge The number of distribute calls that can be made per transaction 
+    function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSizeValue, uint16 batchSizeCharge) public onlyOwner {
         // Validate configuration parameters.
-        require(coins > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchCount > 0, "DIGIL: Invalid Configuration");
+        require(coins > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchSizeValue > 0 && batchSizeCharge > 0, "DIGIL: Invalid Configuration");
 
         _coins.approve(_this, type(uint256).max); // Re-approve coins to allow maximum transfers.
         _coinRate = coins * _coinMultiplier;
@@ -371,9 +374,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _incrementalValue = incrementalValue;
         _transferValue = transferValue;
 
-        _batchCount = batchCount;
+        _batchSizeValue = batchSizeValue;
+        _batchSizeCharge = batchSizeCharge;
         
-        emit Configure(_coinRate, _incrementalValue, _transferValue, _batchCount);
+        emit Configure(_coinRate, _incrementalValue, _transferValue, _batchSizeValue, _batchSizeCharge);
     }
 
     // Coin Transfers
@@ -471,8 +475,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _addValue(address addr, uint256 value, uint256 coins) private {
         if (value > 0 || coins > 0) {
             Distribution storage distribution = _distributions[addr];
-            distribution.value += value;
-            distribution.coins += coins;
+            if (value > 0) {
+                distribution.value += value;
+            }
+            if (coins > 0) {
+                distribution.coins += coins;
+            }
             if (addr != _this) {
                 emit PendingDistribution(addr, coins, value);
             }
@@ -1147,8 +1155,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         uint256 distribution;
         
-        // Process contributions in batches defined by _batchCount.
-        uint256 cEndIndex = dIndex + _batchCount;
+        // Process contributions in batches defined by _batchSizeValue.
+        uint256 cEndIndex = dIndex + _batchSizeValue;
         if (cEndIndex > t.contributors.length) {
             cEndIndex = t.contributors.length;
         }
@@ -1264,11 +1272,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         address contractTokenAddress;
 
         uint256 cLength = t.contributors.length;
-        uint256 cEndIndex = dIndex + _batchCount;
+        uint256 cEndIndex = dIndex + _batchSizeCharge;
         if (cEndIndex > cLength) {
             cEndIndex = cLength;
         }
-        // Process in batches defined by _batchCount.
+        // Process in batches defined by _batchSizeCharge.
         for (dIndex; dIndex < cEndIndex; dIndex++) {
             address contributor = t.contributors[dIndex];
             if (contributor == address(0)) {
