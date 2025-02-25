@@ -36,9 +36,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // Value transferred during charge operations
 
     // Batch operations limiter
-    uint16 private constant DEFAULT_BATCH_SIZE = 10;            // Default size for batch operations
-    uint16 private _batchSizeValue = DEFAULT_BATCH_SIZE;        // Maximum number of distribution operations per transaction
-    uint16 private _batchSizeCharge = DEFAULT_BATCH_SIZE * 2;   // Maximum number of discharge operations per transaction
+    uint16 private constant DEFAULT_BATCH_SIZE = 10;            // Default size for batch operations (350)
+    uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Base value for maximum number of distribution or discharge operations per transaction
 
     // Define the inactivity period for rescuing tokens
     uint256 private constant INACTIVITY_PERIOD = 365 days;      // Allows tokens with eth tied to them to be recovered after a period of time
@@ -122,9 +121,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coinRate The new coin rate
     /// @param  incrementalValue The new minimum incremental value
     /// @param  transferValue The new transfer value
-    /// @param  batchSizeValue The new batch count for distributing 
-    /// @param  batchSizeCharge The new batch count for discharging
-    event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSizeValue, uint16 batchSizeCharge);
+    /// @param  batchSize The new batch size
+    event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize);
 
     /// @notice Emitted when an address opts out (added to the blacklist).
     /// @param  account The address of the account that opted out
@@ -362,11 +360,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///                     Number of Coins required to Opt-Out.
     /// @param  incrementalValue The minimum value (in wei) used to Charge, Activate a Token, update a Token URI
     /// @param  transferValue The value (in wei) to be distributed when a Token is Activated as a percentage of the minimum value
-    /// @param  batchSizeValue The number of distribute calls that can be made per transaction 
-    /// @param  batchSizeCharge The number of distribute calls that can be made per transaction 
-    function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSizeValue, uint16 batchSizeCharge) public onlyOwner {
+    /// @param  batchSize The multiplier used for batch size for distribute and discharge calls that can be made per transaction 
+    function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) public onlyOwner {
         // Validate configuration parameters.
-        require(coins > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchSizeValue > 0 && batchSizeCharge > 0, "DIGIL: Invalid Configuration");
+        require(coins > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchSize> 0, "DIGIL: Invalid Configuration");
 
         _coins.approve(_this, type(uint256).max); // Re-approve coins to allow maximum transfers.
         _coinRate = coins * _coinMultiplier;
@@ -374,10 +371,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _incrementalValue = incrementalValue;
         _transferValue = transferValue;
 
-        _batchSizeValue = batchSizeValue;
-        _batchSizeCharge = batchSizeCharge;
+        _batchSize = batchSize;
         
-        emit Configure(_coinRate, _incrementalValue, _transferValue, _batchSizeValue, _batchSizeCharge);
+        emit Configure(_coinRate, _incrementalValue, _transferValue, batchSize);
     }
 
     // Coin Transfers
@@ -1155,8 +1151,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         uint256 distribution;
         
-        // Process contributions in batches defined by _batchSizeValue.
-        uint256 cEndIndex = dIndex + _batchSizeValue;
+        // Process contributions in batches defined by _batchSize
+        // If discharge is true (distribution phase of dischargeToken), use batchSize. If false (e.g., activateToken), use batchSize * 2.
+        uint256 cEndIndex = dIndex + (discharge ? _batchSize : _batchSize * 2);
         if (cEndIndex > t.contributors.length) {
             cEndIndex = t.contributors.length;
         }
@@ -1272,7 +1269,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         address contractTokenAddress;
 
         uint256 cLength = t.contributors.length;
-        uint256 cEndIndex = dIndex + _batchSizeCharge;
+        uint256 cEndIndex = dIndex + (_batchSize * 2);
         if (cEndIndex > cLength) {
             cEndIndex = cLength;
         }
