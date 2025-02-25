@@ -38,7 +38,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Batch operations limiter
     uint16 private constant DEFAULT_BATCH_SIZE = 10;            // Default size for batch operations
     uint16 private _batchSizeValue = DEFAULT_BATCH_SIZE;        // Maximum number of distribution operations per transaction
-    uint16 private _batchSizeCharge = DEFAULT_BATCH_SIZE * 4;   // Maximum number of discharge operations per transaction
+    uint16 private _batchSizeCharge = DEFAULT_BATCH_SIZE * 2;   // Maximum number of discharge operations per transaction
 
     // Define the inactivity period for rescuing tokens
     uint256 private constant INACTIVITY_PERIOD = 365 days;      // Allows tokens with eth tied to them to be recovered after a period of time
