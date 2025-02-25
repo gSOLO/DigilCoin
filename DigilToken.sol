@@ -132,11 +132,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  account The address of the account that opted in
     event OptIn(address indexed account);
 
-    /// @notice Emitted when a token is rescued from a blacklisted account, 
-    ///         or an inactive token with value goes without significant actions.
-    /// @param  tokenId The ID of the token rescued
-    event Rescue(uint256 indexed tokenId);
-
     /// @notice Emitted when an address is added to a token’s whitelist.
     /// @param  account The address of the account that was whitelisted
     /// @param  tokenId The ID of the token whose whitelist was updated
@@ -630,8 +625,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _transfer(currentOwner, to, tokenId);
         // Clear approvals post-transfer.
         _approve(address(0), tokenId, address(0), false);
-
-        emit Rescue(tokenId);
     }
 
     // ERC721 Receiver
