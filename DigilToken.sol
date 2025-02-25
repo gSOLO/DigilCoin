@@ -1196,11 +1196,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             t.distributionCharge = 0;
             t.distributionValue = 0;
 
+            uint256 tValue = t.value;
+            t.value = 0;
+
             if (discharge) {
 
                 // For discharge, return any undistributed value to the token owner.
-                uint256 tValue = t.value;
-                t.value = 0;
                 _addDistribution(ownerOf(tokenId), tValue, 0);
 
             } else {
@@ -1212,7 +1213,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
                 // Create a distribution for the token owner and add remaining value to the contract.
                 _addDistribution(ownerOf(tokenId), distribution, 0);
-                _addValue(t.value);
+                _addValue(tValue);
                 
             }
 
@@ -1239,6 +1240,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return True if discharge is complete.
     function dischargeToken(uint256 tokenId) public payable approved(tokenId) returns (bool) {
         Token storage t = _tokens[tokenId];
+        require(t.charge > 0 || t.value > 0, "DIGIL: Nothing to Discharge");
         require(!t.activating, "DIGIL: Activation In Progress");
         
         // Determine the required minimum value for discharge, scaled by number of links.
