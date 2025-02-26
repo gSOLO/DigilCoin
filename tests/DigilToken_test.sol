@@ -78,9 +78,18 @@ contract testSuite {
 
         uint256 coinAmount = 1 * coinMultiplier;
         (uint256 initialCharge, , , , ) = digil.tokenCharge(tokenId);
-        digil.chargeToken(tokenId, 1);
+
+        digil.chargeToken(tokenId, coinAmount);
+
         (uint256 newCharge, , , , ) = digil.tokenCharge(tokenId);
         Assert.ok(newCharge >= initialCharge + coinAmount, "Token charge did not increase appropriately");
+
+        for (uint256 accountIndex; accountIndex < 9; accountIndex++) {
+            digil.chargeTokenAs(TestsAccounts.getAccount(accountIndex), tokenId, coinAmount);
+        }
+
+        (uint256 fullCharge, , , , ) = digil.tokenCharge(tokenId);
+        Assert.ok(fullCharge >= newCharge + coinAmount * 9, "Token charge did not increase appropriately");
     }
 
     function checkSuccess() public {

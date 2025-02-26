@@ -760,7 +760,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    Internal function to create a new token.
     /// @param  creator The address that the token is being created for.
     /// @param  incrementalValue The incremental value associated with the token.
-    /// @param  activationThreshold The activation threshold for the token (in wei, scaled by coin decimals).
+    /// @param  activationThreshold The activation threshold for the token.
     /// @param  data Optional data to store with the token.
     /// @return tokenId The newly created token ID.
     function _createToken(address creator, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data) internal returns(uint256) {      
@@ -792,14 +792,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///             energy planes (12-16; harmony, discord, entropy, exergy, magick): 25x Coin Rate
     ///             ethereal planes (17-18; aether, world): 100x Coin Rate
     /// @param  incrementalValue The incremental value (in wei) to be required with each coin used for charging.
-    /// @param  activationThreshold The number of coins (decimals excluded) required for token activation.
+    /// @param  activationThreshold The number of coins required for token activation.
     /// @param  restricted Whether the token is restricted to whitelisted addresses.
     /// @param  plane The chosen planar token (numeric index) to link with.
     /// @param  data Optional data to store with the token.
     /// @return tokenId The ID of the newly created token.
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) public payable returns(uint256) {
         // Create a new token with the given parameters.
-        uint256 tokenId = _createToken(_msgSender(), incrementalValue, activationThreshold * _coinMultiplier, data);
+        uint256 tokenId = _createToken(_msgSender(), incrementalValue, activationThreshold, data);
         Token storage t = _tokens[tokenId];
 
         // If the token is to be restricted, ensure the caller sends the required funds.
