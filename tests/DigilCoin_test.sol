@@ -14,7 +14,9 @@ contract DigilCoinTest is DigilCoin {
     address acc4;
 
     // acc0 will be set as initial owner
-    constructor() DigilCoin(acc0) {}
+    constructor() DigilCoin(acc0) {
+        
+    }
 
     function beforeAll() public {
         acc1 = TestsAccounts.getAccount(1);
@@ -27,23 +29,23 @@ contract DigilCoinTest is DigilCoin {
         Assert.equal(name(), "Digil Coin", "token name did not match");
         Assert.equal(symbol(), "DIGIL", "token symbol did not match");
         Assert.equal(decimals(), 18, "token decimals did not match");
-        Assert.equal(totalSupply(), 0, "token supply should be zero");
+        Assert.equal(totalSupply(), 8208008028 * 10 ** decimals(), "token supply should be 8208008028");
     }
 
     function testTokenMinting() public {
-        Assert.equal(balanceOf(acc0), 0, "token balance should be zero initially");
+        Assert.equal(balanceOf(acc0), 8208008028 * 10 ** decimals(), "token balance should be 8208008028 initially");
         mint(acc0, 10000);
-        Assert.equal(balanceOf(acc0), 10000, "token balance did not match");
+        Assert.equal(balanceOf(acc0), 10000 + 8208008028 * 10 ** decimals(), "token balance did not match");
     }
 
     function testTotalSupply() public {
-        Assert.equal(totalSupply(), 10000, "total supply did not match");
+        Assert.equal(totalSupply(), 10000 + 8208008028 * 10 ** decimals(), "total supply did not match");
     }
 
     function testTokenTransfer() public {
         Assert.equal(balanceOf(acc1), 0, "token balance should be zero initially");
         transfer(acc1, 500);
-        Assert.equal(balanceOf(acc0), 9500, "token balance did not match");
+        Assert.equal(balanceOf(acc0), 9500 + 8208008028 * 10 ** decimals(), "token balance did not match");
         Assert.equal(balanceOf(acc1), 500, "token balance did not match");
     }
 
