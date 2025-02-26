@@ -1107,9 +1107,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Requires a value sent greater than or equal to the token's incremental value for each coin.
     /// @param  tokenId The token ID to charge.
     /// @param  coins The number of coin units to use.
-    function chargeToken(uint256 tokenId, uint256 coins) public payable {
+    /// @return True if the token was successfully charged.
+    function chargeToken(uint256 tokenId, uint256 coins) public payable returns(bool) {
         // Multiply the coin amount by coin decimals and delegate to chargeTokenAs.
-        chargeTokenAs(_msgSender(), tokenId, coins);
+        return chargeTokenAs(_msgSender(), tokenId, coins);
     }
 
     /// @notice Charges a token on behalf of another contributor.
@@ -1118,9 +1119,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  contributor The address contributing the charge.
     /// @param  tokenId The token ID to charge.
     /// @param  coins The coin units used in the charge.
-    function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable operatorEnabled(contributor) tokenExists(tokenId) {
+    /// @return True if the token was successfully charged.
+    function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable operatorEnabled(contributor) tokenExists(tokenId) returns(bool) {
         require(coins >= _coinMultiplier, "DIGIL: Insufficient Charge");
-        _chargeToken(contributor, tokenId, coins, 0, msg.value, false);
+        return _chargeToken(contributor, tokenId, coins, 0, msg.value, false);
     }
 
     // Token Distribution and Discharge

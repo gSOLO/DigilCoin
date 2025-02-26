@@ -94,8 +94,8 @@ interface IDigilToken is IERC721, IERC721Receiver {
     function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable;
 
     // Charge Token
-    function chargeToken(uint256 tokenId, uint256 coins) external payable;
-    function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) external payable;
+    function chargeToken(uint256 tokenId, uint256 coins) external payable returns (bool);
+    function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) external payable returns (bool);
 
     // Discharge Token
     function dischargeToken(uint256 tokenId) external payable returns (bool);
