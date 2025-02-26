@@ -1106,10 +1106,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Charges a token.
     ///         Requires a value sent greater than or equal to the token's incremental value for each coin.
     /// @param  tokenId The token ID to charge.
-    /// @param  coins The number of coin units (decimals excluded) to use.
+    /// @param  coins The number of coin units to use.
     function chargeToken(uint256 tokenId, uint256 coins) public payable {
         // Multiply the coin amount by coin decimals and delegate to chargeTokenAs.
-        chargeTokenAs(_msgSender(), tokenId, coins * _coinMultiplier);
+        chargeTokenAs(_msgSender(), tokenId, coins);
     }
 
     /// @notice Charges a token on behalf of another contributor.
