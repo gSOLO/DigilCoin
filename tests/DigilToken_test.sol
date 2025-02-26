@@ -20,9 +20,23 @@ contract testSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = IERC20(0xa6165bbb69f7e8f3d960220B5F28e990ea5F630D);
-        digil = IDigilToken(0x9F2b8EAA0cb96bc709482eBdcB8f18dFB12D3133);
+        coins = IERC20(0xd9145CCE52D386f254917e481eB44e9943F39138);
+        digil = IDigilToken(0xd8b934580fcE35a11B58C6D73aDeE468a2833fa8);
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
+    }
+
+    /// #sender: account-0
+    /// #value: 10000000000000000
+    function testWithdrawl() public payable {
+        uint256 balanceCoins = coins.balanceOf(address(this));
+        Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
+
+        (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw{value: msg.value}();
+        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "First withdrawl should be 100 coins");
+        Assert.equal(withdrawlValue, 0, "First withdrawl should be 0 value");
+
+        balanceCoins = coins.balanceOf(address(this));
+        Assert.equal(balanceCoins, 100 * 10 ** 18, "Coin balance should be 100 coins");
     }
 
     /// #sender: account-0
@@ -33,7 +47,13 @@ contract testSuite {
         uint256 plane = 4;                    
         bytes memory data = "Test Token";
 
+        uint256 balanceTokens = digil.balanceOf(address(this));
+        Assert.equal(balanceTokens, 0, "Token balance should be 0");
+
         uint256 tokenId = digil.createToken(incrementalValue, activationThreshold, restricted, plane, data);
+
+        balanceTokens = digil.balanceOf(address(this));
+        Assert.equal(balanceTokens, 1, "Token balance should be 1");
        
         (bool active, bool activating, bool tokenRestricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory tokenData) = digil.tokenData(tokenId);
         Assert.ok(active == false, "Token should be inactive initially");
@@ -44,6 +64,23 @@ contract testSuite {
         Assert.ok(dischargeIndex == 0, "Token should not be discharging");
         Assert.ok(distributionIndex == 0, "Token should not be distributing");
         Assert.ok(keccak256(data) == keccak256(tokenData), "Token data should be unmodified");
+    }
+
+    /// #sender: account-0
+    function testChargeToken() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+
+        // Approve the Digil Token contract to spend the specified coinAmount.
+        bool approved = coins.approve(address(digil), 10 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 tokenId = digil.createToken(0, 0, false, 4, "Test Charge");
+
+        uint256 coinAmount = 1 * coinMultiplier;
+        (uint256 initialCharge, , , , ) = digil.tokenCharge(tokenId);
+        digil.chargeToken(tokenId, 1);
+        (uint256 newCharge, , , , ) = digil.tokenCharge(tokenId);
+        Assert.ok(newCharge >= initialCharge + coinAmount, "Token charge did not increase appropriately");
     }
 
     function checkSuccess() public {
