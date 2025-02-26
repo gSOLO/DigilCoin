@@ -399,8 +399,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(msg.value);
     }
 
-    /// @notice Withdraws any pending coin and value distributions for the sender, and optionally proviudes bonus coins.
+    /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
     ///         If no coins or tokens are owned by the user, bonus coins can be rewarded by donating to the contract.
+    ///         With default values it amounts to 1000000000000000 wei ((100 * 1000 gwei) * (100 * 10 ** 18) /  (10 ** 18) / 10))
     /// @dev    Bonus coins are calculated based on the time since the last distribution.
     /// @return coins The number of coin units transferred to the sender.
     /// @return value The native Ether value transferred to the sender.
