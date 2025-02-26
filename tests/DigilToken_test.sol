@@ -12,7 +12,7 @@ import "remix_accounts.sol";
 import "../contracts/IDigilToken.sol";
 
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
-contract testSuite {
+contract BasicTestSuite {
     IERC20 public coins;
     IDigilToken public digil;
 
@@ -20,8 +20,8 @@ contract testSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = IERC20(0xd9145CCE52D386f254917e481eB44e9943F39138);
-        digil = IDigilToken(0xd8b934580fcE35a11B58C6D73aDeE468a2833fa8);
+        coins = IERC20(0x3c725134d74D5c45B4E4ABd2e5e2a109b5541288);
+        digil = IDigilToken(0xDA07165D4f7c84EEEfa7a4Ff439e039B7925d3dF);
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
@@ -41,7 +41,7 @@ contract testSuite {
 
     /// #sender: account-0
     function testCreateToken() public {
-        uint256 incrementalValue = 100 * 1e9;
+        uint256 incrementalValue = 100000000000000;
         uint256 activationThreshold = 10;
         bool restricted = false;
         uint256 plane = 4;                    
@@ -74,22 +74,78 @@ contract testSuite {
         bool approved = coins.approve(address(digil), 10 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(0, 0, false, 4, "Test Charge");
+        uint256 tokenId = digil.createToken(0, 10 * coinMultiplier, false, 4, "Test Charge");
 
-        uint256 coinAmount = 1 * coinMultiplier;
         (uint256 initialCharge, , , , ) = digil.tokenCharge(tokenId);
 
-        digil.chargeToken(tokenId, coinAmount);
+        digil.chargeToken(tokenId, coinMultiplier);
 
         (uint256 newCharge, , , , ) = digil.tokenCharge(tokenId);
-        Assert.ok(newCharge >= initialCharge + coinAmount, "Token charge did not increase appropriately");
+        Assert.ok(newCharge >= initialCharge + coinMultiplier, "Token charge did not increase appropriately(1)");
 
         for (uint256 accountIndex; accountIndex < 9; accountIndex++) {
-            digil.chargeTokenAs(TestsAccounts.getAccount(accountIndex), tokenId, coinAmount);
+            digil.chargeTokenAs(TestsAccounts.getAccount(accountIndex), tokenId, coinMultiplier);
         }
 
         (uint256 fullCharge, , , , ) = digil.tokenCharge(tokenId);
-        Assert.ok(fullCharge >= newCharge + coinAmount * 9, "Token charge did not increase appropriately");
+        Assert.ok(fullCharge >= newCharge + coinMultiplier * 9, "Token charge did not increase appropriately (10)");
+
+        (uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold) = digil.tokenCharge(tokenId);
+        Assert.ok(charge == fullCharge, "Token should be at full charge");
+        Assert.ok(activeCharge == 0, "Active charge should be 0");
+        Assert.ok(value == 0, "Value should be 0");
+        Assert.ok(incrementalValue == 0, "Incremental value should be 0");
+        Assert.ok(activationThreshold == fullCharge, "Token should be at activation threshold");
+    }
+
+    /// #sender: account-0
+    /// #value: 1000000000000000
+    function testChargeTokenWithValue() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        uint256 incrementalValue = 100000000000000;
+
+        // Approve the Digil Token contract to spend the specified coinAmount.
+        bool approved = coins.approve(address(digil), 15 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge");
+
+        (uint256 initialCharge, , uint256 initialValue, , ) = digil.tokenCharge(tokenId);
+
+        digil.chargeToken{value: incrementalValue}(tokenId, coinMultiplier);
+
+        (uint256 newCharge, , uint256 newValue, , ) = digil.tokenCharge(tokenId);
+        Assert.ok(newCharge >= initialCharge + coinMultiplier, "Token charge did not increase appropriately");
+        Assert.ok(newValue == initialValue, "Token value should not increase");
+
+        for (uint256 accountIndex; accountIndex < 9; accountIndex++) {
+            digil.chargeTokenAs{value: incrementalValue}(TestsAccounts.getAccount(accountIndex), tokenId, coinMultiplier);
+        }
+
+        (uint256 finalCharge, , uint256 finalValue, , ) = digil.tokenCharge(tokenId);
+        Assert.ok(finalCharge >= newCharge + coinMultiplier * 9, "Token charge did not increase appropriately");
+        Assert.ok(finalValue == newValue, "Token value should not increase");
+    }
+
+    /// #sender: account-0
+    /// #value: 1000000000000000
+    function testChargeTokenWithIncreasedValue() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        uint256 incrementalValue = 100000000000000;
+
+        // Approve the Digil Token contract to spend the specified coinAmount.
+        bool approved = coins.approve(address(digil), 15 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge");
+
+        (uint256 initialCharge, , uint256 initialValue, , ) = digil.tokenCharge(tokenId);
+
+        digil.chargeToken{value: incrementalValue * 10}(tokenId, coinMultiplier);
+
+        (uint256 newCharge, , uint256 newValue, , ) = digil.tokenCharge(tokenId);
+        Assert.ok(newCharge >= initialCharge + coinMultiplier, "Token charge did not increase appropriately");
+        Assert.ok(newValue >= initialValue + incrementalValue * 9, "Token value did not increase appropriately");
     }
 
     function checkSuccess() public {
