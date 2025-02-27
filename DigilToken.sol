@@ -400,6 +400,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(msg.value);
     }
 
+    /// @notice Returns any pending coin and value distributions for the sender, not inculding bonus coins.
+    /// @return coins The number of coin units pending transferred to the sender.
+    /// @return value The native Ether value pending transferred to the sender.
+    /// @return time The time of the sender's last distribution.
+    function pendingDistribution(address addr) public view returns(uint256 coins, uint256 value, uint256 time) {
+        Distribution storage distribution = _distributions[addr];
+        return (distribution.coins, distribution.value, distribution.time);
+    }
+
     /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
     ///         If no coins or tokens are owned by the user, bonus coins can be rewarded by donating to the contract.
     ///         With default values it amounts to 1000000000000000 wei ((100 * 1000 gwei) * (100 * 10 ** 18) /  (10 ** 18) / 10))
@@ -482,12 +491,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @dev    Internal function that calculates and assigns distribution amounts between the contract and a specified address.
     ///         Adds a percentage of the value to be distributed to the contract, and the rest to the address specified.
-    ///         Adds all the coins to be distributed to the address specified along with an additional number of bonus coins based on the value to be distributed.
-    ///         An example 1 eth, 100 Coin distribution with a incremental value of 100 and a transfer value of 95 would:
+    ///         Adds a number of bonus coins based on the value to be distributed to "reward" the contributor for contributing value to the contract.
+    ///         An example 1 eth distribution with a incremental value of 100 and a transfer value of 95 would:
     ///             Add 0.05 eth to the contract.
     ///             Add 0.95 eth to the address specified.
-    ///             Add 10100 Coins to the address specified (10000 bonus Coins)
-    function _addDistribution(address addr, uint256 value, uint256 coins) internal {
+    ///             Add 10000 Coins to the address specified.
+    /// @param  addr The address to credit the distribution.
+    /// @param  value The amount of native value (in wei) to add.
+    function _addDistributedValue(address addr, uint256 value) internal {
         // Calculate the incremental distribution multiplier.
         uint256 incrementalDistribution = value / _incrementalValue;
         // Add the non-transferred portion of the value to the contract's distribution.
@@ -495,7 +506,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Calculate bonus coins based on the incremental distribution.
         uint256 bonusCoins = _coinRate / BONUS_RATE_DIVISOR * incrementalDistribution;
         // Add the transferred value and coins (including bonus) to the specified address.
-        _addValue(addr, incrementalDistribution * _transferValue, coins + bonusCoins);
+        _addValue(addr, incrementalDistribution * _transferValue, bonusCoins);
     }
 
     /// @dev    Internal function that adds contributed value to a token.
@@ -985,7 +996,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Any remaining value is added to the owner's pending distribution.
         if (value > 0) {
-            _addDistribution(ownerOf(tokenId), value, 0);
+            _addDistributedValue(ownerOf(tokenId), value);
         }
     }
 
@@ -1190,10 +1201,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
                     // Otherwise, accumulate distribution for the token owner.
                     distribution += contribution.value;
-                    // A percentage of the token's intrinsic value is sent back to the contributor 
+                    // A percentage of the token's intrinsic value is sent to the contributor along with a bonus coin
                     uint256 distributableTokenValue = incrementalValue * contribution.charge / _coinMultiplier;
                     t.value -= distributableTokenValue;
-                    _addValue(contributor, distributableTokenValue, 0);
+                    _addDistributedValue(contributor, distributableTokenValue);
 
                 }
 
@@ -1213,7 +1224,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if (discharge) {
 
                 // For discharge, return any undistributed value to the token owner.
-                _addDistribution(ownerOf(tokenId), tValue, 0);
+                _addDistributedValue(ownerOf(tokenId), tValue);
 
             } else {
 
@@ -1223,7 +1234,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 }
 
                 // Create a distribution for the token owner and add remaining value to the contract.
-                _addDistribution(ownerOf(tokenId), distribution, 0);
+                _addDistributedValue(ownerOf(tokenId), distribution);
                 _addValue(tValue);
                 
             }
@@ -1237,7 +1248,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
             if (!discharge && distribution > 0) {
                 // If not discharging, create a distribution for the token owner.
-                _addDistribution(ownerOf(tokenId), distribution, 0);
+                _addDistributedValue(ownerOf(tokenId), distribution);
             }
             return false;
         }
