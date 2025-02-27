@@ -55,9 +55,10 @@ contract BasicTestSuite {
         balanceTokens = digil.balanceOf(address(this));
         Assert.equal(balanceTokens, 1, "Token balance should be 1");
        
-        (bool active, bool activating, bool tokenRestricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory tokenData) = digil.tokenData(tokenId);
+        (bool active, bool activating, bool discharging, bool tokenRestricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory tokenData) = digil.tokenData(tokenId);
         Assert.ok(active == false, "Token should be inactive initially");
         Assert.ok(activating == false, "Token should not be activating at creation");
+        Assert.ok(discharging == false, "Token should not be discharging at creation");
         Assert.ok(tokenRestricted == restricted, "Token restriction flag mismatch");
         Assert.ok(links == 1, "Token should have a plane link if plane > 0");
         Assert.ok(contributors == 0, "Token should have no contributors at creation, including creator");
@@ -170,15 +171,15 @@ contract BasicTestSuite {
         Assert.ok(newCharge >= initialCharge + coinMultiplier * 15, "Token charge did not increase appropriately");
         Assert.ok(newValue == initialValue, "Token value should not increase");
 
-        (, , , , , uint256 dischargeIndex, uint256 distributionIndex, ) = digil.tokenData(tokenId);
+        (, , , , , , uint256 dischargeIndex, uint256 distributionIndex, ) = digil.tokenData(tokenId);
         Assert.ok(dischargeIndex == 0 && distributionIndex == 0, "Token distribution in invalid state > 0");
 
         while(!digil.dischargeToken{value: incrementalValue}(tokenId)) {
-            (, , , , , dischargeIndex, distributionIndex, ) = digil.tokenData(tokenId);
+            (, , , , , , dischargeIndex, distributionIndex, ) = digil.tokenData(tokenId);
             Assert.ok(dischargeIndex > 0 || distributionIndex > 0, "Token distribution in invalid state (0)");
         }
 
-        (, , , , , dischargeIndex, distributionIndex, ) = digil.tokenData(tokenId);
+        (, , , , , , dischargeIndex, distributionIndex, ) = digil.tokenData(tokenId);
         Assert.ok(dischargeIndex == 0 && distributionIndex == 0, "Token distribution in invalid state > 0");
 
         (uint256 finalCharge, , uint256 finalValue, , ) = digil.tokenCharge(tokenId);

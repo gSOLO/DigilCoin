@@ -745,15 +745,16 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to query.
     /// @return active Whether the token is active.
     /// @return activating Whether the token is being activated.
+    /// @return discharging Whether the token is being discharged.
     /// @return restricted Whether the token is restricted.
     /// @return links The number of links associated with the token.
     /// @return contributors The number of contributor addresses.
     /// @return dischargeIndex The current discharge index.
     /// @return distributionIndex The current distribution index.
     /// @return data Arbitrary data stored with the token.
-    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(bool active, bool activating, bool restricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory data) {
+    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory data) {
         Token storage t = _tokens[tokenId]; 
-        return (t.active, t.activating, t.restricted, t.links.length, t.contributors.length, t.dischargeIndex, t.distributionIndex, t.data);
+        return (t.active, t.activating, t.discharging, t.restricted, t.links.length, t.contributors.length, t.dischargeIndex, t.distributionIndex, t.data);
     }
 
     // Token Creation

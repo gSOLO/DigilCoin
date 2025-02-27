@@ -82,7 +82,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     // Token Information
     function tokenURI(uint256 tokenId) external view returns (string memory);
     function tokenCharge(uint256 tokenId) external view returns (uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold);
-    function tokenData(uint256 tokenId) external view returns (bool active, bool activating, bool restricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory data);
+    function tokenData(uint256 tokenId) external view returns (bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory data);
 
     // Token Creation
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable returns (uint256 tokenId);
