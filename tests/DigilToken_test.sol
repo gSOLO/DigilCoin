@@ -16,12 +16,16 @@ contract BasicTestSuite {
     IERC20 public coins;
     IDigilToken public digil;
 
+    receive() external payable {
+        
+    }
+
     /// 'beforeAll' runs before all other tests
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = IERC20(0x391209eC7C62713F2DC48E6582Cc264872A5aCcD);
-        digil = IDigilToken(0xF4EF13a0c667B0dF23197106Df29ffBd491ddd0B);
+        coins = IERC20(0xC8D70524BCD50479bad152c35A77EAEb1237F5E5);
+        digil = IDigilToken(0x09077BC485F65DcCa4703DbEB53c63c36D8bB1EE);
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
@@ -42,7 +46,7 @@ contract BasicTestSuite {
     /// #sender: account-0
     function testCreateToken() public {
         uint256 incrementalValue = 100000000000000;
-        uint256 activationThreshold = 10;
+        uint256 activationThreshold = 100000000000000000;
         bool restricted = false;
         uint256 plane = 4;                    
         bytes memory data = "Test Token";
@@ -264,4 +268,78 @@ contract BasicTestSuite {
         Assert.equal(msg.value, 100, "Invalid value");
     }
 }
-    
+
+contract ValueTestSuite {
+    IERC20 public coins;
+    IDigilToken public digil;
+
+    receive() external payable {
+        
+    }
+
+    /// 'beforeAll' runs before all other tests
+    /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
+    function beforeAll() public {
+        // <instantiate contract>
+        coins = IERC20(0xC8D70524BCD50479bad152c35A77EAEb1237F5E5);
+        digil = IDigilToken(0x09077BC485F65DcCa4703DbEB53c63c36D8bB1EE);
+        Assert.equal(uint(1), uint(1), "1 should be equal to 1");
+    }
+
+    /// #sender: account-1
+    /// #value: 110000000000000000
+    function testWithdrawl() public payable {
+        uint256 balanceCoins = coins.balanceOf(address(this));
+        Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
+
+        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+
+        (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "First withdrawl should be 100 coins");
+        Assert.equal(withdrawlValue, 0, "First withdrawl should be 0 value");
+
+        // Approve the Digil Token contract to spend the specified coinAmount.
+        bool approved = coins.approve(address(digil), 1 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        digil.chargeToken{value: 1000000000000000}(tokenId, 1000000000000000000);
+        digil.activateToken(tokenId);
+
+        (withdrawlCoins, withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 11 * 10 ** 18, "Coins from distribution should be 1 for contribution and 10 bonus for value");
+        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
+
+        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+
+        approved = coins.approve(address(digil), 1 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        digil.chargeToken{value: 10000000000000000}(tokenId, 1000000000000000000);
+        digil.activateToken(tokenId);
+
+        (withdrawlCoins, withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 101 * 10 ** 18, "Coins from distribution should be 1 for contribution and 100 bonus for value");
+        Assert.equal(withdrawlValue, 9500000000000000, "Distributed value should be 95% of 10000000000000000");
+    }
+
+    function checkSuccess() public {
+        // Use 'Assert' methods: https://remix-ide.readthedocs.io/en/latest/assert_library.html
+        Assert.ok(2 == 2, 'should be true');
+        Assert.greaterThan(uint(2), uint(1), "2 should be greater than to 1");
+        Assert.lesserThan(uint(2), uint(3), "2 should be lesser than to 3");
+    }
+
+    function checkSuccess2() public pure returns (bool) {
+        // Use the return value (true or false) to test the contract
+        return true;
+    }
+
+    /// Custom Transaction Context: https://remix-ide.readthedocs.io/en/latest/unittesting.html#customization
+    /// #sender: account-1
+    /// #value: 100
+    function checkSenderAndValue() public payable {
+        // account index varies 0-9, value is in wei
+        Assert.equal(msg.sender, TestsAccounts.getAccount(1), "Invalid sender");
+        Assert.equal(msg.value, 100, "Invalid value");
+    }
+}
