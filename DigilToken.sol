@@ -108,6 +108,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         bool active;                // Indicates if the token is active
         bool activating;            // Indicates if the token is currently being activated
+        bool discharging;           // Indicates if the token is currently being discharged
         bool restricted;            // Indicates if contributions are restricted to whitelist
     }
 
@@ -1249,7 +1250,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return True if discharge is complete.
     function dischargeToken(uint256 tokenId) public payable approved(tokenId) returns (bool) {
         Token storage t = _tokens[tokenId];
-        require(t.charge > 0 || t.value > 0, "DIGIL: Nothing to Discharge");
+        require(t.charge > 0 || t.value > 0 || t.discharging, "DIGIL: Nothing to Discharge");
         require(!t.activating, "DIGIL: Activation In Progress");
         
         // Determine the required minimum value for discharge, scaled by number of links.
@@ -1261,6 +1262,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         _addValue(msg.value);
 
+        // Set flag at start
+        t.discharging = true;
+        
         uint256 dIndex = t.dischargeIndex;
         
         // Distribute based on mode
@@ -1277,7 +1281,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (cEndIndex > cLength) {
             cEndIndex = cLength;
         }
-        // Process in batches defined by _batchSizeCharge.
+        // Process in batches defined by _batchSize.
         for (dIndex; dIndex < cEndIndex; dIndex++) {
             address contributor = t.contributors[dIndex];
             if (contributor == address(0)) {
@@ -1321,6 +1325,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // If applicable, re-add the contract token address as a contributor.
             t.contributors.push(contractTokenAddress);
         }
+
+        // Clear flag on completion
+        t.discharging = false;
         return true;
     }
 

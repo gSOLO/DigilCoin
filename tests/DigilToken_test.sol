@@ -20,8 +20,8 @@ contract BasicTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = IERC20(0x3c725134d74D5c45B4E4ABd2e5e2a109b5541288);
-        digil = IDigilToken(0xDA07165D4f7c84EEEfa7a4Ff439e039B7925d3dF);
+        coins = IERC20(0xC1144C9dbf6F3489CE9C808a1Da653FB4465403d);
+        digil = IDigilToken(0x9De0a845D9c7558B0B8E1a68303E3255A3938584);
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
@@ -105,10 +105,10 @@ contract BasicTestSuite {
         uint256 incrementalValue = 100000000000000;
 
         // Approve the Digil Token contract to spend the specified coinAmount.
-        bool approved = coins.approve(address(digil), 15 * coinMultiplier);
+        bool approved = coins.approve(address(digil), 10 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge");
+        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge With Value");
 
         (uint256 initialCharge, , uint256 initialValue, , ) = digil.tokenCharge(tokenId);
 
@@ -134,10 +134,10 @@ contract BasicTestSuite {
         uint256 incrementalValue = 100000000000000;
 
         // Approve the Digil Token contract to spend the specified coinAmount.
-        bool approved = coins.approve(address(digil), 15 * coinMultiplier);
+        bool approved = coins.approve(address(digil), 1 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge");
+        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge With Increased Value");
 
         (uint256 initialCharge, , uint256 initialValue, , ) = digil.tokenCharge(tokenId);
 
@@ -146,6 +146,44 @@ contract BasicTestSuite {
         (uint256 newCharge, , uint256 newValue, , ) = digil.tokenCharge(tokenId);
         Assert.ok(newCharge >= initialCharge + coinMultiplier, "Token charge did not increase appropriately");
         Assert.ok(newValue >= initialValue + incrementalValue * 9, "Token value did not increase appropriately");
+    }
+
+    // #sender: account-0
+    /// #value: 1700000000000000
+    function testDischargeToken() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        uint256 incrementalValue = 100000000000000;
+
+        // Approve the Digil Token contract to spend the specified coinAmount.
+        bool approved = coins.approve(address(digil), 15 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Discharge");
+
+        (uint256 initialCharge, , uint256 initialValue, , ) = digil.tokenCharge(tokenId);
+
+        for (uint256 accountIndex; accountIndex < 15; accountIndex++) {
+            digil.chargeTokenAs{value: incrementalValue}(TestsAccounts.getAccount(accountIndex), tokenId, coinMultiplier);
+        }
+
+        (uint256 newCharge, , uint256 newValue, , ) = digil.tokenCharge(tokenId);
+        Assert.ok(newCharge >= initialCharge + coinMultiplier * 15, "Token charge did not increase appropriately");
+        Assert.ok(newValue == initialValue, "Token value should not increase");
+
+        (, , , , , uint256 dischargeIndex, uint256 distributionIndex, ) = digil.tokenData(tokenId);
+        Assert.ok(dischargeIndex == 0 && distributionIndex == 0, "Token distribution in invalid state > 0");
+
+        while(!digil.dischargeToken{value: incrementalValue}(tokenId)) {
+            (, , , , , dischargeIndex, distributionIndex, ) = digil.tokenData(tokenId);
+            Assert.ok(dischargeIndex > 0 || distributionIndex > 0, "Token distribution in invalid state (0)");
+        }
+
+        (, , , , , dischargeIndex, distributionIndex, ) = digil.tokenData(tokenId);
+        Assert.ok(dischargeIndex == 0 && distributionIndex == 0, "Token distribution in invalid state > 0");
+
+        (uint256 finalCharge, , uint256 finalValue, , ) = digil.tokenCharge(tokenId);
+        Assert.ok(finalCharge == initialCharge, "Token charge did not decrease appropriately");
+        Assert.ok(finalValue == initialValue, "Token value should not change");
     }
 
     function checkSuccess() public {
