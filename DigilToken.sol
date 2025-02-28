@@ -896,8 +896,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Make sure the token isn't currently being discharged or activated
         require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
-        activationThreshold *= _coinMultiplier;
-
         // If token already has charge, its incremental value and activation threshold cannot be modified.
         if (t.charge > 0) {
             require(t.incrementalValue == incrementalValue && t.activationThreshold == activationThreshold, "DIGIL: Cannot Update Charged Token");
