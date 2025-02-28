@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.22;
+pragma solidity ^0.8.28;
 
 // Import OpenZeppelin contracts for standard ERC721 functionality, ownership, safe transfers, counters, ERC20 interfacing, and reentrancy protection.
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
@@ -454,7 +454,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @dev    Internal helper that adds native value to the contract’s balance.
     /// @param  value The amount of Ether (in wei) to add.
-    function _addValue(uint256 value) private {
+    function _addValue(uint256 value) internal {
         if (value > 0) {
             _addValue(_this, value, 0);
             emit ContractDistribution(value);
@@ -465,7 +465,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  addr The address to credit the distribution.
     /// @param  value The amount of native value (in wei) to add.
     /// @param  coins The number of coin units to add.
-    function _addValue(address addr, uint256 value, uint256 coins) private {
+    function _addValue(address addr, uint256 value, uint256 coins) internal {
         if (value > 0 || coins > 0) {
             Distribution storage distribution = _distributions[addr];
             distribution.value += value;
