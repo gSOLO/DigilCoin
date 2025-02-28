@@ -888,7 +888,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         In addition, for a data update, a transfer of 10000 coins per coin rate; for a URI update, 100000 coins per coin rate.
     /// @param  tokenId The ID of the Token to Update
     /// @param  incrementalValue The Value (in wei), required to be sent with each Coin used to Charge the Token. Can be 0 or a multiple of the Minimum Incremental Value
-    /// @param  activationThreshold The number of Coins required for the Token to be Activated (decimals excluded)
+    /// @param  activationThreshold The number of Coins required for the Token to be Activated
     /// @param  data The updated Data for the Token (only updated if length > 0)
     /// @param  uri The updated URI for the Token (only updated if length > 0) 
     function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable approved(tokenId) {

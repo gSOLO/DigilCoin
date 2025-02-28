@@ -24,8 +24,8 @@ contract BasicTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = IERC20(0xC8D70524BCD50479bad152c35A77EAEb1237F5E5);
-        digil = IDigilToken(0x09077BC485F65DcCa4703DbEB53c63c36D8bB1EE);
+        coins = IERC20(0x96481F8958D21b19b55a50537B51B2f4ff4eE963);
+        digil = IDigilToken(0xFC2998de157A0f8Fa3b860Fe5E312730B9d8607a);
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
