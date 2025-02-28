@@ -468,12 +468,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _addValue(address addr, uint256 value, uint256 coins) private {
         if (value > 0 || coins > 0) {
             Distribution storage distribution = _distributions[addr];
-            if (value > 0) {
-                distribution.value += value;
-            }
-            if (coins > 0) {
-                distribution.coins += coins;
-            }
+            distribution.value += value;
+            distribution.coins += coins;
             if (addr != _this) {
                 emit PendingDistribution(addr, coins, value);
             }
@@ -802,6 +798,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  data Optional data to store with the token.
     /// @return tokenId The ID of the newly created token.
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable returns(uint256) {
+        // Require minimum incremental value
+        if (incrementalValue > 0) {
+            require(incrementalValue >= _incrementalValue, "DIGIL: Invalid Incremental Value");
+        }
+        
         // Create a new token with the given parameters.
         uint256 tokenId = _createToken(_msgSender(), incrementalValue, activationThreshold, data);
         Token storage t = _tokens[tokenId];
@@ -899,6 +900,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // If token already has charge, its incremental value and activation threshold cannot be modified.
         if (t.charge > 0) {
             require(t.incrementalValue == incrementalValue && t.activationThreshold == activationThreshold, "DIGIL: Cannot Update Charged Token");
+        }
+
+        // Require minimum incremental value
+        if (incrementalValue > 0) {
+            require(incrementalValue >= _incrementalValue, "DIGIL: Invalid Incremental Value");
         }
 
         // Update last activity
