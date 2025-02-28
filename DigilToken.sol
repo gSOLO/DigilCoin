@@ -357,7 +357,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  incrementalValue The minimum value (in wei) used to Charge, Activate a Token, update a Token URI
     /// @param  transferValue The value (in wei) to be distributed when a Token is Activated as a percentage of the minimum value
     /// @param  batchSize The multiplier used for batch size for distribute and discharge calls that can be made per transaction 
-    function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) public onlyOwner {
+    function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external onlyOwner {
         // Validate configuration parameters.
         require(coins > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchSize> 0, "DIGIL: Invalid Configuration");
 
@@ -400,22 +400,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(msg.value);
     }
 
-    /// @notice Returns any pending coin and value distributions for the sender, not inculding bonus coins.
-    /// @return coins The number of coin units pending transferred to the sender.
-    /// @return value The native Ether value pending transferred to the sender.
-    /// @return time The time of the sender's last distribution.
-    function pendingDistribution(address addr) public view returns(uint256 coins, uint256 value, uint256 time) {
-        Distribution storage distribution = _distributions[addr];
-        return (distribution.coins, distribution.value, distribution.time);
-    }
-
     /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
     ///         If no coins or tokens are owned by the user, bonus coins can be rewarded by donating to the contract.
     ///         With default values it amounts to 1000000000000000 wei ((100 * 1000 gwei) * (100 * 10 ** 18) /  (10 ** 18) / 10))
     /// @dev    Bonus coins are calculated based on the time since the last distribution.
     /// @return coins The number of coin units transferred to the sender.
     /// @return value The native Ether value transferred to the sender.
-    function withdraw() public payable nonReentrant returns(uint256 coins, uint256 value) {
+    function withdraw() external payable nonReentrant returns(uint256 coins, uint256 value) {
         address addr = _msgSender();
         // Ensure the sender is not blacklisted.
         _notOnBlacklist(addr);
@@ -521,7 +512,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    Requires that the contract has enough value; deducts the amount from the contract distribution.
     /// @param  tokenId The token ID to which the value is added.
     /// @param  value The amount of value (in wei) to add.
-    function createValue(uint256 tokenId, uint256 value) public payable onlyOwner {
+    function createValue(uint256 tokenId, uint256 value) external payable onlyOwner {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
         require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
@@ -588,7 +579,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Requires sending a value equal to or greater than the current incremental value at the coin rate.
     ///         For example at 0.0001ETH incremental value and 100 coin rate, requires .01ETH
     /// @param  optOut Send true to opt out, false to opt in
-    function setOptStatus(bool optOut) public payable {
+    function setOptStatus(bool optOut) external payable {
         address account = _msgSender();
         require(_blacklisted[account] != optOut, "DIGIL: No Change");
 
@@ -691,7 +682,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Requires a value sent greater than or equal to the token's incremental value.
     /// @param  account The address of the external ERC721 contract.
     /// @param  tokenId The internal Digil token ID whose attached contract token is to be recalled.
-    function recallToken(address account, uint256 tokenId) public nonReentrant approved(tokenId) {
+    function recallToken(address account, uint256 tokenId) external nonReentrant approved(tokenId) {
         ContractToken storage contractToken = _contractTokens[account][tokenId];
         require(contractToken.recallable, "DIGIL: Contract Token Is Not Recallable");
 
@@ -745,7 +736,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return value The current token value (in wei).
     /// @return incrementalValue The incremental value for charging.
     /// @return activationThreshold The threshold required to activate the token.
-    function tokenCharge(uint256 tokenId) public view tokenExists(tokenId) returns(uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold) {
+    function tokenCharge(uint256 tokenId) external view tokenExists(tokenId) returns(uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold) {
         Token storage t = _tokens[tokenId]; 
         return (t.charge, t.activeCharge, t.value, t.incrementalValue, t.activationThreshold);
     }
@@ -763,7 +754,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return dischargeIndex The current discharge index.
     /// @return distributionIndex The current distribution index.
     /// @return data Arbitrary data stored with the token.
-    function tokenData(uint256 tokenId) public view tokenExists(tokenId) returns(bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory data) {
+    function tokenData(uint256 tokenId) external view tokenExists(tokenId) returns(bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory data) {
         Token storage t = _tokens[tokenId]; 
         return (t.active, t.activating, t.discharging, t.restricted, t.links.length, t.contributors.length, t.dischargeIndex, t.distributionIndex, t.data);
     }
@@ -810,7 +801,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  plane The chosen planar token (numeric index) to link with.
     /// @param  data Optional data to store with the token.
     /// @return tokenId The ID of the newly created token.
-    function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) public payable returns(uint256) {
+    function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable returns(uint256) {
         // Create a new token with the given parameters.
         uint256 tokenId = _createToken(_msgSender(), incrementalValue, activationThreshold, data);
         Token storage t = _tokens[tokenId];
@@ -857,7 +848,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Requires a value sent greater than or equal to the larger of the token's incremental value or the minimum incremental value. 
     /// @param  tokenId The token ID to update.
     /// @param  whitelisted An array of addresses to whitelist.
-    function restrictToken(uint256 tokenId, address[] memory whitelisted) public payable approved(tokenId) {
+    function restrictToken(uint256 tokenId, address[] memory whitelisted) external payable approved(tokenId) {
         uint256 value = msg.value;
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
@@ -900,7 +891,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  activationThreshold The number of Coins required for the Token to be Activated (decimals excluded)
     /// @param  data The updated Data for the Token (only updated if length > 0)
     /// @param  uri The updated URI for the Token (only updated if length > 0) 
-    function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) public payable approved(tokenId) {
+    function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable approved(tokenId) {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
         require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
@@ -1121,7 +1112,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to charge.
     /// @param  coins The number of coin units to use.
     /// @return True if the token was successfully charged.
-    function chargeToken(uint256 tokenId, uint256 coins) public payable returns(bool) {
+    function chargeToken(uint256 tokenId, uint256 coins) external payable returns(bool) {
         // Multiply the coin amount by coin decimals and delegate to chargeTokenAs.
         return chargeTokenAs(_msgSender(), tokenId, coins);
     }
@@ -1260,7 +1251,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Requires a value sent greater than or equal to the larger of the token's incremental value or the minimum incremental value, scaled by the number of links.
     /// @param  tokenId The token ID to discharge.
     /// @return True if discharge is complete.
-    function dischargeToken(uint256 tokenId) public payable approved(tokenId) returns (bool) {
+    function dischargeToken(uint256 tokenId) external payable approved(tokenId) returns (bool) {
         Token storage t = _tokens[tokenId];
         require(t.charge > 0 || t.value > 0 || t.discharging, "DIGIL: Nothing to Discharge");
         require(!t.activating, "DIGIL: Activation In Progress");
@@ -1347,7 +1338,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Requires the token have a charge greater than or equal to the token's activation threshold or its distribution charge exceeds the threshold.
     /// @param  tokenId The token ID to activate.
     /// @return True if the token activation is complete.
-    function activateToken(uint256 tokenId) public approved(tokenId) returns(bool) {
+    function activateToken(uint256 tokenId) external approved(tokenId) returns(bool) {
         Token storage t = _tokens[tokenId];
         require(t.active == false && (t.charge >= t.activationThreshold || t.activating), "DIGIL: Token Cannot Be Activated");
 
@@ -1373,7 +1364,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Deactivates an active token.
     ///         Requires the token have zero charge, and a value sent greater than or equal to the token's incremental value.
     /// @param  tokenId The ID of the token to deactivate
-    function deactivateToken(uint256 tokenId) public payable approved(tokenId) {
+    function deactivateToken(uint256 tokenId) external payable approved(tokenId) {
         Token storage t = _tokens[tokenId];
         require(t.active == true && t.charge == 0, "DIGIL: Token Cannot Be Deactivated");
         // Make sure the token isn't currently being discharged or activated
@@ -1402,7 +1393,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The source token ID.
     /// @param  linkId The destination token ID to link to.
     /// @param  efficiency The efficiency of the link (percentage based).
-    function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) public payable approved(tokenId) tokenExists(linkId) {
+    function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) external payable approved(tokenId) tokenExists(linkId) {
         Token storage t = _tokens[tokenId];
         require(t.links.length <= MAX_LINKS, "DIGIL: Too Many Links");
 
@@ -1504,7 +1495,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Unlinks a token from another token.
     /// @param  tokenId The source token ID.
     /// @param  linkId The destination token ID to unlink.
-    function unlinkToken(uint256 tokenId, uint256 linkId) public approved(tokenId) tokenExists(linkId) {
+    function unlinkToken(uint256 tokenId, uint256 linkId) external approved(tokenId) tokenExists(linkId) {
         Token storage t = _tokens[tokenId];
         require(linkId > 0 && t.linkEfficiency[linkId].base > 0, "DIGIL: Invalid Link");
 
