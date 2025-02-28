@@ -341,7 +341,7 @@ contract ValueTestSuite {
         uint256 incrementalValue = 100000000000000;
 
         // Approve the Digil Token contract to spend the specified coinAmount.
-        bool approved = coins.approve(address(digil), 515 * coinMultiplier);
+        bool approved = coins.approve(address(digil), 215 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
         uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Activate");
