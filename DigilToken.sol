@@ -36,7 +36,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // Value transferred during charge operations
 
     // Batch operations limiter
-    uint16 private constant DEFAULT_BATCH_SIZE = 100;            // Default size for batch operations (350)
+    uint16 private constant DEFAULT_BATCH_SIZE = 100;           // Default size for batch operations (350)
     uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Base value for maximum number of distribution or discharge operations per transaction
 
     // Define the inactivity period for rescuing tokens
@@ -453,10 +453,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    Internal helper that adds native value to the contract’s balance.
     /// @param  value The amount of Ether (in wei) to add.
     function _addValue(uint256 value) internal {
-        if (value > 0) {
-            _addValue(_this, value, 0);
-            emit ContractDistribution(value);
-        }
+        _addValue(_this, value, 0);
     }
 
     /// @dev    Internal function to add native value and coins to a given address's pending distribution.
@@ -468,7 +465,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             Distribution storage distribution = _distributions[addr];
             distribution.value += value;
             distribution.coins += coins;
-            if (addr != _this) {
+            if (addr == _this) {
+                emit ContractDistribution(value);
+            } else {
                 emit PendingDistribution(addr, coins, value);
             }
         }
@@ -498,8 +497,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token to which the value is added.
     /// @param  value The amount of value (in wei) to add.
     function _createValue(uint256 tokenId, uint256 value) internal {
-        _tokens[tokenId].value += value;
-        emit ContributeValue(tokenId, value);
+        if (value > 0) {
+            _tokens[tokenId].value += value;
+            emit ContributeValue(tokenId, value);
+        }
     }
 
     /// @notice Creates Value for a Token using the contract's available balance.
@@ -815,9 +816,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // If any Ether is sent, add it as token value.
-        if (msg.value > 0) {
-            _createValue(tokenId, msg.value);
-        }
+        _createValue(tokenId, msg.value);
 
         // If a plane is specified (plane > 0), process the coin fee and link the token to the plane.
         if (plane > 0) {
@@ -866,10 +865,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Add any sent Ether as token value.
-        if (value > 0) {
-            _createValue(tokenId, value);
-        }
-
+        _createValue(tokenId, value);
+        
         // Loop through the provided addresses and whitelist them.
         mapping(address => TokenContribution) storage contributions = t.contributions;
         uint256 accountIndex;
@@ -980,7 +977,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 if (charged) {
                     value -= linkedValue;
                 } else {
-                    // If linked token could not be charged, add the coins to its active charge.
+                    // If linked token could not be charged, add the coins to the source's active charge.
                     t.activeCharge += linkedCoins;
                     emit ActiveCharge(tokenId, linkedCoins);
                 }
@@ -1047,6 +1044,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             }
             // In linked charging, use the entire provided value.
             minimumValue = value;
+            if (coins < minimumCoins) {
+                coins = minimumCoins;
+            }
 
         } else {
 
@@ -1415,10 +1415,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.lastActivity = block.timestamp;
 
         // Split the value evenly between the two tokens.
-        if (value > 0) {
-            _createValue(tokenId, value / 2);
-            _createValue(linkId, value / 2);
-        }
+        _createValue(tokenId, value / 2);
+        _createValue(linkId, value / 2);
 
         // If both tokens are associated with planes, calculate bonus affinity.
         uint256 sourcePlane = t.links.length > 0 ? t.links[0] : 0;
