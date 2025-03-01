@@ -24,8 +24,8 @@ contract BasicTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = IERC20(0x9E84e3a13a0CdBb433B4D753ce70d39f715A4354);
-        digil = IDigilToken(0x37771B3877D4cfaf3a25Ab431FcF6B888E47BEaF);
+        coins = IERC20(0x295E1FDbDf60DFEf18b7167E7F2f4D683dEFec50);
+        digil = IDigilToken(0x417F95170f83Af2c48Ef2B411fa91C778e91C5A4);
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
@@ -281,13 +281,13 @@ contract ValueTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = IERC20(0x9E84e3a13a0CdBb433B4D753ce70d39f715A4354);
-        digil = IDigilToken(0x37771B3877D4cfaf3a25Ab431FcF6B888E47BEaF);
+        coins = IERC20(0x295E1FDbDf60DFEf18b7167E7F2f4D683dEFec50);
+        digil = IDigilToken(0x417F95170f83Af2c48Ef2B411fa91C778e91C5A4);
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
     /// #sender: account-1
-    /// #value: 111000000000000000
+    /// #value: 1011000000000000000
     function testWithdrawl() public payable {
         uint256 balanceCoins = coins.balanceOf(address(this));
         Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
@@ -326,22 +326,22 @@ contract ValueTestSuite {
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
 
-        digil.chargeToken{value: 100000000000000000}(tokenId, 1000000000000000000);
+        digil.chargeToken{value: 1000000000000000000}(tokenId, 1000000000000000000);
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 1000 * 10 ** 18, "Coins from distribution should be 1000 bonus for value");
-        Assert.equal(withdrawlValue, 95000000000000000, "Distributed value should be 95% of 100000000000000000");
+        Assert.equal(withdrawlCoins, 10000 * 10 ** 18, "Coins from distribution should be 10000 bonus for value");
+        Assert.equal(withdrawlValue, 950000000000000000, "Distributed value should be 95% of 1000000000000000000");
     }
 
-    // #sender: account-0
-    /// #value: 25000000000000000
+    /// #sender: account-0
+    /// #value: 55000000000000000
     function testActivateToken() external payable {
         uint256 coinMultiplier = 10 ** 18;
         uint256 incrementalValue = 100000000000000;
 
         // Approve the Digil Token contract to spend the specified coinAmount.
-        bool approved = coins.approve(address(digil), 215 * coinMultiplier);
+        bool approved = coins.approve(address(digil), 515 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
         uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Activate");
@@ -351,21 +351,21 @@ contract ValueTestSuite {
         }
         
         uint256 currentSeed = 1;
-        for (uint256 accountIndex = 0; accountIndex < 199; accountIndex++) {
+        for (uint256 accountIndex = 0; accountIndex < 499; accountIndex++) {
             currentSeed = uint256(keccak256(abi.encodePacked(currentSeed, accountIndex))); // Generate a new seed for each address
             address addr = address(uint160(currentSeed)); // Convert the seed to an address
             digil.chargeTokenAs{value: incrementalValue}(addr, tokenId, coinMultiplier);
         }
 
         (uint256 newCharge, uint256 newActiveCharge, uint256 newValue, , ) = digil.tokenCharge(tokenId);
-        Assert.ok(newCharge >= coinMultiplier * 214, "Token charge did not increase appropriately");
+        Assert.ok(newCharge >= coinMultiplier * 514, "Token charge did not increase appropriately");
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
         Assert.ok(newValue == 0, "Token value should not increase");
 
         digil.chargeToken{value: incrementalValue * 6}(tokenId, coinMultiplier);
 
         (newCharge, newActiveCharge, newValue, , ) = digil.tokenCharge(tokenId);
-        Assert.ok(newCharge >= coinMultiplier * 215, "Token charge did not increase appropriately");
+        Assert.ok(newCharge >= coinMultiplier * 515, "Token charge did not increase appropriately");
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
         Assert.ok(newValue == incrementalValue * 5, "Token value did not increase appropriately");
 
@@ -386,8 +386,43 @@ contract ValueTestSuite {
 
         (newCharge, newActiveCharge, newValue, , ) = digil.tokenCharge(tokenId);
         Assert.ok(newCharge == 0, "Token charge did not decrease appropriately");
-        Assert.ok(newActiveCharge == coinMultiplier * 215, "Token active charge did not increase appropriately");
+        Assert.ok(newActiveCharge == coinMultiplier * 515, "Token active charge did not increase appropriately");
         Assert.ok(newValue == 0, "Token value should reset");
+    }
+
+    /// #sender: account-0
+    /// #value: 100000000000000
+    function testLinkToken() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        uint256 incrementalValue = 100000000000000;
+
+        // Approve the Digil Token contract to spend the specified coinAmount.
+        bool approved = coins.approve(address(digil), 9694 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 tokenId = digil.createToken(0, 0, false, 4, "Source Plane");
+        (, , , , uint256 links, , , , ) = digil.tokenData(tokenId);
+        Assert.equal(links, 1, "Invalid Link Count (!=1)");
+
+        uint256 fireTokenId = digil.createToken(0, 0, false, 4, "Fire Destination Plane");
+        uint256 airTokenId = digil.createToken(0, 0, false, 5, "Air Destination Plane");
+        uint256 earthTokenId = digil.createToken(incrementalValue, 0, false, 6, "Earth Destination Plane");
+        uint256 waterTokenId = digil.createToken(0, 0, false, 7, "Water Destination Plane");
+
+        digil.linkToken(tokenId, fireTokenId, 10);                           // coins: 1000 base: 10 bonus: 10
+        (, , , , links, , , , ) = digil.tokenData(tokenId);
+        Assert.equal(links, 2, "Invalid Link Count (!=2)");
+        digil.linkToken(tokenId, airTokenId, 10);                            // coins: 1000 base: 10 bonus: 20
+        (, , , , links, , , , ) = digil.tokenData(tokenId);
+        Assert.equal(links, 3, "Invalid Link Count (!=3)");
+        digil.linkToken{value: 100000000000000}(tokenId, earthTokenId, 10);  // coins: 1000 base: 10 bonus: 0
+        (, , , , links, , , , ) = digil.tokenData(tokenId);
+        Assert.equal(links, 4, "Invalid Link Count (!=4)");
+        digil.linkToken(tokenId, waterTokenId, 10);                          // coins: 1000 base: 10 bonus: 0
+        (, , , , links, , , , ) = digil.tokenData(tokenId);
+        Assert.equal(links, 5, "Invalid Link Count (!=5)");
+
+        digil.activateToken(tokenId);
     }
 
     function checkSuccess() public {
