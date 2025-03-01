@@ -36,7 +36,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // Value transferred during charge operations
 
     // Batch operations limiter
-    uint16 private constant DEFAULT_BATCH_SIZE = 10;            // Default size for batch operations (350)
+    uint16 private constant DEFAULT_BATCH_SIZE = 100;            // Default size for batch operations (350)
     uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Base value for maximum number of distribution or discharge operations per transaction
 
     // Define the inactivity period for rescuing tokens
@@ -417,9 +417,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 donationThreshold = (_incrementalValue * _coinRate / _coinMultiplier) / 10;
 
         // Add donated Ether to the contract's balance
-        if (msg.value > 0) {
-            _addValue(msg.value);
-        }
+        _addValue(msg.value);
 
         // Retrieve and reset the pending value and coin distributions.
         value = distribution.value;
@@ -1043,8 +1041,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (link) {
             
             // Linked charging can use active coins to meet the requirements of the minimum charge  
-            // If the contributor isn't whitelisted, or not enough coins are supplied by the link, the token will not be charged
-            if (!whitelisted || minimumCoins > (coins + activeCoins)) {
+            // If the contributor isn't whitelisted, or not enough coins or value are supplied by the link, the token will not be charged
+            if (!whitelisted || minimumCoins > (coins + activeCoins) || value < minimumValue) {
                 return false;
             }
             // In linked charging, use the entire provided value.
@@ -1196,7 +1194,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
                     // Otherwise, accumulate distribution for the token owner.
                     distribution += contribution.value;
-                    // A percentage of the token's intrinsic value is sent to the contributor along with a bonus coin
+                    // A percentage of the token's intrinsic value is sent to the contributor
                     uint256 distributableTokenValue = incrementalValue * contribution.charge / _coinMultiplier;
                     t.value -= distributableTokenValue;
                     _addDistributedValue(contributor, distributableTokenValue);
@@ -1379,9 +1377,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Update last activity
         t.lastActivity = block.timestamp;
 
-        if (msg.value > 0) {
-            _addValue(msg.value);
-        }
+        _addValue(msg.value);
 
         t.active = false;
         emit Deactivate(tokenId);
