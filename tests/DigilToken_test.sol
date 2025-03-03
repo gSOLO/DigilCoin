@@ -11,6 +11,15 @@ import "remix_tests.sol";
 import "remix_accounts.sol";
 import "../contracts/IDigilToken.sol";
 
+library Digil {
+    function getCoins() public pure returns (IERC20) {
+        return IERC20(0xd9145CCE52D386f254917e481eB44e9943F39138);
+    }
+    function getToken() public pure returns (IDigilToken) {
+        return IDigilToken(0xd8b934580fcE35a11B58C6D73aDeE468a2833fa8);
+    }
+}
+
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
 contract BasicTestSuite {
     IERC20 public coins;
@@ -24,8 +33,8 @@ contract BasicTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = IERC20(0xd9145CCE52D386f254917e481eB44e9943F39138);
-        digil = IDigilToken(0xd8b934580fcE35a11B58C6D73aDeE468a2833fa8);
+        coins = Digil.getCoins();
+        digil = Digil.getToken();
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
@@ -281,8 +290,8 @@ contract ActivateTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = IERC20(0xd9145CCE52D386f254917e481eB44e9943F39138);
-        digil = IDigilToken(0xd8b934580fcE35a11B58C6D73aDeE468a2833fa8);
+        coins = Digil.getCoins();
+        digil = Digil.getToken();
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
