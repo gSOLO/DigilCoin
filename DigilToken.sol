@@ -881,7 +881,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Updates an existing Token. Message sender must be approved for this Token.
     ///         In order for the incremental value or activation threshold to be updated, the token must have 0 charge.
     ///         In order for the token data or URI to be updated a value must be sent of at least the token's incremental value plus the minimum incremental value.
-    ///         In addition, for a data update, a transfer of 10000 coins per coin rate; for a URI update, 100000 coins per coin rate.
+    ///         In addition, for a data or URI update, a transfer of 1000 coins per coin rate for each.
     /// @param  tokenId The ID of the Token to Update
     /// @param  incrementalValue The Value (in wei), required to be sent with each Coin used to Charge the Token. Can be 0 or a multiple of the Minimum Incremental Value
     /// @param  activationThreshold The number of Coins required for the Token to be Activated
@@ -915,8 +915,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         bool overwriteUri = bytes(uri).length > 0;
         if (overwriteUri && needCoins) {
-            // For URI updates (if not owner), transfer a fee of 10000 coin rate.
-            _coinsFromSender(_coinRate * 10000);
+            // For URI updates (if not owner), transfer a fee of 1000 coin rate.
+            _coinsFromSender(_coinRate * 1000);
         }
 
         // Calculate the minimum required Ether value based on whether data or URI is updated.
