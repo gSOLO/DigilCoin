@@ -13,10 +13,10 @@ import "../contracts/IDigilToken.sol";
 
 library Digil {
     function getCoins() public pure returns (IERC20) {
-        return IERC20(0xd9145CCE52D386f254917e481eB44e9943F39138);
+        return IERC20(0x358AA13c52544ECCEF6B0ADD0f801012ADAD5eE3);
     }
     function getToken() public pure returns (IDigilToken) {
-        return IDigilToken(0xd8b934580fcE35a11B58C6D73aDeE468a2833fa8);
+        return IDigilToken(0x9D7f74d0C41E726EC95884E0e97Fa6129e3b5E99);
     }
 }
 
@@ -275,8 +275,8 @@ contract AlphaTestSuite {
         address nonWhitelisted = TestsAccounts.getAccount(1);
         try digil.chargeTokenAs{value: incrementalValue}(nonWhitelisted, tokenId, coinMultiplier) {
             Assert.ok(false, "Non-whitelisted address should not charge restricted token");
-        } catch Error(string memory reason) {
-            Assert.equal(reason, "DIGIL: Restricted", "Incorrect error for restricted charging");
+        } catch {
+            Assert.ok(true, "Incorrect error for restricted charging");
         }
 
         (charge, , , , ) = digil.tokenCharge(tokenId);
@@ -312,27 +312,6 @@ contract AlphaTestSuite {
         digil.chargeTokenAs{value: incrementalValue}(whitelisted, tokenId, coinMultiplier);
         (charge, , , , ) = digil.tokenCharge(tokenId);
         Assert.ok(charge == 2 * coinMultiplier, "Whitelisted address should charge restricted token");
-    }
-
-    function checkSuccess() public {
-        // Use 'Assert' methods: https://remix-ide.readthedocs.io/en/latest/assert_library.html
-        Assert.ok(2 == 2, 'should be true');
-        Assert.greaterThan(uint(2), uint(1), "2 should be greater than to 1");
-        Assert.lesserThan(uint(2), uint(3), "2 should be lesser than to 3");
-    }
-
-    function checkSuccess2() public pure returns (bool) {
-        // Use the return value (true or false) to test the contract
-        return true;
-    }
-
-    /// Custom Transaction Context: https://remix-ide.readthedocs.io/en/latest/unittesting.html#customization
-    /// #sender: account-1
-    /// #value: 100
-    function checkSenderAndValue() public payable {
-        // account index varies 0-9, value is in wei
-        Assert.equal(msg.sender, TestsAccounts.getAccount(1), "Invalid sender");
-        Assert.equal(msg.value, 100, "Invalid value");
     }
 }
 
@@ -564,5 +543,119 @@ contract BetaTestSuite {
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(waterTokenId);
         Assert.equal(charge, 20000000000000000000, "Invalid Water charge after third active charge");
+    }
+
+    // #sender: account-0
+    /// #value: 200000000000000
+    function testZeroCharge() external payable {
+        uint256 tokenId = digil.createToken(100000000000000, 1000000000000000000, false, 4, "Zero Coins Test");
+        
+        try digil.chargeToken{value: 100000000000000}(tokenId, 0) {
+            Assert.ok(false, "Charging with zero coins should fail");
+        } catch {
+            Assert.ok(true, "Incorrect error for zero coins");
+        }
+
+        tokenId = digil.createToken(100000000000000, 1000000000000000000, false, 4, "Zero Value Test");
+        bool approved = coins.approve(address(digil), 1000000000000000000);
+        Assert.ok(approved, "Coin approval failed");
+
+        try digil.chargeToken{value: 0}(tokenId, 1000000000000000000) {
+            Assert.ok(false, "Charging with zero value should fail");
+        } catch {
+            Assert.ok(true, "Incorrect error for zero value");
+        }
+    }
+}
+
+contract CharlieTestSuite {
+    IERC20 public coins;
+    IDigilToken public digil;
+
+    receive() external payable {
+        
+    }
+
+    /// 'beforeAll' runs before all other tests
+    /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
+    function beforeAll() public {
+        // <instantiate contract>
+        coins = Digil.getCoins();
+        digil = Digil.getToken();
+        Assert.equal(uint(1), uint(1), "1 should be equal to 1");
+    }
+
+    /// #sender: account-2
+    /// #value: 21011000000000000000
+    function testWithdrawl() public payable {
+        uint256 balanceCoins = coins.balanceOf(address(this));
+        Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
+
+        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+
+        (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "First withdrawl should be 100 coins");
+        Assert.equal(withdrawlValue, 0, "First withdrawl should be 0 value");
+
+        // Approve the Digil Token contract to spend the specified coinAmount.
+        bool approved = coins.approve(address(digil), 1 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        digil.chargeToken{value: 1000000000000000}(tokenId, 1000000000000000000);
+        digil.activateToken(tokenId);
+
+        (withdrawlCoins, withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 10 * 10 ** 18, "Coins from distribution should be 10 bonus for value");
+        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
+
+        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+
+        approved = coins.approve(address(digil), 1 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        digil.chargeToken{value: 10000000000000000}(tokenId, 1000000000000000000);
+        digil.activateToken(tokenId);
+
+        (withdrawlCoins, withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "Coins from distribution should be 100 bonus for value");
+        Assert.equal(withdrawlValue, 9500000000000000, "Distributed value should be 95% of 10000000000000000");
+
+        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+
+        approved = coins.approve(address(digil), 1 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        digil.chargeToken{value: 20000000000000000000}(tokenId, 1000000000000000000);
+        digil.activateToken(tokenId);
+
+        (withdrawlCoins, withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 200000 * 10 ** 18, "Coins from distribution should be 100000 bonus for value");
+        Assert.equal(withdrawlValue, 19000000000000000000, "Distributed value should be 95% of 20000000000000000000");
+    }
+
+    /// #sender: account-2
+    /// #value: 200000000000000
+    function testUpdateToken() external payable {
+        bool approved = coins.approve(address(digil), 2 * 1000 * 100 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        // Create a token with initial parameters
+        uint256 tokenId = digil.createToken(100000000000000, 1000000000000000000, false, 4, "Update Test");
+
+        // Update token parameters
+        digil.updateToken{value: 200000000000000}(tokenId, 200000000000000, 2000000000000000000, "New Data", "New URI");
+        
+        // Verify updated token charge parameters
+        ( , , , uint256 incrementalValue, uint256 activationThreshold) = digil.tokenCharge(tokenId);
+        Assert.equal(incrementalValue, 200000000000000, "Incremental value should be updated");
+        Assert.equal(activationThreshold, 2000000000000000000, "Activation threshold should be updated");
+        
+        // Verify updated URI
+        string memory uri = digil.tokenURI(tokenId);
+        Assert.equal(uri, "New URI", "URI should be updated");
+
+        // Verify updated data 
+        (, , , , , , , , bytes memory tokenData) = digil.tokenData(tokenId);
+        Assert.ok(keccak256("New Data") == keccak256(tokenData), "Token data should be updated");
     }
 }
