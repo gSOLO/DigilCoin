@@ -9,16 +9,9 @@ import "remix_tests.sol";
 // Although it may fail compilation in 'Solidity Compiler' plugin
 // But it will work fine in 'Solidity Unit Testing' plugin
 import "remix_accounts.sol";
-import "../contracts/IDigilToken.sol";
 
-library Digil {
-    function getCoins() public pure returns (IERC20) {
-        return IERC20(0x9d83e140330758a8fFD07F8Bd73e86ebcA8a5692);
-    }
-    function getToken() public pure returns (IDigilToken) {
-        return IDigilToken(0xD4Fc541236927E2EAf8F27606bD7309C1Fc2cbee);
-    }
-}
+import "../contracts/IDigilToken.sol";
+import "../contracts/DigilTestLibrary.sol";
 
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
 contract AlphaTestSuite {
@@ -33,8 +26,8 @@ contract AlphaTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = Digil.getCoins();
-        digil = Digil.getToken();
+        coins = DigilTestLibrary.getCoins();
+        digil = DigilTestLibrary.getToken();
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
@@ -327,8 +320,8 @@ contract BetaTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = Digil.getCoins();
-        digil = Digil.getToken();
+        coins = DigilTestLibrary.getCoins();
+        digil = DigilTestLibrary.getToken();
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
@@ -580,8 +573,8 @@ contract CharlieTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = Digil.getCoins();
-        digil = Digil.getToken();
+        coins = DigilTestLibrary.getCoins();
+        digil = DigilTestLibrary.getToken();
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
@@ -673,8 +666,8 @@ contract DeltaTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = Digil.getCoins();
-        digil = Digil.getToken();
+        coins = DigilTestLibrary.getCoins();
+        digil = DigilTestLibrary.getToken();
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
@@ -813,8 +806,8 @@ contract EchoTestSuite {
     /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
     function beforeAll() public {
         // <instantiate contract>
-        coins = Digil.getCoins();
-        digil = Digil.getToken();
+        coins = DigilTestLibrary.getCoins();
+        digil = DigilTestLibrary.getToken();
         Assert.equal(uint(1), uint(1), "1 should be equal to 1");
     }
 
