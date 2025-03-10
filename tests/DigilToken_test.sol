@@ -800,3 +800,103 @@ contract DeltaTestSuite {
         Assert.ok(finalValue == 0, "Token value should not change");
     }
 }
+
+contract EchoTestSuite {
+    IERC20 public coins;
+    IDigilToken public digil;
+
+    receive() external payable {
+        
+    }
+
+    /// 'beforeAll' runs before all other tests
+    /// More special functions are: 'beforeEach', 'beforeAll', 'afterEach' & 'afterAll'
+    function beforeAll() public {
+        // <instantiate contract>
+        coins = Digil.getCoins();
+        digil = Digil.getToken();
+        Assert.equal(uint(1), uint(1), "1 should be equal to 1");
+    }
+
+    /// #sender: account-4
+    /// #value: 1011000000000000000
+    function testWithdrawl() public payable {
+        uint256 balanceCoins = coins.balanceOf(address(this));
+        Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
+
+        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+
+        (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "First withdrawl should be 100 coins");
+        Assert.equal(withdrawlValue, 0, "First withdrawl should be 0 value");
+
+        // Approve the Digil Token contract to spend the specified coinAmount.
+        bool approved = coins.approve(address(digil), 1 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        digil.chargeToken{value: 1000000000000000}(tokenId, 1000000000000000000);
+        digil.activateToken(tokenId);
+
+        (withdrawlCoins, withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 10 * 10 ** 18, "Coins from distribution should be 10 bonus for value");
+        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
+
+        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+
+        approved = coins.approve(address(digil), 1 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        digil.chargeToken{value: 10000000000000000}(tokenId, 1000000000000000000);
+        digil.activateToken(tokenId);
+
+        (withdrawlCoins, withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "Coins from distribution should be 100 bonus for value");
+        Assert.equal(withdrawlValue, 9500000000000000, "Distributed value should be 95% of 10000000000000000");
+
+        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+
+        approved = coins.approve(address(digil), 1 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        digil.chargeToken{value: 1000000000000000000}(tokenId, 1000000000000000000);
+        digil.activateToken(tokenId);
+
+        (withdrawlCoins, withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 10000 * 10 ** 18, "Coins from distribution should be 10000 bonus for value");
+        Assert.equal(withdrawlValue, 950000000000000000, "Distributed value should be 95% of 1000000000000000000");
+    }
+
+    /// #sender: account-4
+    /// #value: 5100000000000000
+    function testLinkRestrictedToken() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        uint256 incrementalValue = 100000000000000;
+
+        // Approve coins for charging
+        bool approved = coins.approve(address(digil), 3000 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        // Create source and restricted linked tokens
+        uint256 sourceTokenId = digil.createToken(0, 0, false, 4, "Source Token");
+        uint256 restrictedTokenId = digil.createToken{value: incrementalValue}(incrementalValue, 0, true, 5, "Restricted Linked Token");
+        
+        // Link the tokens
+        digil.linkToken{value: incrementalValue}(sourceTokenId, restrictedTokenId, 10);
+        
+        // Activate both tokens
+        digil.activateToken(sourceTokenId);
+        digil.activateToken(restrictedTokenId);
+        
+        digil.chargeToken(sourceTokenId, coinMultiplier * 2);
+
+        (uint256 sourceCharge, uint256 sourceActiveCharge, uint256 sourceValue, , ) = digil.tokenCharge(sourceTokenId);
+        Assert.equal(sourceCharge, 0, "Invalid Source charge");
+        Assert.equal(sourceActiveCharge, coinMultiplier / 100 * 10, "Invalid Source active charge");
+        Assert.equal(sourceValue, 0, "Invalid Source value");
+
+        (uint256 restrictedCharge, uint256 restrictedActiveCharge, uint256 restrictedValue, , ) = digil.tokenCharge(restrictedTokenId);
+        Assert.equal(restrictedCharge, 0, "Invalid Restricted charge");
+        Assert.equal(restrictedActiveCharge, 0, "Invalid Restricted active charge");
+        Assert.equal(restrictedValue, 0, "Invalid Restricted value");
+    }
+}
