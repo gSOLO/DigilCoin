@@ -21,7 +21,7 @@ library Digil {
 }
 
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
-contract BasicTestSuite {
+contract AlphaTestSuite {
     IERC20 public coins;
     IDigilToken public digil;
 
@@ -256,6 +256,64 @@ contract BasicTestSuite {
         Assert.ok(newValue == 0, "Token value should not change");
     }
 
+    // #sender: account-0
+    /// #value: 5000000000000000
+    function testRestrictToken() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        uint256 incrementalValue = 100000000000000;
+
+        // Approve the Digil Token contract to spend the specified coinAmount.
+        bool approved = coins.approve(address(digil), 4 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 tokenId = digil.createToken{value: incrementalValue}(incrementalValue, 1 * coinMultiplier, true, 4, "Test Restrict");
+
+        (uint256 charge, , uint256 value, , ) = digil.tokenCharge(tokenId);
+        Assert.ok(charge == 0, "New token should not be charged");
+        Assert.ok(value == incrementalValue, "Restricted token should have value equal to incremental value");
+
+        address nonWhitelisted = TestsAccounts.getAccount(1);
+        try digil.chargeTokenAs{value: incrementalValue}(nonWhitelisted, tokenId, coinMultiplier) {
+            Assert.ok(false, "Non-whitelisted address should not charge restricted token");
+        } catch Error(string memory reason) {
+            Assert.equal(reason, "DIGIL: Restricted", "Incorrect error for restricted charging");
+        }
+
+        (charge, , , , ) = digil.tokenCharge(tokenId);
+        Assert.ok(charge == 0, "Restricted token should not be charged");
+
+        address whitelisted = TestsAccounts.getAccount(2);
+        address[] memory whitelist = new address[](1);
+        whitelist[0] = whitelisted;
+        digil.restrictToken(tokenId, whitelist);
+        digil.chargeTokenAs{value: incrementalValue}(whitelisted, tokenId, coinMultiplier);
+        (charge, , , , ) = digil.tokenCharge(tokenId);
+        Assert.ok(charge == coinMultiplier, "Whitelisted address should charge restricted token");
+
+        tokenId = digil.createToken(incrementalValue, 1 * coinMultiplier, false, 4, "Test Restrict");
+
+        (charge, , value, , ) = digil.tokenCharge(tokenId);
+        Assert.ok(charge == 0, "New token should not be charged");
+        Assert.ok(value == 0, "Non-restricted token should have no value");
+
+        try digil.chargeTokenAs{value: incrementalValue}(nonWhitelisted, tokenId, coinMultiplier) {
+            Assert.ok(true, "Non-whitelisted address should charge non-restricted token");
+        } catch {
+            Assert.ok(false, "Non-whitelisted address should charge non-restricted token");
+        }
+
+        (charge, , , , ) = digil.tokenCharge(tokenId);
+        Assert.ok(charge == coinMultiplier, "Non-restricted token should be charged");
+
+        digil.restrictToken{value: incrementalValue}(tokenId, whitelist);
+        (, , value, , ) = digil.tokenCharge(tokenId);
+        Assert.ok(value == incrementalValue, "Restricted token should have value equal to incremental value");
+
+        digil.chargeTokenAs{value: incrementalValue}(whitelisted, tokenId, coinMultiplier);
+        (charge, , , , ) = digil.tokenCharge(tokenId);
+        Assert.ok(charge == 2 * coinMultiplier, "Whitelisted address should charge restricted token");
+    }
+
     function checkSuccess() public {
         // Use 'Assert' methods: https://remix-ide.readthedocs.io/en/latest/assert_library.html
         Assert.ok(2 == 2, 'should be true');
@@ -278,7 +336,7 @@ contract BasicTestSuite {
     }
 }
 
-contract ActivateTestSuite {
+contract BetaTestSuite {
     IERC20 public coins;
     IDigilToken public digil;
 
