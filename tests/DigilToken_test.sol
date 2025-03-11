@@ -892,4 +892,26 @@ contract EchoTestSuite {
         Assert.equal(restrictedActiveCharge, 0, "Invalid Restricted active charge");
         Assert.equal(restrictedValue, 0, "Invalid Restricted value");
     }
+
+    /// #sender: account-5
+    /// #value: 20000000000000000
+    function testSetOptStatus() external payable {
+        uint256 incrementalValue = 100000000000000;
+
+        digil.setOptStatus{value: incrementalValue * 100}(true);
+
+        try digil.createToken(0, 0, false, 4, "Create Token Fail") {
+            Assert.ok(false, "Opted out user should not be able to create a token");
+        } catch {
+            Assert.ok(true, "Opted out user should not be able to create a token");
+        }
+
+        digil.setOptStatus{value: incrementalValue * 100}(false);
+
+        try digil.createToken(0, 0, false, 4, "Create Token Success") {
+            Assert.ok(true, "Opted in user should be able to create a token");
+        } catch {
+            Assert.ok(false, "Opted in user should be able to create a token");
+        }
+    }
 }
