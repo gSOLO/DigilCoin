@@ -627,9 +627,10 @@ contract CharlieTestSuite {
     }
 
     /// #sender: account-2
-    /// #value: 200000000000000
+    /// #value: 600000000000000
     function testUpdateToken() external payable {
-        bool approved = coins.approve(address(digil), 2 * 1000 * 100 * 10 ** 18);
+        uint256 coinMultiplier = 10 ** 18;
+        bool approved = coins.approve(address(digil), 2 * 1000 * 100 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
         // Create a token with initial parameters
@@ -650,6 +651,17 @@ contract CharlieTestSuite {
         // Verify updated data 
         (, , , , , , , , bytes memory tokenData) = digil.tokenData(tokenId);
         Assert.ok(keccak256("New Data") == keccak256(tokenData), "Token data should be updated");
+
+        approved = coins.approve(address(digil), coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+        digil.chargeToken{value: incrementalValue}(tokenId, coinMultiplier);
+
+        // Attempt to update the token (should fail)
+        try digil.updateToken{value: 200000000000000}(tokenId, 300000000000000, 3000000000000000000, "", "") {
+            Assert.ok(false, "Updating token with charge should fail");
+        } catch {
+            Assert.ok(true, "Incorrect error for updating charged token");
+        }
     }
 }
 
@@ -913,5 +925,23 @@ contract EchoTestSuite {
         } catch {
             Assert.ok(false, "Opted in user should be able to create a token");
         }
+    }
+
+    /// #sender: account-5
+    /// #value: 100000000000000
+    function testDeactivateToken() external payable {
+        uint256 incrementalValue = 100000000000000;
+
+        uint256 tokenId = digil.createToken(incrementalValue, 0, false, 4, "Deactivate Test");
+    
+        // Activate the token (assuming zero activation threshold allows immediate activation)
+        digil.activateToken(tokenId);
+        
+        // Deactivate the token
+        digil.deactivateToken{value: incrementalValue}(tokenId);
+        
+        // Verify deactivation
+        (bool isActive, , , , , , , , ) = digil.tokenData(tokenId);
+        Assert.ok(!isActive, "Token should be deactivated");
     }
 }
