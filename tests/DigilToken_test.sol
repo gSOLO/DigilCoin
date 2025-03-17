@@ -887,6 +887,10 @@ contract EchoTestSuite {
         
         // Link the tokens
         digil.linkToken{value: incrementalValue}(sourceTokenId, restrictedTokenId, 10);
+
+        // Verify link exists
+        ( , , , , uint256 links, , , , ) = digil.tokenData(sourceTokenId);
+        Assert.equal(links, 2, "Link not added"); // Plane link + new link
         
         // Activate both tokens
         digil.activateToken(sourceTokenId);
@@ -903,33 +907,65 @@ contract EchoTestSuite {
         Assert.equal(restrictedCharge, 0, "Invalid Restricted charge");
         Assert.equal(restrictedActiveCharge, 0, "Invalid Restricted active charge");
         Assert.equal(restrictedValue, 0, "Invalid Restricted value");
+
+        // Unlink tokens
+        digil.unlinkToken(sourceTokenId, restrictedTokenId);
+        
+        // Verify link removed
+        ( , , , , links, , , , ) = digil.tokenData(sourceTokenId);
+        Assert.equal(links, 1, "Link not removed"); // Only plane link remains
     }
 
     /// #sender: account-5
     /// #value: 20000000000000000
     function testSetOptStatus() external payable {
+        uint256 coinMultiplier = 10 ** 18;
         uint256 incrementalValue = 100000000000000;
+
+        bool approved = coins.approve(address(digil), coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 tokenId = digil.createToken(0, 0, false, 4, "Opt Out Charge Test");
 
         digil.setOptStatus{value: incrementalValue * 100}(true);
 
+        // Attempt to create a token (should fail)
         try digil.createToken(0, 0, false, 4, "Create Token Fail") {
             Assert.ok(false, "Opted out user should not be able to create a token");
         } catch {
             Assert.ok(true, "Opted out user should not be able to create a token");
         }
 
+        // Attempt to charge the token (should fail)
+        try digil.chargeToken(tokenId, coinMultiplier) {
+            Assert.ok(false, "Opted out user should not be able to charge token");
+        } catch {
+            Assert.ok(true, "Correctly prevented opted out user from charging");
+        }
+
         digil.setOptStatus{value: incrementalValue * 100}(false);
 
+        // Attempt to create a token (should succeed)
         try digil.createToken(0, 0, false, 4, "Create Token Success") {
             Assert.ok(true, "Opted in user should be able to create a token");
         } catch {
             Assert.ok(false, "Opted in user should be able to create a token");
         }
+
+        // Charge the token (should succeed)
+        try digil.chargeToken(tokenId, coinMultiplier) {
+            Assert.ok(true, "Opted in user should be able to charge token");
+        } catch {
+            Assert.ok(false, "Opted in user should be able to charge token");
+        }
+        (uint256 charge, , , , ) = digil.tokenCharge(tokenId);
+        Assert.equal(charge, coinMultiplier, "Token should be charged after opting back in");
     }
 
     /// #sender: account-5
-    /// #value: 100000000000000
+    /// #value: 200000000000000
     function testDeactivateToken() external payable {
+        uint256 coinMultiplier = 10 ** 18;
         uint256 incrementalValue = 100000000000000;
 
         uint256 tokenId = digil.createToken(incrementalValue, 0, false, 4, "Deactivate Test");
@@ -943,5 +979,13 @@ contract EchoTestSuite {
         // Verify deactivation
         (bool isActive, , , , , , , , ) = digil.tokenData(tokenId);
         Assert.ok(!isActive, "Token should be deactivated");
+
+        // Charge the token
+        bool approved = coins.approve(address(digil), coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+        digil.chargeToken{value: 100000000000000}(tokenId, coinMultiplier);
+
+        // Activate the token
+        digil.activateToken(tokenId);
     }
 }
