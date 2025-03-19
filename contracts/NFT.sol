@@ -2,15 +2,14 @@
 pragma solidity ^0.8.29;
 
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
-contract NFT is ERC721, Ownable, IERC721Receiver {
-    constructor(address initialOwner) ERC721("NFT Token", "NFT") Ownable(initialOwner) {
+contract NFT is ERC721, IERC721Receiver {
+    constructor() ERC721("NFT Token", "NFT") {
 
     }
 
-    function mint(address to, uint256 tokenId) public onlyOwner {
+    function mint(address to, uint256 tokenId) public {
         _mint(to, tokenId);
     }
 
