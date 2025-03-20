@@ -673,8 +673,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Recalls an external contract token attached to a Digil token.
-    ///         The token the Contract Token is attached to must have been activated.
-    ///         Requires a value sent greater than or equal to the token's incremental value.
+    ///         The token the contract token is attached to must have been activated.
     /// @param  account The address of the external ERC721 contract.
     /// @param  tokenId The internal Digil token ID whose attached contract token is to be recalled.
     function recallToken(address account, uint256 tokenId) external nonReentrant approved(tokenId) {
@@ -1127,6 +1126,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The coin units used in the charge.
     /// @return True if the token was successfully charged.
     function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable operatorEnabled(contributor) tokenExists(tokenId) returns(bool) {
+        require(contributor != address(0), "DIGIL: Invalid Contrubitor");
         require(coins >= _coinMultiplier, "DIGIL: Insufficient Charge");
         return _chargeToken(contributor, tokenId, coins, 0, msg.value, false);
     }
