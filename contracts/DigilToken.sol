@@ -336,7 +336,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  newOwner the address to transfer ownership to
     function transferOwnership(address newOwner) public virtual override onlyOwner {
         uint256 tokenId;
-        for (tokenId; tokenId < 20; tokenId++) {
+        for (tokenId; tokenId < 21; tokenId++) {
             address currentOwner = ownerOf(tokenId);
             _approve(_this, tokenId, address(0), false);
             _transfer(currentOwner, newOwner, tokenId);
