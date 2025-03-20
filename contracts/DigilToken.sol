@@ -138,10 +138,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token whose whitelist was updated
     event Whitelist(address indexed account, uint256 indexed tokenId);
 
-    /// @notice Emitted when a new token is created.
-    /// @param  tokenId The ID of the token that was created
-    event Create(uint256 indexed tokenId);
-
     /// @notice Emitted when a token is restricted.
     /// @param  tokenId The ID of the token that was restricted
     event Restrict(uint256 indexed tokenId);
@@ -764,7 +760,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _createToken(address creator, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data) internal returns(uint256) {      
         uint256 tokenId = _tokenIdCounter.current();
         _tokenIdCounter.increment();
-        emit Create(tokenId);
         
         // Mint the token to the creator.
         _mint(creator, tokenId);

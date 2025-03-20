@@ -13,7 +13,6 @@ interface IDigilToken is IERC721, IERC721Receiver {
     event OptOut(address indexed account);
     event OptIn(address indexed account);
     event Whitelist(address indexed account, uint256 indexed tokenId);
-    event Create(uint256 indexed tokenId);
     event Restrict(uint256 indexed tokenId);
     event Update(uint256 indexed tokenId);
     event Activate(uint256 indexed tokenId, bool complete);
