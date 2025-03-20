@@ -670,6 +670,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Recalls an external contract token attached to a Digil token.
     ///         The token the contract token is attached to must have been activated.
+    ///         The active charge of the contract token is distributed to the owner. 
     /// @param  account The address of the external ERC721 contract.
     /// @param  tokenId The internal Digil token ID whose attached contract token is to be recalled.
     function recallToken(address account, uint256 tokenId) external nonReentrant approved(tokenId) {
@@ -681,10 +682,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         contractToken.tokenId = 0;
         contractToken.recallable = false;
 
+        address owner = ownerOf(tokenId);
+
+        Token storage t = _tokens[tokenId];
+        uint256 activeCharge = t.activeCharge;
+        t.activeCharge = 0;
+
         // Safely transfer the external ERC721 token back to the current owner of the Digil token.
-        ERC721(account).safeTransferFrom(_this, ownerOf(tokenId), contractTokenId, _tokens[tokenId].data);
+        ERC721(account).safeTransferFrom(_this, owner, contractTokenId, t.data);
 
         _contractTokenExists[account][contractTokenId] = false;
+        _addValue(owner, 0, activeCharge);
     }
 
     // Token Information
