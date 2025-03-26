@@ -629,7 +629,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         The incremental value of the token is set to the minimum non-zero incremental value, with an activation threshold of 0.
     ///         The account (ERC721 contract address), and external token ID are appended to the Token URI as a query string.
     ///         Any data sent is stored with the Token and forwarded during Safe Transfer when {recallToken} is called.
-    ///         If the ERC721 received is a Digil Token it is linked to the new token.
     /// @param  operator The address which initiated the transfer.
     /// @param  from The previous owner of the ERC721 token.
     /// @param  tokenId The token ID of the external ERC721.
@@ -641,8 +640,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(!_contractTokenExists[account][tokenId], "DIGIL: Contract Token Already Exists");
         _contractTokenExists[account][tokenId] = true;
 
-        // Create a new internal token with zero incremental value and activation threshold.
-        uint256 internalId = _createToken(from, 0, 0, data);        
+        // Create a new internal token with minimum incremental value and zero activation threshold.
+        uint256 internalId = _createToken(from, _incrementalValue, 0, data);        
         _contractTokens[account][internalId].tokenId = tokenId;
 
         Token storage t = _tokens[internalId];
@@ -650,20 +649,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.uri = string(abi.encodePacked(tokenURI(internalId), "?account=", Strings.toHexString(uint160(account), 20), "&tokenId=", tokenId.toString()));
         // Add the ERC721 contract address as a contributor.
         t.contributors.push(account);
-
-        uint256 minimumIncrementalValue = _incrementalValue;
-        // If the external token is a Digil Token, link the tokens.
-        if (account == _this) {
-            Token storage d = _tokens[tokenId];
-            d.links.push(internalId);
-            d.linkEfficiency[internalId] = LinkEfficiency(uint8(100 / d.links.length), 0);
-            uint256 dIncrementalValue = d.incrementalValue;
-            if (minimumIncrementalValue < dIncrementalValue) {
-                minimumIncrementalValue = dIncrementalValue;
-            }
-        }
-        // Set the incremental value for the newly created token.
-        t.incrementalValue = minimumIncrementalValue;
         
         return this.onERC721Received.selector;
     }
