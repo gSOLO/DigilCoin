@@ -4,7 +4,7 @@
 	  "optimizer": {
 		"details": {
 		  "peephole": true,
-		  "inliner": false,
+		  "inliner": true,
 		  "jumpdestRemover": true,
 		  "orderLiterals": false,
 		  "deduplicate": true,
