@@ -36,7 +36,9 @@ contract AlphaTestSuite {
         uint256 balanceCoins = coins.balanceOf(address(this));
         Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
 
-        (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw{value: msg.value}();
+        digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+
+        (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
         Assert.equal(withdrawlCoins, 100 * 10 ** 18, "First withdrawl should be 100 coins");
         Assert.equal(withdrawlValue, 0, "First withdrawl should be 0 value");
 
@@ -53,12 +55,12 @@ contract AlphaTestSuite {
         bytes memory data = "Test Token";
 
         uint256 balanceTokens = digil.balanceOf(address(this));
-        Assert.equal(balanceTokens, 0, "Token balance should be 0");
+        Assert.equal(balanceTokens, 1, "Token balance should be 1"); // Form Withdraw
 
         uint256 tokenId = digil.createToken(incrementalValue, activationThreshold, restricted, plane, data);
 
         balanceTokens = digil.balanceOf(address(this));
-        Assert.equal(balanceTokens, 1, "Token balance should be 1");
+        Assert.equal(balanceTokens, 2, "Token balance should be 2");
        
         (bool active, bool activating, bool discharging, bool tokenRestricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory tokenData) = digil.tokenData(tokenId);
         Assert.ok(active == false, "Token should be inactive initially");

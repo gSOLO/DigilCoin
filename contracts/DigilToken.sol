@@ -397,23 +397,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
-    ///         If no coins or tokens are owned by the user, bonus coins can be rewarded by donating to the contract.
-    ///         With default values it amounts to 1000000000000000 wei ((100 * 1000 gwei) * (100 * 10 ** 18) /  (10 ** 18) / 10))
     /// @dev    Bonus coins are calculated based on the time since the last distribution.
     /// @return coins The number of coin units transferred to the sender.
     /// @return value The native Ether value transferred to the sender.
-    function withdraw() external payable nonReentrant returns(uint256 coins, uint256 value) {
+    function withdraw() external nonReentrant returns(uint256 coins, uint256 value) {
         address addr = _msgSender();
         // Ensure the sender is not blacklisted.
         _notOnBlacklist(addr);
 
         Distribution storage distribution = _distributions[addr];
-
-        // Calculate required donation for bonus eligibility
-        uint256 donationThreshold = (_incrementalValue * _coinRate / _coinMultiplier) / 10;
-
-        // Add donated Ether to the contract's balance
-        _addValue(msg.value);
 
         // Retrieve and reset the pending value and coin distributions.
         value = distribution.value;
@@ -422,7 +414,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         distribution.coins = 0;
 
         // Award bonus coins if user holds tokens or donates enough Ether
-        if (balanceOf(addr) > 0 || _coins.balanceOf(addr) > 0 || msg.value >= donationThreshold) {
+        if (balanceOf(addr) > 0 || _coins.balanceOf(addr) > 0) {
             uint256 lastBonusTime = distribution.time;            
             distribution.time = block.timestamp;
             uint256 bonus = (block.timestamp - lastBonusTime) / BONUS_INTERVAL * _coinMultiplier;
