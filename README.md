@@ -152,8 +152,7 @@ Withdrawals are non-reentrant and transfer Ether via safe methods, reverting coi
 
 An address can be **blacklisted** to block interactions with the contract:  
 - **Opt-Out**: An address can opt out by sending Ether (`_incrementalValue * _coinRate / _coinMultiplier`), preventing token transfers, withdrawals, and actions like charging, linking, or activation.  
-- **Opt-In**: An opted-out address can opt back in using the same process.  
-- **Admin Blacklist**: The contract owner can blacklist addresses (not implemented in the contract).  
+- **Opt-In**: An opted-out address can opt back in using the same process.    
 
 Blacklisted addresses cannot interact with tokens but can be rescued by the owner if inactive for 365 days and meeting value/charge criteria.
 
