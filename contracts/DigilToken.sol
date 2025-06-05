@@ -40,7 +40,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Base value for maximum number of distribution or discharge operations per transaction
 
     // Define the inactivity period for rescuing tokens
-    uint256 private constant INACTIVITY_PERIOD = 365 days;      // Allows tokens with eth tied to them to be recovered after a period of time
+    uint256 private constant STALLED_TIMEOUT = 7 days;          // Allows tokens that are in the middle of a batch operation to be rescued
+    uint256 private constant INACTIVITY_PERIOD = 180 days;      // Allows tokens with eth tied to them to be recovered after a period of time
 
     // Max link and affinity bonus scale
     uint256 private constant MAX_LINKS = 10;                    // Maximum number of links a token can have
@@ -604,15 +605,26 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  to The address to which the token is transferred.
     function rescueToken(uint256 tokenId, address to) external tokenExists(tokenId) onlyOwner {
         Token storage t = _tokens[tokenId];
-
         address currentOwner = ownerOf(tokenId);
+
+        bool isStalled = t.dischargeIndex > 0 || t.distributionIndex > 0;
+        bool canBeRescued;
+
+        if (isStalled) {
+            // If the token is stalled in a batch operation, allow a quick rescue after STALLED_TIMEOUT
+            canBeRescued = block.timestamp >= t.lastActivity + STALLED_TIMEOUT;
+        } else {
+            // If the token is not stalled, use the long INACTIVITY_PERIOD for true abandonment
+            canBeRescued = block.timestamp >= t.lastActivity + INACTIVITY_PERIOD;
+        }
+
         // Conditions for rescue:
         // - Owner is blacklisted OR
         // - Token is inactive for the specified period AND meets ETH-related criteria
         require(
             _blacklisted[currentOwner] || 
             (
-                block.timestamp >= t.lastActivity + INACTIVITY_PERIOD && 
+                canBeRescued && 
                 (
                     t.value > 0 || 
                     (t.active == false && t.contributors.length > 0 && t.charge > 0 && t.incrementalValue > 0)
