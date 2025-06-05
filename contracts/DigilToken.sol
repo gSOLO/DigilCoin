@@ -1402,7 +1402,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  efficiency The efficiency of the link (percentage based).
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) external payable approved(tokenId) tokenExists(linkId) {
         Token storage t = _tokens[tokenId];
-        require(t.links.length <= MAX_LINKS, "DIGIL: Too Many Links");
+        require(t.links.length < MAX_LINKS, "DIGIL: Too Many Links");
 
         uint8 baseEfficiency = t.linkEfficiency[linkId].base;
         uint256 bonusEfficiency = t.linkEfficiency[linkId].affinityBonus;
