@@ -975,9 +975,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             for (linkIndex; linkIndex < linksLength; linkIndex++) {                
                 uint256 linkId = links[linkIndex];
                 // Calculate linkedCoins based on base efficiency applied to the coins split evenly amongst the links
-                uint256 linkedCoins = coins / linksLength / 100 * t.linkEfficiency[linkId].base;
+                uint256 linkedCoins = (coins * t.linkEfficiency[linkId].base) / linksLength / 100;
                 // Calculate bonusCoins based on affinity bonus applied to the full coins
-                uint256 bonusCoins = coins / 100 * t.linkEfficiency[linkId].affinityBonus;
+                uint256 bonusCoins = (coins * t.linkEfficiency[linkId].affinityBonus) / 100;
                 // Attempt to charge the linked token.
                 bool charged = _ownerOf(linkId) != address(0) && _chargeToken(contributor, linkId, linkedCoins, bonusCoins, linkedValue, true);
                 if (charged) {
