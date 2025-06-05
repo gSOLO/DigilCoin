@@ -25,7 +25,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     
     // Coin rate and bonus rate
     uint256 private _coinRate;                                  // Mutable coin rate for various operations
-    uint256 private constant BONUS_RATE_DIVISOR = 100;          // Factor for determining bonus coins when value is added
+    uint256 private constant BONUS_RATE_DIVISOR = 100;          // Factor for determining bonus coins when value is added 
 
     // Constants for bonus interval and multiplier
     uint256 private constant BONUS_INTERVAL = 15 minutes;       // Allows 100% of bonus coins to be retrieved every 25 hours 
@@ -355,7 +355,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  batchSize The multiplier used for batch size for distribute and discharge calls that can be made per transaction 
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external onlyOwner {
         // Validate configuration parameters.
-        require(coins > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchSize> 0, "DIGIL: Invalid Configuration");
+        require(coins > 0 && incrementalValue > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchSize > 0, "DIGIL: Invalid Configuration");
 
         _coins.approve(_this, type(uint256).max); // Re-approve coins to allow maximum transfers.
         _coinRate = coins * _coinMultiplier;
@@ -462,6 +462,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @dev    Internal function that calculates and assigns distribution amounts between the contract and a specified address.
+    ///         It correctly calculates fees based on the entire value provided, preventing precision loss from integer division.
     ///         Adds a percentage of the value to be distributed to the contract, and the rest to the address specified.
     ///         Adds a number of bonus coins based on the value to be distributed to "reward" the contributor for contributing value to the contract.
     ///         An example 1 eth distribution with a incremental value of 100 and a transfer value of 95 would:
@@ -471,14 +472,28 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  addr The address to credit the distribution.
     /// @param  value The amount of native value (in wei) to add.
     function _addDistributedValue(address addr, uint256 value) internal {
-        // Calculate the incremental distribution multiplier.
-        uint256 incrementalDistribution = value / _incrementalValue;
-        // Add the non-transferred portion of the value to the contract's distribution.
-        _addValue(incrementalDistribution * (_incrementalValue - _transferValue));
-        // Calculate bonus coins based on the incremental distribution.
-        uint256 bonusCoins = _coinRate / BONUS_RATE_DIVISOR * incrementalDistribution;
-        // Add the transferred value and coins (including bonus) to the specified address.
-        _addValue(addr, incrementalDistribution * _transferValue, bonusCoins);
+        // 1. Calculate the contract's fee based on the total value.
+        // We multiply first to maintain precision before dividing.
+        // This correctly calculates the fee even if `value` is less than `_incrementalValue`.
+        // Formula: fee = value * (fee_percentage) = value * ((_incrementalValue - _transferValue) / _incrementalValue)
+        uint256 contractFee = (value * (_incrementalValue - _transferValue)) / _incrementalValue;
+
+        // 2. Calculate the value that goes to the user.
+        // This is simply the original value minus the fee we just calculated.
+        uint256 userValue = value - contractFee;
+
+        // 3. Calculate bonus coins. The original intent was likely to award bonus coins
+        // only for *full* increments of `_incrementalValue`. We preserve this logic.
+        // This division is safe and intended to be truncating.
+        uint256 fullIncrements = value / _incrementalValue;
+        uint256 bonusCoins = (_coinRate / BONUS_RATE_DIVISOR) * fullIncrements;
+        
+        // 4. Add the calculated amounts to their respective distributions.
+        // The contract gets its fee.
+        _addValue(contractFee);
+
+        // The user gets the remaining value and any bonus coins.
+        _addValue(addr, userValue, bonusCoins);
     }
 
     /// @dev    Internal function that adds contributed value to a token.
