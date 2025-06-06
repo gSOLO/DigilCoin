@@ -239,7 +239,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  initialOwner The address that will own the contract initially.
     /// @param  coins The address of the ERC20 token used as coins.
     /// @param  coinDecimals The number of decimals for the coin token.
-    constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digil Token", "DIGIL") Ownable(initialOwner) {
+    constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digil Token", "DDIGIL") Ownable(initialOwner) {
         _this = address(this);
         _coins = IERC20(coins);
         _coinMultiplier = 10 ** coinDecimals;
