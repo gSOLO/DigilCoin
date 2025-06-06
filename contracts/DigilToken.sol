@@ -19,72 +19,73 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     using Strings for uint256;  // Allow uint256 values to be converted to strings
 
     // Immutable contract-level variables set during construction
-    address private immutable _this;            // This contract's address
-    IERC20 private immutable _coins;            // ERC20 token used for coin transfers within the contract
-    uint256 private immutable _coinMultiplier;  // Multiplier used for coin calculation
+    address private immutable _this;            // This contract's address, cached for gas efficiency
+    IERC20 private immutable _coins;            // The ERC20 token used for coin transfers within the contract
+    uint256 private immutable _coinMultiplier;  // Multiplier based on the ERC20 token's decimals to handle calculations correctly
     
     // Coin rate and bonus rate
-    uint256 private _coinRate;                                  // Mutable coin rate for various operations
-    uint256 private constant BONUS_RATE_DIVISOR = 100;          // Factor for determining bonus coins when value is added 
+    uint256 private _coinRate;                                  // Mutable coin rate for various operations, set by the owner
+    uint256 private constant BONUS_RATE_DIVISOR = 100;          // Divisor for calculating bonus coins when value is added 
 
     // Constants for bonus interval and multiplier
-    uint256 private constant BONUS_INTERVAL = 15 minutes;       // Allows 100% of bonus coins to be retrieved every 25 hours 
-    uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // Simplify minimum values
+    uint256 private constant BONUS_INTERVAL = 15 minutes;       // Time interval for bonus coin accrual upon withdrawal. Allows 100% of bonus coins to be retrieved every 25 hours 
+    uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
 
     // Configuration values for incremental and transfer values
-    uint256 private _incrementalValue = 100 * VALUE_MULTIPLIER; // Minimum incremental value in wei
-    uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // Value transferred during charge operations
+    uint256 private _incrementalValue = 100 * VALUE_MULTIPLIER; // Minimum incremental ETH value required for charging
+    uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // The portion of incremental value distributed to users
 
     // Batch operations limiter
-    uint16 private constant DEFAULT_BATCH_SIZE = 350;           // Default size for batch operations
-    uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Base value for maximum number of distribution or discharge operations per transaction
+    uint16 private constant DEFAULT_BATCH_SIZE = 350;           // Default number of items to process in a single batch operation
+    uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Configurable batch size for distribution or discharge operations
 
     // Define the inactivity period for rescuing tokens
-    uint256 private constant STALLED_TIMEOUT = 7 days;          // Allows tokens that are in the middle of a batch operation to be rescued
-    uint256 private constant INACTIVITY_PERIOD = 180 days;      // Allows tokens with eth tied to them to be recovered after a period of time
+    uint256 private constant STALLED_TIMEOUT = 7 days;          // A short timeout to rescue tokens stuck in a batch operation (e.g., activate/discharge)
+    uint256 private constant INACTIVITY_PERIOD = 180 days;      // A long timeout to rescue tokens that are truly abandoned but have value
 
     // Max link and affinity bonus scale
     uint256 private constant MAX_LINKS = 10;                    // Maximum number of links a token can have
-    uint256 private constant AFFINITY_BOOST = 2;                // Factor used in determining affinity bonus increases
-    uint256 private constant AFFINITY_REDUCTION = 2;            // Divisor used in determining affinity bonus reductions
+    uint256 private constant AFFINITY_BOOST = 2;                // Multiplier for strong affinity bonuses
+    uint256 private constant AFFINITY_REDUCTION = 2;            // Divisor for weak affinity bonuses and charge-balancing penalties
 
     // Mappings for token data, blacklisted addresses, distributions, and contract tokens
-    mapping(uint256 => Token) private _tokens;                                      // Mapping from token ID to its associated Token data
-    mapping(address => bool) private _blacklisted;                                  // Mapping for addresses that are blacklisted (opted-out)
-    mapping(address => Distribution) private _distributions;                        // Mapping for pending distributions of coins and value per address
-    mapping(address => mapping(uint256 => bool)) private _contractTokenExists;      // Mappings to track ERC721 tokens received from external contracts
-    mapping(address => mapping(uint256 => ContractToken)) private _contractTokens;  // Mappings to track ERC721 tokens and if they're recallable
+    mapping(uint256 => Token) private _tokens;                                      // Mapping from token ID to its detailed Token struct
+    mapping(address => bool) private _blacklisted;                                  // Mapping for addresses that have opted out of the system
+    mapping(address => Distribution) private _distributions;                        // Mapping for pending distributions of coins and ETH value per address
+    mapping(address => mapping(uint256 => bool)) private _contractTokenExists;      // Tracks if an external ERC721 token has already been vaulted
+    mapping(address => mapping(uint256 => ContractToken)) private _contractTokens;  // Stores data for vaulted external ERC721 tokens
 
-    /// @dev Structure to hold pending coin and value distributions, and the time of the last distribution
+    /// @dev Structure to hold pending coin and value distributions for a user, and the time of the last distribution
     struct Distribution {
-        uint256 time;   // Timestamp of the last distribution or withdrawal
-        uint256 coins;  // Pending coins to be distributed
-        uint256 value;  // Pending Ether value to be distributed
+        uint256 time;   // Timestamp of the last withdrawal, used for bonus calculations
+        uint256 coins;  // Pending ERC20 coins to be withdrawn
+        uint256 value;  // Pending Ether value to be withdrawn
     }
 
-    /// @dev Structure to hold contribution data for a token
+    /// @dev Structure to represent the efficiency of a link between two tokens
     struct TokenContribution {
         uint256 charge;     // Coins contributed to the token's charge
         uint256 value;      // Ether value contributed
-        bool exists;        // Indicates if the contributor exists (has contributed)
-        bool distributed;   // Indicates if the contribution has been distributed
-        bool whitelisted;   // Indicates if the contributor is whitelisted
+        bool exists;        // True if the contributor exists (has contributed)
+        bool distributed;   // True if the contribution has been processed during an activation/discharge
+        bool whitelisted;   // True if the contributor is whitelisted
     }
 
-    /// @dev Structure to represent a contract token relationship (the relationship between an external ERC721 token and a Digil Token)
+    /// @dev Structure to represent a vaulted external ERC721 token
     struct ContractToken {
-        uint256 tokenId;    // ID of the external ERC721 token
-        bool recallable;    // Indicates if the token can be recalled
+        uint256 tokenId;    // The token ID of the external ERC721
+        bool recallable;    // True if the original owner can recall the token
     }
 
     /// @dev Structure to represent link efficiency between tokens
     struct LinkEfficiency {
-        uint8 base;             // Base efficiency percentage for coin transfer
-        uint256 affinityBonus;  // Additional bonus based on plane affinity
+        uint8 base;             // The base efficiency percentage for coin transfer (e.g., 100 = 100%)
+        uint256 affinityBonus;  // Additional bonus efficiency generated from planar affinity
     }
 
     /// @dev Structure to hold detailed token information
     struct Token {
+        // Core Economic Properties
         uint256 charge;             // Accumulated charge from direct contributions
         uint256 distributionCharge; // Charge reserved for distributions
         uint256 activeCharge;       // Charge accumulated from active token operations and links
@@ -92,28 +93,34 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 distributionValue;  // Value reserved for distributions
         uint256 incrementalValue;   // Incremental value used for charging computations (value required per coin to charge)
         
+        // Batch Processing State
         uint256 dischargeIndex;     // Current index for batch discharge processing
         uint256 distributionIndex;  // Current index for batch distribution processing
 
+        // Lifecycle Properties
         uint256 activationThreshold;// Required charge to activate the token
         uint256 lastActivity;       // Timestamp of the last significant action
         
+        // Linking Properties
         uint256[] links;            // Array of token IDs or plane IDs the token is linked to
         mapping(uint256 => LinkEfficiency) linkEfficiency;  // Mapping of link ID to its efficiency settings
         
+        // Contributor Data
         address[] contributors;     // List of contributor addresses that have charged this token
         mapping(address => TokenContribution) contributions;// Mapping from contributor to their contribution details
         
+        // Metadata
         bytes data;                 // Arbitrary data stored with the token
         string uri;                 // Token metadata URI
 
-        bool active;                // Indicates if the token is active
-        bool activating;            // Indicates if the token is currently being activated
-        bool discharging;           // Indicates if the token is currently being discharged
-        bool restricted;            // Indicates if contributions are restricted to whitelist
+        // State Flags
+        bool active;                // True if the token has been activated
+        bool activating;            // A lock flag, true if the token is currently in the process of being activated
+        bool discharging;           // A lock flag, true if the token is currently in the process of being discharged
+        bool restricted;            // True if contributions are restricted to a whitelist
     }
 
-    // Counter for token IDs
+    // Counter for generating unique token IDs
     using Counters for Counters.Counter;
     Counters.Counter private _tokenIdCounter;
 
@@ -232,23 +239,23 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     error InsufficientFunds(uint256 required);
 
     /// @notice Error thrown when a coin transfer fails.
-    /// @param  coins The number of coins sent
+    /// @param  coins The number of coins required for the transaction that failed to transfer
     error CoinTransferFailed(uint256 coins);
 
-    /// @notice Contract constructor. Initializes state variables, mints initial tokens, and sets up planar data.
-    /// @param  initialOwner The address that will own the contract initially.
-    /// @param  coins The address of the ERC20 token used as coins.
-    /// @param  coinDecimals The number of decimals for the coin token.
+    /// @notice Contract constructor. Initializes state variables, mints initial planar tokens, and sets up contract parameters.
+    /// @param  initialOwner The address that will own the contract and initial tokens
+    /// @param  coins The address of the ERC20 token used as the system's currency
+    /// @param  coinDecimals The number of decimals for the coin token
     constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digil Token", "DDIGIL") Ownable(initialOwner) {
         _this = address(this);
         _coins = IERC20(coins);
         _coinMultiplier = 10 ** coinDecimals;
         _coinRate = 100 * _coinMultiplier;
-        _coins.approve(_this, type(uint256).max);
+        _coins.approve(_this, type(uint256).max); // Approve this contract to spend its own coins for distributions.
         
         string memory baseURI = "https://digil.co.in/token/";
         
-        // Define an array of plane names.
+        // Define an array of plane names for the initial tokens
         string[21] memory plane;
         plane[0] =  "";
         plane[1] =  "void";
@@ -272,11 +279,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         plane[19] = "virtual";
         plane[20] = "ilxr";
 
-        // Define planar data for each plane
+        // Define planar affinity data for each plane. This is used for calculating link bonuses
+        // The format encodes strong and weak affinities for compact storage
         // 0:   identifier
-        // 1:   strong affinity bonus
-        // 2:   strong affinity bonus
-        // 3:   weak affinity bonus
+        // 1:   strong affinity
+        // 2:   strong affinity
+        // 3:   weak affinity
         // 4:   delimiter
         // 5-9: simplified name
         bytes[21] memory data;
@@ -302,6 +310,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         data[19] = "----|.XR";   // extended reality
         data[20] = "----|.ILXR"; // digil reality
         
+        // Mint the initial 20 "Plane" tokens (IDs 0-19)
         // Unchecked block used to mint the initial tokens without overflow checks (safe here due to known bounds)
         unchecked {
             uint256 tokenId;
@@ -325,13 +334,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             }
         }
 
-        // Mark the first token as restricted.
+        // Token 0 is a special, restricted plane
         _tokens[0].restricted = true;
     }
 
     /// @dev    Transfers ownership of the contract and planar tokens to a new account
     /// @param  newOwner the address to transfer ownership to
     function transferOwnership(address newOwner) public virtual override onlyOwner {
+        // Before transferring contract ownership, also transfer all foundational Plane tokens.
         uint256 tokenId;
         for (tokenId; tokenId < 21; tokenId++) {
             address currentOwner = ownerOf(tokenId);
@@ -345,7 +355,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Configuration
 
-    /// @dev    Update contract configuration.
+    /// @dev    Updates core economic parameters of the contract. Only callable by the owner.
     /// @param  coins Used to determine a number of values:
     ///                     Maximum number of bonus Coins a user can withdraw.
     ///                     Number of Coins required to Update a Token URI.
@@ -970,7 +980,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         } else {    
             // Distribute the value and coins among all linked tokens.
-            uint256 linkedValue = value / linksLength;   
+            uint256 linkedValue = value / linksLength; // Distribute ETH evenly  
             uint256 linkIndex;
             for (linkIndex; linkIndex < linksLength; linkIndex++) {                
                 uint256 linkId = links[linkIndex];
@@ -981,7 +991,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 // Attempt to charge the linked token.
                 bool charged = _ownerOf(linkId) != address(0) && _chargeToken(contributor, linkId, linkedCoins, bonusCoins, linkedValue, true);
                 if (charged) {
-                    value -= linkedValue;
+                    value -= linkedValue; // Subtract the successfully distributed value
                 } else {
                     // If linked token could not be charged, add the coins to the source's active charge.
                     t.activeCharge += linkedCoins;
@@ -1255,6 +1265,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Discharges an existing token and resets all contributions.
+    /// @dev    This is a multi-step batch operation.
     ///         If the token has been activated: Any contributed value that has not yet been distributed will be distributed to owner.
     ///         If the token has not been activated: Any contributed value that has not yet been distributed will be returned to its contributors, any additional token value to its owner.
     ///         Requires a value sent greater than or equal to the larger of the token's incremental value or the minimum incremental value, scaled by the number of links.
@@ -1344,6 +1355,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Activates a token if its charge meets the activation threshold.
+    /// @dev    This is a multi-step batch operation.
     ///         Requires the token have a charge greater than or equal to the token's activation threshold or its distribution charge exceeds the threshold.
     /// @param  tokenId The token ID to activate.
     /// @return True if the token activation is complete.
@@ -1517,7 +1529,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         for (linkIndex; linkIndex < linksLength; linkIndex++) {
             uint256 lId = links[linkIndex];
             if (lId == linkId) {
-                // Swap with the last element and remove it.
+                // To remove an element from an array without leaving a gap,
+                // swap it with the last element and then pop.
                 links[linkIndex] = links[linksLength - 1];
                 links.pop();
                 emit Unlink(tokenId, linkId);
