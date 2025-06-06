@@ -1,4 +1,4 @@
-# Digil: Digital Sigils on the Ethereum Blockchain
+# Digital Sigils on the Ethereum Blockchain
 The Web3 Layer of the [Digil Project](https://digil.app)  
 **Website**: [digil.co.in](https://digil.co.in)
 
