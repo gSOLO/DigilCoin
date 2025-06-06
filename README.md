@@ -126,8 +126,8 @@ This contract includes several features designed to protect users and provide re
 *   **Reentrancy Guard**: Critical functions involving external calls are protected against reentrancy attacks.
 *   **Owner Powers**: The contract owner has administrative powers to configure key economic parameters. This allows for flexibility and recovery but requires user trust.
 *   **Token Rescue Mechanism**: To balance the owner's power and protect users, a robust rescue mechanism is in place:
-    *   **Stalled Operations**: If a token gets stuck in a multi-step operation (like `activate` or `discharge`), it can be rescued by the owner after a **7-day** inactivity period. This provides a fast recovery path from operational failures.
-    *   **Long-Term Abandonment**: If a token is completely inactive for **180 days** *and* has value locked in it, it can be rescued by the owner. This prevents assets from being permanently lost.
+    *   **Stalled Operations**: If a token gets stuck in a multi-step operation (like `activate` or `discharge`), it can be rescued by the owner after a **30-day** inactivity period. This provides a fast recovery path from operational failures.
+    *   **Long-Term Abandonment**: If a token is completely inactive for **365 days** *and* has value locked in it, it can be rescued by the owner. This prevents assets from being permanently lost.
     *   **Blacklisted Owners**: Tokens owned by blacklisted addresses can also be rescued.
 
 ## User Actions and Distributions

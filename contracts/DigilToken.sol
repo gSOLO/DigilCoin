@@ -25,7 +25,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     
     // Coin rate and bonus rate
     uint256 private _coinRate;                                  // Mutable coin rate for various operations, set by the owner
-    uint256 private constant BONUS_RATE_DIVISOR = 100;          // Divisor for calculating bonus coins when value is added 
+    uint256 private constant BONUS_RATE_DIVISOR = 100;          // Divisor for calculating bonus coins when value is added
+    uint256 private constant MAX_COIN_RATE = 1000000000;        // The maximum coin rate for operations
 
     // Constants for bonus interval and multiplier
     uint256 private constant BONUS_INTERVAL = 15 minutes;       // Time interval for bonus coin accrual upon withdrawal. Allows 100% of bonus coins to be retrieved every 25 hours 
@@ -40,8 +41,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Configurable batch size for distribution or discharge operations
 
     // Define the inactivity period for rescuing tokens
-    uint256 private constant STALLED_TIMEOUT = 7 days;          // A short timeout to rescue tokens stuck in a batch operation (e.g., activate/discharge)
-    uint256 private constant INACTIVITY_PERIOD = 180 days;      // A long timeout to rescue tokens that are truly abandoned but have value
+    uint256 private constant STALLED_TIMEOUT = 30 days;         // A short timeout to rescue tokens stuck in a batch operation (e.g., activate/discharge)
+    uint256 private constant INACTIVITY_PERIOD = 365 days;      // A long timeout to rescue tokens that are truly abandoned but have value
 
     // Max link and affinity bonus scale
     uint256 private constant MAX_LINKS = 10;                    // Maximum number of links a token can have
@@ -345,9 +346,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 tokenId;
         for (tokenId; tokenId < 21; tokenId++) {
             address currentOwner = ownerOf(tokenId);
-            _approve(_this, tokenId, address(0), false);
             _transfer(currentOwner, newOwner, tokenId);
-            _approve(address(0), tokenId, address(0), false);
         }
         
         super.transferOwnership(newOwner);
@@ -366,7 +365,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  batchSize The multiplier used for batch size for distribute and discharge calls that can be made per transaction 
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external onlyOwner {
         // Validate configuration parameters.
-        require(coins > 0 && incrementalValue > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchSize > 0, "DIGIL: Invalid Configuration");
+        require(coins > 0 && coins <= MAX_COIN_RATE && incrementalValue > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchSize > 0, "DIGIL: Invalid Configuration");
 
         _coins.approve(_this, type(uint256).max); // Re-approve coins to allow maximum transfers.
         _coinRate = coins * _coinMultiplier;
