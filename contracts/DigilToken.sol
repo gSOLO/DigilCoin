@@ -310,12 +310,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         data[19] = "----|.XR";   // extended reality
         data[20] = "----|.ILXR"; // digil reality
         
-        // Mint the initial 20 "Plane" tokens (IDs 0-19)
+        // Mint the initial 21 "Plane" tokens (IDs 0-20)
         // Unchecked block used to mint the initial tokens without overflow checks (safe here due to known bounds)
         unchecked {
             uint256 tokenId;
-            // Loop until 20 tokens are minted.
-            while (tokenId < 20) {
+            // Loop until 21 tokens are minted.
+            while (tokenId < 21) {
                 tokenId = _tokenIdCounter.current();
                 _tokenIdCounter.increment();
 
