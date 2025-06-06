@@ -1262,11 +1262,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
-    /// @notice Discharges an existing token and resets all contributions.
-    /// @dev    This is a multi-step batch operation.
-    ///         If the token has been activated: Any contributed value that has not yet been distributed will be distributed to owner.
-    ///         If the token has not been activated: Any contributed value that has not yet been distributed will be returned to its contributors, any additional token value to its owner.
-    ///         Requires a value sent greater than or equal to the larger of the token's incremental value or the minimum incremental value, scaled by the number of links.
+    /// @notice Discharges an existing token, processing its contributions and value based on its active state.
+    /// @dev    This is a multi-step batch operation that may need to be called multiple times to complete.
+    ///         The behavior depends on whether the token is active or inactive at the time of discharge.
+    ///         - If the token is INACTIVE: Contributions are refunded. The ETH value and coins from each contribution are
+    ///           returned directly to the original contributors. Any remaining intrinsic value (`token.value`) in the
+    ///           token is sent to the token's owner.
+    ///         - If the token is ACTIVE: Value is redistributed based on the activation logic. Contributors receive a
+    ///           share of the token's intrinsic value proportional to their charge contribution, while the token's owner
+    ///           receives the value that was directly contributed to satisfy the charge requirements. Active charge is not affected.
+    ///         Requires a value sent greater than or equal to the larger of the token's incremental value or the
+    ///         minimum incremental value, scaled by the number of links.
     /// @param  tokenId The token ID to discharge.
     /// @return True if discharge is complete.
     function dischargeToken(uint256 tokenId) external payable nonReentrant approved(tokenId) returns (bool) {
