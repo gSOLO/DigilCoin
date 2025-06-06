@@ -1413,6 +1413,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Any value contributed is split between and added to the source and destination token.
     ///         Requires a summation of coins at the coin rate depending on the number of existing links.
     ///         An efficiency of 1 is meant to indicate a coin generation or transfer of 1%; 100 would be 100%; 200 would be 200%; et. cetera.
+    /// @dev    A token's foundational Plane link (its "element") can only be set at creation.
+    ///         This function is for creating peer-to-peer links between Digils. The affinity
+    ///         bonus for this link is calculated based on the foundational Planes of the
+    ///         two Digils involved. Cannot link to foundational planes (IDs 0-18).
     /// @param  tokenId The source token ID.
     /// @param  linkId The destination token ID to link to.
     /// @param  efficiency The efficiency of the link (percentage based).
