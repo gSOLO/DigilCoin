@@ -14,13 +14,13 @@ Unlike static collectibles, Digil Tokens are dynamic entities with intrinsic val
 ## Core Components
 
 ### Digil Coin | ERC20 Token
-**Symbol**: DIGIL
+**Symbol**: DIGIL  
 **Contract Address**: TBD
 
 The Digil Coin is the primary utility token of the ecosystem. It is used for charging tokens, paying for advanced operations like linking, and interacting with the core mechanics of the DigilToken contract.
 
 ### Digil Token | ERC721 NFT
-**Symbol**: DDIGIL
+**Symbol**: DDIGIL  
 **Contract Address**: TBD
 
 The DigilToken contract is an ERC721-compliant NFT contract that brings Digils to life. It manages their creation, lifecycle, and interactions, integrating deeply with the Digil Coin and native Ether.
