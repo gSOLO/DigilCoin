@@ -4,7 +4,7 @@ The Web3 Layer of the [Digil Project](https://digil.app)
 
 ### What is a Digil?
 
-A Digil is a **Digital Sigil**, an ERC721-based non-fungible token (NFT) on the Ethereum blockchain.
+A Digil is a **Digital Sigil**, an ERC721-based dynamic non-fungible token (dNFT) on the Ethereum blockchain.
 > A sigil is a type of symbol used in magic. In modern usage, especially in the context of chaos magic, sigil refers to a symbolic representation of the practitioner's desired outcome.<sup>[?](https://en.wikipedia.org/wiki/Sigil)</sup>
 
 Unlike static collectibles, Digil Tokens are dynamic entities with intrinsic value (Ether and an associated ERC20 token). They feature a complex lifecycle with unique mechanics like charging, activation, and linking, creating a gamified, value-driven ecosystem.
@@ -20,7 +20,7 @@ Unlike static collectibles, Digil Tokens are dynamic entities with intrinsic val
 The Digil Coin is the primary utility token of the ecosystem. It is used for charging tokens, paying for advanced operations like linking, and interacting with the core mechanics of the DigilToken contract.
 
 ### Digil Token | ERC721 NFT
-**Symbol**: DIGIL
+**Symbol**: DDIGIL
 **Contract Address**: TBD
 
 The DigilToken contract is an ERC721-compliant NFT contract that brings Digils to life. It manages their creation, lifecycle, and interactions, integrating deeply with the Digil Coin and native Ether.
