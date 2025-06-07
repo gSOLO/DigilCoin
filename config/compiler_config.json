@@ -8,7 +8,7 @@
 		  "jumpdestRemover": true,
 		  "orderLiterals": false,
 		  "deduplicate": true,
-		  "cse": false,
+		  "cse": true,
 		  "constantOptimizer": true,
 		  "simpleCounterForLoopUncheckedIncrement": true,
 		  "yul": false
