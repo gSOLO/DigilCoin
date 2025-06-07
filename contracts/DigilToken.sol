@@ -317,7 +317,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         unchecked {
             uint256 tokenId;
             // Loop until 21 tokens are minted.
-            while (tokenId < 21) {
+            while (tokenId < 20) {
                 tokenId = _tokenIdCounter.current();
                 _tokenIdCounter.increment();
 
