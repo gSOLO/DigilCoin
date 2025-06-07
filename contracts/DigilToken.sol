@@ -613,6 +613,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to rescue.
     /// @param  to The address to which the token is transferred.
     function rescueToken(uint256 tokenId, address to) external tokenExists(tokenId) onlyOwner {
+        require(to != address(0), "DIGIL: Invalid Rescue Address");
+
         Token storage t = _tokens[tokenId];
         address currentOwner = ownerOf(tokenId);
 
