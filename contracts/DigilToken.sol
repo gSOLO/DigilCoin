@@ -169,7 +169,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  addr The address attributed with charging the token
     /// @param  tokenId The ID of the token being charged
     /// @param  coins The number of coins the token was charged with
-    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins);
+    /// @param  sender The address that charged the token
+    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, address sender);
 
     /// @notice Emitted when an active token is charged.
     /// @param  tokenId The ID of the token being charged
@@ -1022,6 +1023,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         } else {
             require(!batchOperationInProgress, "DIGIL: Batch Operation In Progress");
         }
+
+        // Proxy contributions require a value contribution
+        if (!link && contributor != _msgSender()) {
+            // Determine the minimum required value for a proxy contribution.
+            uint256 requiredValue = t.incrementalValue > 0 ? t.incrementalValue : _incrementalValue;
+
+            // For direct proxy calls, we revert if funds are insufficient.
+            if (value < requiredValue) revert InsufficientFunds(requiredValue);
+        }
         
         // Update last activity
         t.lastActivity = block.timestamp;
@@ -1117,7 +1127,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
             c.charge += coins;
             t.charge += coins;
-            emit Charge(contributor, tokenId, coins);
+            emit Charge(contributor, tokenId, coins, _msgSender());
 
         }
 
