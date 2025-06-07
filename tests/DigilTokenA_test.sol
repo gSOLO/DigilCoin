@@ -92,7 +92,7 @@ contract AlphaTestSuite {
         Assert.ok(newCharge >= initialCharge + coinMultiplier, "Token charge did not increase appropriately(1)");
 
         for (uint256 accountIndex; accountIndex < 9; accountIndex++) {
-            digil.chargeTokenAs(TestsAccounts.getAccount(accountIndex), tokenId, coinMultiplier);
+            digil.chargeTokenAs{value: 100000000000000}(TestsAccounts.getAccount(accountIndex), tokenId, coinMultiplier);
         }
 
         (uint256 fullCharge, , , , ) = digil.tokenCharge(tokenId);
@@ -101,7 +101,7 @@ contract AlphaTestSuite {
         (uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold) = digil.tokenCharge(tokenId);
         Assert.ok(charge == fullCharge, "Token should be at full charge");
         Assert.ok(activeCharge == 0, "Active charge should be 0");
-        Assert.ok(value == 0, "Value should be 0");
+        Assert.ok(value == 100000000000000 * 9, "Value should be 100000000000000 * 9");
         Assert.ok(incrementalValue == 0, "Incremental value should be 0");
         Assert.ok(activationThreshold == fullCharge, "Token should be at activation threshold");
     }
