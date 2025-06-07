@@ -23,7 +23,7 @@
 		  ]
 		}
 	  },
-	  "evmVersion": "cancun",
+	  "evmVersion": "prague",
 	  "debug": {
 		"revertStrings": "strip",
 		"debugInfo": [

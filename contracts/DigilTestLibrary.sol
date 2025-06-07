@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.29;
+pragma solidity ^0.8.30;
 
 import "./IDigilToken.sol";
 
@@ -8,6 +8,6 @@ library DigilTestLibrary {
         return IERC20(0x7EF2e0048f5bAeDe046f6BF797943daF4ED8CB47);
     }
     function getToken() public pure returns (IDigilToken) {
-        return IDigilToken(0xE3Ca443c9fd7AF40A2B5a95d43207E763e56005F);
+        return IDigilToken(0xDA0bab807633f07f013f94DD0E6A4F96F8742B53);
     }
 }

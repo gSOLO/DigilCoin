@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.29;
+pragma solidity ^0.8.30;
 
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
@@ -17,7 +17,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     event Update(uint256 indexed tokenId);
     event Activate(uint256 indexed tokenId, bool complete);
     event Deactivate(uint256 indexed tokenId);
-    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins);
+    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, address sender);
     event ActiveCharge(uint256 indexed tokenId, uint256 coins);
     event Discharge(uint256 indexed tokenId, bool complete);
     event Link(uint256 indexed tokenId, uint256 indexed linkId);

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.29;
+pragma solidity ^0.8.30;
+
 
 // Import OpenZeppelin contracts for standard ERC721 functionality, ownership, safe transfers, counters, ERC20 interfacing, and reentrancy protection.
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
@@ -929,15 +930,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Update last activity
         t.lastActivity = block.timestamp;
 
-        bool overwriteData = bytes(data).length > 0;
-        if (overwriteData) {
-            // Updating data requires a coin fee to preserve the token's original intention.
-            _coinsFromSender(_coinRate * 1000);
-        }
-
         bool overwriteUri = bytes(uri).length > 0;
         if (overwriteUri) {
             // Updating the URI requires a coin fee to ensure token integrity.
+            _coinsFromSender(_coinRate * 1000);
+        }
+
+        bool overwriteData = bytes(data).length > 0;
+        if (overwriteData) {
+            // Updating data requires a coin fee to preserve the token's original intention.
             _coinsFromSender(_coinRate * 1000);
         }
 
