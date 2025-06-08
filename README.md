@@ -42,7 +42,7 @@ The contract owner can configure the following global parameters:
 
 Each Digil has a rich set of properties that define its state and power:
 
-*   **Charge**: The total Digil Coins contributed to a token by users.
+*   **Charge**: The total Digil Coins contributed to an *inactive* token by users.
 *   **Active Charge**: Digil Coins accumulated by an *active* token through its own operations or received from linked tokens.
 *   **Value**: The intrinsic Ether (in wei) accumulated by the token from various operations, separate from its charge.
 *   **Incremental Value**: A per-token setting for the ETH required to charge it. Must be `>=` the global `IncrementalValue` if not zero.
@@ -68,14 +68,14 @@ Any ETH sent during creation is added directly to the new token's `Value`.
 
 Charging is the process of imbuing a Digil with Digil Coins and Ether.
 *   **Inactive Tokens**: A `charge` action is a contribution. The coins and a proportional amount of ETH are logged against the contributor's address. Any excess ETH adds to the token's `Value`.
-*   **Active Tokens**: A `charge` action flows through the token's links. Coins and value are distributed to linked tokens based on their `LinkEfficiency` and `AffinityBonus`.
+*   **Active Tokens**: A `charge` action flows through the token's links. Coins and value are distributed to linked tokens based on their `LinkEfficiency` and `AffinityBonus`. If there are no links, the charge is added to the token's own `ActiveCharge`.
 
 #### 3. Activation
 
-When a token's `Charge` meets its `ActivationThreshold`, it can be activated.
-*   This is a **batched operation** that may require multiple transactions.
-*   During activation, the token's `Value` is distributed to its contributors.
-*   The total `Charge` is converted into `ActiveCharge` for the token's owner.
+When a token's `Charge` meets its `ActivationThreshold`, it can be activated by its owner.
+*   This is a **batched operation** that may require multiple transactions to complete if there are many contributors.
+*   During activation, a portion of the token's `Value` is distributed to its contributors, proportional to their charge.
+*   The token's accumulated `Charge` is converted into its `ActiveCharge`.
 *   The token's state changes to `active`.
 
 An active token can later be **deactivated** if its `charge` is zero by paying a fee.
@@ -84,8 +84,8 @@ An active token can later be **deactivated** if its `charge` is zero by paying a
 
 Discharging resets a token's contributions and redistributes its value.
 *   This is also a **batched operation**.
-*   **If Inactive**: Contributed coins and ETH are refunded to the original contributors.
-*   **If Active**: The token's accumulated value is distributed to the owner and contributors.
+*   **If Inactive**: Contributed coins and ETH are refunded directly to the original contributors. Any remaining token `Value` is sent to the owner.
+*   **If Active**: The token's accumulated value is distributed to contributors and the owner, similar to an activation.
 *   Discharging requires an ETH fee that scales with the token's number of links.
 
 ### Linking & Planes
@@ -99,7 +99,7 @@ Linking is a strategic element that allows active tokens to interact.
 
 #### Planes
 
-Planes are special tokens (IDs 0-20) minted during contract deployment, representing thematic elements. Tokens can be linked to planes at creation, which influences affinity bonuses when linking to other plane-aligned tokens.
+Planes are special, non-linkable tokens (IDs 0-20) minted during contract deployment, representing thematic elements. Tokens can be linked to planes at creation, which influences affinity bonuses when linking to other plane-aligned tokens.
 
 - **Core Planes**: Void<sup>1</sup>, Karma<sup>2</sup>, Kaos<sup>3</sup>
 - **Elemental Planes**: Fire<sup>4</sup>, Air<sup>5</sup>, Earth<sup>6</sup>, Water<sup>7</sup>
@@ -112,25 +112,25 @@ Each plane has associated on-chain metadata that defines its affinity relationsh
 
 ### Special Token Types & Interactions
 
-*   **Restricted Tokens**: The token owner can maintain a whitelist of addresses allowed to contribute. The token's owner is always automatically whitelisted.
+*   **Restricted Tokens**: The token owner can maintain a whitelist of addresses allowed to contribute. The token's current owner is always automatically whitelisted upon receiving the token.
 *   **Contract Tokens (ERC721 Vault)**: The contract can act as a vault for external ERC721 NFTs.
     *   When an external NFT is sent to the contract, a new Digil is automatically minted to represent it.
     *   The Digil's URI is updated to reference the original NFT.
-    *   After activation, the owner can **recall** the original NFT, and the Digil's `activeCharge` is paid out to them.
+    *   After the Digil is activated, its owner can **recall** the original NFT. Upon recall, the Digil's `ActiveCharge` is paid out to the owner as a final distribution.
 
 ## Security & Trust
 
 This contract includes several features designed to protect users and provide recovery paths.
 
 *   **Opt-Out/Blacklist**: Users can pay a fee to opt-out of the system, preventing them from receiving tokens or interacting with the contract. They can opt back in at any time.
-*   **Reentrancy Guard**: Critical functions involving external calls are protected against reentrancy attacks.
+*   **Reentrancy Guard**: Critical functions involving state changes and external calls are protected against reentrancy attacks.
 *   **Owner Powers**: The contract owner has administrative powers to configure key economic parameters. This allows for flexibility and recovery but requires user trust.
-*   **Token Rescue Mechanism**: To balance the owner's power and protect users, a robust rescue mechanism is in place:
-    *   **Stalled Operations**: If a token gets stuck in a multi-step operation (like `activate` or `discharge`), it can be rescued by the owner after a **30-day** inactivity period. This provides a fast recovery path from operational failures.
-    *   **Long-Term Abandonment**: If a token is completely inactive for **365 days** *and* has value locked in it, it can be rescued by the owner. This prevents assets from being permanently lost.
-    *   **Blacklisted Owners**: Tokens owned by blacklisted addresses can also be rescued.
+*   **Token Rescue Mechanism**: The contract owner can rescue tokens under specific, transparent conditions to prevent assets from being permanently lost or stuck.
+    *   **Stalled Operations**: If a token gets stuck in a multi-step operation (like `activate` or `discharge`), it can be rescued by the owner after a **30-day** inactivity period.
+    *   **Long-Term Abandonment**: If a token is completely inactive for **365 days** and holds value (either as direct `Value` or as unresolved contributions), it can be rescued by the owner.
+    *   **Blacklisted Owners**: Tokens owned by addresses that have opted-out (are on the blacklist) can be rescued at any time.
 
 ## User Actions and Distributions
 
-*   **Withdrawals**: ETH and Digil Coin distributions generated from token operations are held in a pending balance for each user. These can be withdrawn at any time.
-*   **Bonus Coins**: To incentivize participation, users who hold Digil Tokens or Digil Coins are eligible to receive bonus coins, claimable every 15 minutes during a `withdraw` transaction.
+*   **Withdrawals**: ETH and Digil Coin distributions generated from token operations are held in a pending balance for each user. These can be withdrawn at any time via the `withdraw()` function.
+*   **Bonus Coins**: To incentivize participation, users who hold Digil Tokens or Digil Coins are eligible for a time-based bonus of Digil Coins, claimable every 15 minutes during a `withdraw` transaction.
