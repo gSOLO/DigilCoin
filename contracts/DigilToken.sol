@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.30;
 
-
 // Import OpenZeppelin contracts for standard ERC721 functionality, ownership, safe transfers, counters, ERC20 interfacing, and reentrancy protection.
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -16,7 +15,7 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 /// @notice NFT contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
 /// @custom:security-contact security@digil.co.in
 contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
-    // Usings
+    // String utils
     using Strings for uint256;  // Allow uint256 values to be converted to strings
 
     // Immutable contract-level variables set during construction
