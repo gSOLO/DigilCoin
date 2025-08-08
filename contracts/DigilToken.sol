@@ -1150,7 +1150,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The coin units used in the charge.
     /// @return True if the token was successfully charged.
     function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable nonReentrant operatorEnabled(contributor) tokenExists(tokenId) returns(bool) {
-        require(contributor != address(0), "DIGIL: Invalid Contrubitor");
+        require(contributor != address(0), "DIGIL: Invalid Contributor");
         require(coins >= _coinMultiplier, "DIGIL: Insufficient Charge");
         return _chargeToken(contributor, tokenId, coins, 0, msg.value, false);
     }
