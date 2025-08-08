@@ -183,11 +183,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  complete Indicates whether the process was completed
     event Discharge(uint256 indexed tokenId, bool complete);
 
-    /// @notice Emitted when a token is linked to a plane.
-    /// @param  tokenId The ID of the token that was linked
-    /// @param  linkId The ID of the plane that the token was linked to
-    event Link(uint256 indexed tokenId, uint256 indexed linkId);
-
     /// @notice Emitted when a token is linked with efficiency details.
     /// @param  tokenId The ID of the token that was linked
     /// @param  linkId The ID of the token that was linked to
@@ -855,7 +850,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // Record the plane link.
             t.links.push(plane);
             t.linkEfficiency[plane] = LinkEfficiency(100, 0);
-            emit Link(tokenId, plane);
+            emit Link(tokenId, plane, 100, 0);
         }
         
         return tokenId;
