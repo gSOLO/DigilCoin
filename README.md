@@ -102,6 +102,10 @@ Creating a Digil mints a new ERC-721 with optional restrictions and an optional 
 
 ### Charge
 Charging supplies **coins** (via the ERC-20) and **ETH** (meeting the token’s per-coin floor). Restricted tokens only accept charges from whitelisted accounts. The contract records each contributor; for inactive tokens it accumulates `charge` toward activation, and for active tokens it may route value/coins through existing links to other Digils based on efficiency and affinity.
+
+> **Proxy charging note (`chargeTokenAs`)**: when the caller is **not** the `contributor`, the call must include at least **one full increment of ETH** (the token’s `incrementalValue`, or the **global** minimum if the token’s is zero). This amount is a **floor**, **not** an extra fee on top of the per-coin requirement—the required ETH is the **greater of** (a) this floor and (b) the normal per-coin minimum for the requested `coins`.
+
+
 `chargeToken` / `chargeTokenAs(contributor, tokenId, coins)`
 - Enforces **minimum ETH** per coin unit (token’s incremental or global).
 - If the token is **restricted**, contributor must be whitelisted.
