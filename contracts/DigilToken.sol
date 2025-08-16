@@ -226,7 +226,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  addr The address this event is attributed to
     /// @param  tokenId The ID of the token whose value increased
     /// @param  value The amount the token's value increased
-    event ContributeValue(address indexed addr, uint256 indexed tokenId, uint256 value);
+    event ContributeValueAs(address indexed addr, uint256 indexed tokenId, uint256 value);
 
     /// @notice Emitted when additional value is added to or created for a token.
     /// @dev    This event records general value additions to a token that occur outside the charging process.
@@ -1176,7 +1176,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // If excess value was provided, add the surplus to the token's value.
             if (value > minimumValue) {
                 t.value += value - minimumValue;
-                emit ContributeValue(contributor, tokenId, value - minimumValue);
+                emit ContributeValueAs(contributor, tokenId, value - minimumValue);
             }
 
             // If excess coins were provided, add the surplus to active charge.
