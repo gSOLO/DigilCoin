@@ -5,6 +5,8 @@ The Web3 Layer of the [Digil Project](https://digil.app)
 ## What is a Digil?
 A **Digil** (Digital Sigil) is an ERC-721-based **dynamic NFT** (dNFT). Unlike static collectibles, Digils have **intrinsic value (ETH)** and **charge (ERC-20 coins)**, a lifecycle of **charging → activation → linking**, and rich interactions that can redistribute value and coins across holders.
 
+> A sigil is a type of symbol used in magic. In modern usage, especially in the context of chaos magic, sigil refers to a symbolic representation of the practitioner's desired outcome.<sup>[?](https://en.wikipedia.org/wiki/Sigil)</sup>
+
 ---
 
 ## Table of Contents
