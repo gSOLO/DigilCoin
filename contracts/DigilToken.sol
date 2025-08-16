@@ -1161,7 +1161,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             }
 
             if (c.distributed) {
-                // Existing contributor already recieved a distribution, reset 
+                // Existing contributor already received a distribution, reset 
                 c.distributed = false;
                 c.charge = 0;
                 c.value = 0;
