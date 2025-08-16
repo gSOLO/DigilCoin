@@ -36,6 +36,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private _incrementalValue = 100 * VALUE_MULTIPLIER; // Minimum incremental ETH value required for charging
     uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // The portion of incremental value distributed to users
 
+    // Planar token policy
+    uint256 private constant PLANAR_MAX_ID = 18;                // Highest planar token ID that can be linked.
+    uint256 private constant PLANAR_TRANSFER_MAX_ID = 20;       // Highest planar token ID that can be transferred. The planar set is [0 .. PLANAR_TRANSFER_MAX_ID] inclusive.
+    bool private _planarTransferActive;                         // When true, a temporary transfer window is open to move planar tokens from the current owner to the new owner during `transferOwnership`.
+
     // Batch operations limiter
     uint16 private constant DEFAULT_BATCH_SIZE = 350;           // Default number of items to process in a single batch operation
     uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Configurable batch size for distribution or discharge operations
@@ -312,7 +317,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         unchecked {
             uint256 tokenId;
             // Loop until 21 tokens are minted.
-            while (tokenId < 20) {
+            while (tokenId < PLANAR_TRANSFER_MAX_ID) {
                 tokenId = _tokenIdCounter.current();
                 _tokenIdCounter.increment();
 
@@ -335,17 +340,52 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _tokens[0].restricted = true;
     }
 
-    /// @dev    Transfers ownership of the contract and planar tokens to a new account
+    /// @dev    Returns true if `tokenId` is a planar token.
+    /// @param  tokenId The token to check.
+    /// @return True for planar IDs 0..20, false otherwise.
+    function _isPlanar(uint256 tokenId) internal pure returns (bool) {
+        return tokenId <= PLANAR_TRANSFER_MAX_ID;
+    }
+
+    /// @inheritdoc ERC721
+    /// @dev    For planar tokens, only the contract owner or this contract itself
+    ///         is authorized to operate. Operator approvals and per-token approvals
+    ///         are intentionally ignored for these IDs.
+    function _isAuthorized(address owner_, address spender, uint256 tokenId) internal view override returns (bool) {
+        if (_isPlanar(tokenId)) {
+            // Only the contract owner (admin) or this contract can operate planar tokens
+            return (spender == owner()) || (spender == address(this));
+        }
+        return super._isAuthorized(owner_, spender, tokenId);
+    }
+
+    /// @inheritdoc Ownable
+    /// @dev    Transfers ownership of the contract and planar tokens to a new account.
+    ///         During this call, we briefly enable a "transfer window" that allows
+    ///         planar tokens (IDs 0..20) currently held by the caller (current admin)
+    ///         to be transferred to `newOwner`. This preserves the invariant that the
+    ///         admin always controls planar tokens (and thus the base-URI token #0),
+    ///         without seizing tokens from third parties (which is forbidden by ERC-721).
     /// @param  newOwner the address to transfer ownership to
     function transferOwnership(address newOwner) public virtual override onlyOwner {
         // Before transferring contract ownership, also transfer all foundational Plane tokens.
         address caller = _msgSender();
-        uint256 tokenId;
-        for (tokenId; tokenId < 21; tokenId++) {
-            if (ownerOf(tokenId) == caller) {
+
+        // Open the planar transfer window: planar tokens may move away from the current admin.
+        _planarTransferActive = true;
+
+        // Move only the planar tokens the caller actually holds (0..20 inclusive).
+        // This respects ERC-721 authorization and avoids reverting if some tokens
+        // have been purposefully sent elsewhere (which shouldn't happen under policy).
+        for (uint256 tokenId = 0; tokenId <= PLANAR_TRANSFER_MAX_ID; ) {
+            if (_ownerOf(tokenId) == caller) {
                 _transfer(caller, newOwner, tokenId);
             }
+            unchecked { ++tokenId; } // gas: safe because tokenId <= PLANAR_TRANSFER_MAX_ID
         }
+
+        // Close transfer window *before* changing admin to avoid accidental extra moves.
+        _planarTransferActive = false;
         
         super.transferOwnership(newOwner);
     }
@@ -535,7 +575,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // ERC721 Updates
 
+    /// @inheritdoc ERC721
     /// @dev    Overrides the ERC721 _update function to perform additional checks and actions.
+    ///         Enforces planar policy:
+    ///         - Planar tokens cannot be burned (`to != address(0)`),
+    ///          - Outside of transfer ownership, planar tokens must always be held by the admin (`to == owner()`),
+    ///          - During transfer ownership (`_planarTransferActive == true`), movement is allowed so the
+    ///         current owner can pass custody to the new admin.
+    ///         Non-planar tokens are unaffected.
     /// @param  to The address receiving the token.
     /// @param  tokenId The token ID being transferred.
     /// @param  auth Authorization address.
@@ -544,6 +591,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Ensure neither the sender nor the recipient are blacklisted.
         _notOnBlacklist(_msgSender());
         _notOnBlacklist(to);
+
+        // Pre-transfer planar checks (skip on mint: prev == address(0))
+        address prev = _ownerOf(tokenId);
+        if (prev != address(0) && _isPlanar(tokenId)) {
+            // 1) Planar tokens cannot be burned.
+            require(to != address(0), "DIGIL: Planar Non-burnable");
+            // 2) Outside of transfer ownership, planar tokens must remain with the admin.
+            if (!_planarTransferActive) {
+                require(to == owner(), "DIGIL: Planar Locked to Owner");
+            }
+        }
+
         // Perform the standard ERC721 token update (transfer).
         address from = super._update(to, tokenId, auth);
         
@@ -554,6 +613,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Automatically whitelist the new owner for this token.
         t.contributions[to].whitelisted = true;
+
         return from;
     }
 
@@ -720,6 +780,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _;
     }
 
+    /// @inheritdoc ERC721
     /// @dev    Returns the base URI used by the ERC721 token.
     /// @return The base URI string.
     function _baseURI() internal view override returns (string memory) {
@@ -838,7 +899,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // If a plane is specified (plane > 0), process the coin fee and link the token to the plane.
         if (plane > 0) {
-            require(plane <= 18, "DIGIL: Invalid Plane");
+            require(plane <= PLANAR_MAX_ID, "DIGIL: Invalid Plane");
             // Different fee structures based on plane index.
             if (plane < 4) {
                 _coinsFromSender(_coinRate * 5);
@@ -1439,7 +1500,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 bonusEfficiency = t.linkEfficiency[linkId].affinityBonus;
 
         // Validate link: tokens must be different, destination must be in allowed range, and efficiency must be greater than current base.
-        require(tokenId != linkId && linkId > 18 && efficiency > baseEfficiency, "DIGIL: Invalid Link");
+        require(tokenId != linkId && linkId > PLANAR_MAX_ID && efficiency > baseEfficiency, "DIGIL: Invalid Link");
         
         Token storage d = _tokens[linkId];
         // Ensure the destination token is not restricted or the sender is whitelisted.
@@ -1459,7 +1520,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // If both tokens are associated with planes, calculate bonus affinity.
         uint256 sourcePlane = t.links.length > 0 ? t.links[0] : 0;
         uint256 destinationPlane = d.links.length > 0 ? d.links[0] : 0;
-        if (sourcePlane > 0 && sourcePlane <= 18 && destinationPlane > 0 && destinationPlane <= 18) {            
+        if (sourcePlane > 0 && sourcePlane <= PLANAR_MAX_ID && destinationPlane > 0 && destinationPlane <= PLANAR_MAX_ID) {            
             uint256 bonus = _affinityBonus(sourcePlane, destinationPlane, efficiency);
             bonusEfficiency = bonus > bonusEfficiency ? bonus : bonusEfficiency;
         }
