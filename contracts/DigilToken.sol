@@ -461,7 +461,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         coins = distribution.coins;
         distribution.coins = 0;
 
-        // Award bonus coins if user holds tokens or donates enough Ether
+        // Award bonus coins if user holds tokens
         if (balanceOf(addr) > 0 || _coins.balanceOf(addr) > 0) {
             uint256 lastBonusTime = distribution.time;            
             distribution.time = block.timestamp;
@@ -1201,7 +1201,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The number of coin units to use.
     /// @return True if the token was successfully charged.
     function chargeToken(uint256 tokenId, uint256 coins) external payable returns(bool) {
-        // Multiply the coin amount by coin decimals and delegate to chargeTokenAs.
+        // Delegate to chargeTokenAs.
         return chargeTokenAs(_msgSender(), tokenId, coins);
     }
 
