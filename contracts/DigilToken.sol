@@ -291,27 +291,27 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // 4:   delimiter
         // 5-9: simplified name
         bytes[21] memory data;
-        data[0] =  "----|";      // null
-        data[1] =  "xrot|X";     // void
-        data[2] =  "roxy|K.N ";  // karma
-        data[3] =  "orxy|K.S";   // kaos
-        data[4] =  "faly|X.S";   // fire
-        data[5] =  "afly|X.E";   // air
-        data[6] =  "ewny|X.N";   // earth
-        data[7] =  "weny|X.W";   // water
-        data[8] =  "im-y|X.NW";  // ice
-        data[9] =  "lfay|X.NE";  // lightning
-        data[10] = "mi-y|X.NNE"; // metal
-        data[11] = "newy|X.NNW"; // nature
-        data[12] = "hrdy|X.SE";  // harmony
-        data[13] = "dohy|X.SW";  // discord
-        data[14] = "podt|K.W";   // entropy
-        data[15] = "grht|K.E";   // negentropy/exergy
-        data[16] = "kpgt|K";     // magick/kosmos
-        data[17] = "txy-|K.X";   // aether
-        data[18] = "yxt-|X.R";   // external reality
-        data[19] = "----|.XR";   // extended reality
-        data[20] = "----|.ILXR"; // digil reality
+        data[0] =  bytes("----|");      // null
+        data[1] =  bytes("xrot|X");     // void
+        data[2] =  bytes("roxy|K.N ");  // karma
+        data[3] =  bytes("orxy|K.S");   // kaos
+        data[4] =  bytes("faly|X.S");   // fire
+        data[5] =  bytes("afly|X.E");   // air
+        data[6] =  bytes("ewny|X.N");   // earth
+        data[7] =  bytes("weny|X.W");   // water
+        data[8] =  bytes("im-y|X.NW");  // ice
+        data[9] =  bytes("lfay|X.NE");  // lightning
+        data[10] = bytes("mi-y|X.NNE"); // metal
+        data[11] = bytes("newy|X.NNW"); // nature
+        data[12] = bytes("hrdy|X.SE");  // harmony
+        data[13] = bytes("dohy|X.SW");  // discord
+        data[14] = bytes("podt|K.W");   // entropy
+        data[15] = bytes("grht|K.E");   // negentropy/exergy
+        data[16] = bytes("kpgt|K");     // magick/kosmos
+        data[17] = bytes("txy-|K.X");   // aether
+        data[18] = bytes("yxt-|X.R");   // external reality
+        data[19] = bytes("----|.XR");   // extended reality
+        data[20] = bytes("----|.ILXR"); // digil reality
         
         // Mint the initial 21 "Plane" tokens (IDs 0-20)
         // Unchecked block used to mint the initial tokens without overflow checks (safe here due to known bounds)
@@ -669,6 +669,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Rescues a token from an account that has opted out or that hasnt seen significant action.
     /// @dev    Only callable by the contract owner. Transfers the token from a blacklisted/inactive address to a specified address.
+    ///         If a planar token is rescued, to must be the contract owner, otherwise the transaction will revert.
     /// @param  tokenId The token ID to rescue.
     /// @param  to The address to which the token is transferred.
     function rescueToken(uint256 tokenId, address to) external tokenExists(tokenId) onlyOwner {
@@ -962,9 +963,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         In order for the incremental value or activation threshold to be updated, the token must have 0 charge.
     ///         In order for the token data or URI to be updated a value must be sent of at least the token's incremental value plus the minimum incremental value.
     ///         In addition, for a data or URI update, a transfer of 1000 coins per coin rate for each.
-    /// @dev    Data for the planar tokens must have a length of at least 4 in order to preserve the affinity bonus functionality.
+    /// @dev    Data for the Planar Tokens must have a length of at least 4 in order to preserve the affinity bonus functionality.
+    ///         Planar tokens must also maintain an Incrmental Value and Activation Threshold of 0.
     /// @param  tokenId The ID of the Token to Update
-    /// @param  incrementalValue The Value (in wei), required to be sent with each Coin used to Charge the Token. Can be 0 or a multiple of the Minimum Incremental Value
+    /// @param  incrementalValue The Value (in wei), required to be sent with each Coin used to Charge the Token. Can be 0 or a greater than the Minimum Incremental Value
     /// @param  activationThreshold The number of Coins required for the Token to be Activated
     /// @param  data The updated Data for the Token (only updated if length > 0)
     /// @param  uri The updated URI for the Token (only updated if length > 0) 
@@ -976,6 +978,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // If token already has charge, its incremental value and activation threshold cannot be modified.
         if (t.charge > 0) {
             require(t.incrementalValue == incrementalValue && t.activationThreshold == activationThreshold, "DIGIL: Cannot Update Charged Token");
+        }
+
+        if (_isPlanar(tokenId)) {
+            require(incrementalValue == 0, "DIGIL: Invalid Incremental Value");
+            require(activationThreshold == 0, "DIGIL: Invalid Activation Threshold");
         }
 
         // Require minimum incremental value
