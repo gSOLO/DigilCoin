@@ -2,7 +2,10 @@
 The Web3 Layer of the [Digil Project](https://digil.app)  
 **Website**: [digil.co.in](https://digil.co.in)
 
+## What is a Digil?
 A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrinsic value (ETH)** and accumulate **energy (ERC-20 “coins”)**. Owners and contributors can **charge**, **activate**, **link**, **deactivate**, and **discharge** Digils; the contract fairly tracks and redistributes ETH/coins using on-chain rules and events. Conceptually, a Digil behaves like a **rechargeable node** that can power neighboring nodes when linked.
+
+> A sigil is a type of symbol used in magic. In modern usage, especially in the context of chaos magic, sigil refers to a symbolic representation of the practitioner's desired outcome.<sup>[?](https://en.wikipedia.org/wiki/Sigil)</sup>
 
 ---
 
@@ -24,8 +27,6 @@ A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrin
 - [Rescue & Recovery](#rescue--recovery)
 - [Admin & Security Notes](#admin--security-notes)
 - [How it Works: End-to-End Examples](#how-it-works-end-to-end-examples)
-
-Skim the **Lifecycle** to see the flow (Create → Charge → Activate). Dive into **Linking & Affinity** for how Digils interact.
 
 ---
 
