@@ -101,7 +101,7 @@ contract CharlieTestSuite {
         Assert.equal(uri, "New URI", "URI should be updated");
 
         // Verify updated data 
-        (, , , , , , , , bytes memory tokenData) = digil.tokenData(tokenId);
+        (, , , , , , , bytes memory tokenData) = digil.tokenData(tokenId);
         Assert.ok(keccak256("New Data") == keccak256(tokenData), "Token data should be updated");
 
         approved = coins.approve(address(digil), coinMultiplier);

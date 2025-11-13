@@ -73,6 +73,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     struct TokenContribution {
         uint256 charge;     // Coins contributed to the token's charge
         uint256 value;      // Ether value contributed
+        uint256 epoch;      // Logical contribution epoch for the token
         bool exists;        // True if the contributor exists (has contributed)
         bool distributed;   // True if the contribution has been processed during an activation/discharge
         bool whitelisted;   // True if the contributor is whitelisted
@@ -101,8 +102,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 incrementalValue;   // Incremental value used for charging computations (value required per coin to charge)
         
         // Batch Processing State
-        uint256 dischargeIndex;     // Current index for batch discharge processing
         uint256 distributionIndex;  // Current index for batch distribution processing
+        uint256 contributionEpoch;  // Logical epoch for contributions on this token
 
         // Lifecycle Properties
         uint256 activationThreshold;// Required charge to activate the token
@@ -113,8 +114,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         mapping(uint256 => LinkEfficiency) linkEfficiency;  // Mapping of link ID to its efficiency settings
         
         // Contributor Data
-        address[] contributors;     // List of contributor addresses that have charged this token
-        mapping(address => TokenContribution) contributions;// Mapping from contributor to their contribution details
+        address[] contributors;                                 // List of contributor addresses that have charged this token
+        mapping(address => TokenContribution) contributions;    // Mapping from contributor to their contribution details
+        address contractTokenAddress;                           // External ERC721 contract address attached (if any)
         
         // Metadata
         bytes data;                 // Arbitrary data stored with the token
@@ -562,7 +564,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function createValue(uint256 tokenId, uint256 value) external payable onlyOwner {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
         _addValue(msg.value);
 
@@ -678,7 +680,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
         address currentOwner = ownerOf(tokenId);
 
-        bool isStalled = t.dischargeIndex > 0 || t.distributionIndex > 0;
+        bool isStalled = t.distributionIndex > 0;
         bool canBeRescued;
 
         if (isStalled) {
@@ -739,8 +741,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         Token storage t = _tokens[internalId];
         // Append the ERC721 contract address and tokenId as query parameters to the token URI.
-        t.uri = string(abi.encodePacked(tokenURI(internalId), "?account=", Strings.toHexString(uint160(account), 20), "&tokenId=", tokenId.toString()));
-        // Add the ERC721 contract address as a contributor.
+        t.uri = string(
+            abi.encodePacked(
+                tokenURI(internalId),
+                "?account=",
+                Strings.toHexString(uint160(account), 20),
+                "&tokenId=",
+                tokenId.toString()
+            )
+        );
+
+        // Track the attached contract token address and add it as a contributor.
+        t.contractTokenAddress = account;
         t.contributors.push(account);
         
         return this.onERC721Received.selector;
@@ -752,24 +764,32 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  account The address of the external ERC721 contract.
     /// @param  tokenId The internal Digil token ID whose attached contract token is to be recalled.
     function recallToken(address account, uint256 tokenId) external nonReentrant approved(tokenId) {
+        Token storage t = _tokens[tokenId];
+
+        // Safety check: enforce that the supplied account matches the attached contract.
+        require(account == t.contractTokenAddress, "DIGIL: Invalid Contract Account");
+
         ContractToken storage contractToken = _contractTokens[account][tokenId];
         require(contractToken.recallable, "DIGIL: Contract Token Is Not Recallable");
 
         uint256 contractTokenId = contractToken.tokenId;
-        // Reset the contract token mapping.
+
+        // --- Effects: clear all "attached contract" state first ---
         contractToken.tokenId = 0;
         contractToken.recallable = false;
+        _contractTokenExists[account][contractTokenId] = false;
+        t.contractTokenAddress = address(0);
 
         address owner = ownerOf(tokenId);
 
-        Token storage t = _tokens[tokenId];
         uint256 activeCharge = t.activeCharge;
         t.activeCharge = 0;
 
+        // --- Interaction: external call happens after state updates ---
         // Safely transfer the external ERC721 token back to the current owner of the Digil token.
         ERC721(account).safeTransferFrom(_this, owner, contractTokenId, t.data);
 
-        _contractTokenExists[account][contractTokenId] = false;
+        // Distribute the active charge to the owner as coins.
         _addValue(owner, 0, activeCharge);
     }
 
@@ -828,12 +848,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return restricted Whether the token is restricted.
     /// @return links The number of links associated with the token.
     /// @return contributors The number of contributor addresses.
-    /// @return dischargeIndex The current discharge index.
     /// @return distributionIndex The current distribution index.
     /// @return data Arbitrary data stored with the token.
-    function tokenData(uint256 tokenId) external view tokenExists(tokenId) returns(bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 dischargeIndex, uint256 distributionIndex, bytes memory data) {
+    function tokenData(uint256 tokenId) external view tokenExists(tokenId) returns(bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 distributionIndex, bytes memory data) {
         Token storage t = _tokens[tokenId]; 
-        return (t.active, t.activating, t.discharging, t.restricted, t.links.length, t.contributors.length, t.dischargeIndex, t.distributionIndex, t.data);
+        return (t.active, t.activating, t.discharging, t.restricted, t.links.length, t.contributors.length, t.distributionIndex, t.data);
     }
 
     // Token Creation
@@ -931,7 +950,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 value = msg.value;
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
         // Determine if the token should be restricted based on provided addresses.
         bool restrict = whitelisted.length > 0;
@@ -973,7 +992,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable nonReentrant approved(tokenId) {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
         // If token already has charge, its incremental value and activation threshold cannot be modified.
         if (t.charge > 0) {
@@ -1079,6 +1098,21 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
+    /// @dev    Ensure a contribution struct is in sync with the token's logical contribution epoch.
+    ///         When the token's epoch has advanced (e.g. after a full discharge), all previous
+    ///         contributions are treated as reset without explicitly zeroing storage for each
+    ///         contributor in a loop.
+    function _touchContribution(Token storage t, TokenContribution storage c) internal {
+        if (c.epoch != t.contributionEpoch) {
+            c.epoch = t.contributionEpoch;
+            c.charge = 0;
+            c.value = 0;
+            c.exists = false;
+            c.distributed = false;
+            // NOTE: c.whitelisted is intentionally preserved across epochs.
+        }
+    }
+
     /// @dev    Internal function to process token charging.
     /// @param  contributor The address contributing to the charge.
     /// @param  tokenId The token ID to charge.
@@ -1090,7 +1124,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _chargeToken(address contributor, uint256 tokenId, uint256 coins, uint256 activeCoins, uint256 value, bool link) internal returns(bool) {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        bool batchOperationInProgress = t.dischargeIndex > 0 || t.distributionIndex > 0;
+        bool batchOperationInProgress = t.distributionIndex > 0;
         if (link && batchOperationInProgress) {
             return false;
         } else {
@@ -1110,6 +1144,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.lastActivity = block.timestamp;
 
         TokenContribution storage c = t.contributions[contributor];
+        _touchContribution(t, c);
+        
         // Check if contribution is allowed (if restricted, the contributor must be whitelisted).
         bool whitelisted = !t.restricted || c.whitelisted;
 
@@ -1173,7 +1209,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             }
 
             if (c.distributed) {
-                // Existing contributor already received a distribution, reset 
+                // Existing contributor already received a distribution in this epoch, reset
                 c.distributed = false;
                 c.charge = 0;
                 c.value = 0;
@@ -1373,72 +1409,38 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         _addValue(msg.value);
 
-        // Set flag at start
+        // Mark the token as being in a discharge operation.
         t.discharging = true;
         
-        uint256 dIndex = t.dischargeIndex;
-        
-        // Distribute based on mode
-        bool distributionComplete = dIndex > 0 || _distribute(tokenId, !t.active);
+        // Run the distribution phase based on mode (may require multiple calls).
+        bool distributionComplete = _distribute(tokenId, !t.active);
         if (!distributionComplete) {
             emit Discharge(tokenId, false);
             return false;
         }
 
-        address contractTokenAddress;
+        // At this point, all contributions for the current epoch have been fully processed.
+        // Clear the contributor list and logically reset all contribution state via epoch bump.
+        delete t.contributors;
 
-        uint256 cLength = t.contributors.length;
-        uint256 cEndIndex = dIndex + (_batchSize * 2);
-        if (cEndIndex > cLength) {
-            cEndIndex = cLength;
-        }
-        // Process in batches defined by _batchSize.
-        for (dIndex; dIndex < cEndIndex; dIndex++) {
-            address contributor = t.contributors[dIndex];
-            if (contributor == address(0)) {
-                break;
-            }
-            
-            TokenContribution storage contribution = t.contributions[contributor];
-            // Reset contribution data.
-            contribution.charge = 0;
-            contribution.value = 0;
-            contribution.exists = false;
-            contribution.distributed = false;
-
-            // For contract tokens, adjust recallable status.
-            if (t.dischargeIndex == 0) {
-                ContractToken storage contractToken = _contractTokens[contributor][tokenId];
-                if (contractToken.tokenId != 0) {
-                    contractTokenAddress = contributor;
-                    contractToken.recallable = false;
-                }
+        // If a contract token is attached, it should no longer be recallable after a full discharge.
+        // Preserve its address as a placeholder contributor so a future activation/distribution round
+        // can re-enable recallability.
+        if (t.contractTokenAddress != address(0)) {
+            ContractToken storage contractToken = _contractTokens[t.contractTokenAddress][tokenId];
+            if (contractToken.tokenId != 0) {
+                contractToken.recallable = false;
+                t.contributors.push(t.contractTokenAddress);
             }
         }
 
-        if (cEndIndex == cLength) {
-            
-            // If batch completes
-            t.dischargeIndex = 0;
-            delete t.contributors;
-            emit Discharge(tokenId, true);
-
-        } else {
-
-            // Partial discharge
-            t.dischargeIndex = dIndex;
-            emit Discharge(tokenId, false);
-            return false;
-
-        }
-
-        if (contractTokenAddress != address(0)) {
-            // If applicable, re-add the contract token address as a contributor.
-            t.contributors.push(contractTokenAddress);
-        }
+        // Advance the contribution epoch so all existing TokenContribution entries
+        // are treated as reset the next time they are touched.
+        t.contributionEpoch += 1;
 
         // Clear flag on completion
         t.discharging = false;
+        emit Discharge(tokenId, true);
         return true;
     }
 
@@ -1477,7 +1479,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
         require(t.active == true && t.charge == 0, "DIGIL: Token Cannot Be Deactivated");
         // Make sure the token isn't currently being discharged or activated
-        require(t.dischargeIndex == 0 && t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
         
         if (msg.value < t.incrementalValue) revert InsufficientFunds(t.incrementalValue);
 

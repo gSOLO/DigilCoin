@@ -145,8 +145,8 @@ contract DeltaTestSuite {
             dischargeComplete = digil.dischargeToken{value: incrementalValue}(dischargeTokenId);
         }
 
-        (, , , , , , uint256 dischargeIndex, uint256 distributionIndex, ) = digil.tokenData(dischargeTokenId);
-        Assert.ok(dischargeIndex == 0 && distributionIndex == 0, "Token distribution in invalid state > 0");
+        (, , , , , , uint256 distributionIndex, ) = digil.tokenData(dischargeTokenId);
+        Assert.ok(distributionIndex == 0, "Token distribution in invalid state > 0");
 
         (uint256 finalCharge, , uint256 finalValue, , ) = digil.tokenCharge(dischargeTokenId);
         Assert.ok(finalCharge == 0, "Token charge did not decrease appropriately");
