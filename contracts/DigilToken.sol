@@ -1452,6 +1452,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function activateToken(uint256 tokenId) external nonReentrant approved(tokenId) returns(bool) {
         Token storage t = _tokens[tokenId];
         require(t.active == false && (t.charge >= t.activationThreshold || t.activating), "DIGIL: Token Cannot Be Activated");
+        require(!t.discharging, "DIGIL: Discharge In Progress");
 
         // Update last activity
         t.lastActivity = block.timestamp;
