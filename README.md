@@ -2,10 +2,7 @@
 The Web3 Layer of the [Digil Project](https://digil.app)  
 **Website**: [digil.co.in](https://digil.co.in)
 
-## What is a Digil?
-A **Digil** (Digital Sigil) is an ERC-721-based **dynamic NFT** (dNFT). Unlike static collectibles, Digils have **intrinsic value (ETH)** and **charge (ERC-20 coins)**, a lifecycle of **charging → activation → linking**, and rich interactions that can redistribute value and coins across holders.
-
-> A sigil is a type of symbol used in magic. In modern usage, especially in the context of chaos magic, sigil refers to a symbolic representation of the practitioner's desired outcome.<sup>[?](https://en.wikipedia.org/wiki/Sigil)</sup>
+A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrinsic value (ETH)** and accumulate **energy (ERC-20 “coins”)**. Owners and contributors can **charge**, **activate**, **link**, **deactivate**, and **discharge** Digils; the contract fairly tracks and redistributes ETH/coins using on-chain rules and events. Conceptually, a Digil behaves like a **rechargeable node** that can power neighboring nodes when linked.
 
 ---
 
@@ -28,251 +25,412 @@ A **Digil** (Digital Sigil) is an ERC-721-based **dynamic NFT** (dNFT). Unlike s
 - [Admin & Security Notes](#admin--security-notes)
 - [How it Works: End-to-End Examples](#how-it-works-end-to-end-examples)
 
+Skim the **Lifecycle** to see the flow (Create → Charge → Activate). Dive into **Linking & Affinity** for how Digils interact.
+
 ---
 
 ## Contracts
 
 ### Digil Coin | ERC-20
-**Symbol**: DIGIL  
-**Address**: TBD
+**Symbol**: DIGIL • **Address**: TBD
 
-Utility token used for charging, paying feature fees (e.g., linking, metadata updates, opt-out), and bonus rewards.
+Used for **charge units**, feature fees (linking, metadata updates, opt-out), and **bonuses**. Internally the contract normalizes coin math with a **coin multiplier**: `10**decimals`. Where we say “coins,” we mean base units at this precision.
 
 ### Digil Token | ERC-721
-**Symbol**: DDIGIL  
-**Address**: TBD
+**Symbol**: DDIGIL • **Address**: TBD
 
-Core NFT contract that mints Digils, tracks charge/value, enforces planar policy, processes activation / discharge in batches, manages links, and vaults external NFTs.
+Implements core NFT logic plus:
+- **Economics**: per-token `charge`, `activeCharge`, and ETH `value`; per-address contribution ledgers; pending distributions.
+- **Batched workflows**: `activateToken`, `dischargeToken` process contributors in pages using `distributionIndex`/`dischargeIndex` and a configurable `_batchSize`.
+- **Link graph**: up to 10 links per token with `LinkEfficiency { base %, affinityBonus }` and plane-driven bonuses.
+- **Vaulting**: accepts external ERC-721s via `onERC721Received` and exposes `recallToken`.
+- **Access & safety**: blacklist gating; planar invariants; `nonReentrant` on sensitive paths; robust event surface; custom errors.
+
+In short, it’s both the **scoreboard** and the **settlement engine**.
 
 ---
 
 ## Planar Tokens & Base URI
 
-**Planar set (IDs 0-20)** is minted at deployment to the initial owner with on-chain “plane” metadata:
+At deployment the contract mints **21 planar tokens** (IDs `0..20`) to the admin. These embed compact **affinity metadata** (bytes) used by the link bonus algorithm:
 
-- Core: **Void(1), Karma(2), Kaos(3)**
-- Elemental: **Fire(4), Air(5), Earth(6), Water(7)**
-- Paraelemental: **Ice(8), Lightning(9), Metal(10), Nature(11)**
-- Energy: **Harmony(12), Discord(13), Entropy(14), Exergy(15), Magick(16)**
-- Ethereal: **Aether(17), World(18)**
-- Extended: **Virtual(19), ILXR(20)**
+- Core: **Void (1), Karma (2), Kaos (3)**
+- Elemental: **Fire (4), Air (5), Earth (6), Water (7)**
+- Para-elemental: **Ice (8), Lightning (9), Metal (10), Nature (11)**
+- Energy: **Harmony (12), Discord (13), Entropy (14), Exergy (15), Magick (16)**
+- Ethereal: **Aether (17), World (18)**
+- Extended: **Virtual (19), ILXR (20)**
 
-**Custody rule (admin-locked):** planar tokens must always be held by `owner()` and **cannot be burned**. Operator/per-token approvals are **ignored** for them. A temporary window during `transferOwnership` moves any planar tokens held by the current admin to the new admin, preserving custody.
+**Invariants**
+- Planar IDs are **admin-locked**: non-burnable; only `owner()` or the contract can operate them. Approvals are ignored for these IDs.
+- During `transferOwnership`, a short **planar transfer window** opens so planar tokens held by the outgoing admin can be moved to the new admin. Otherwise, planar tokens are **non-transferable**.
+- Token **#0** controls the collection **base URI**; `_baseURI()` returns token #0’s URI. Updating #0 updates the effective base for default `tokenURI`s.
 
-**Base URI:** `_baseURI()` returns token **#0**’s URI, so the admin indirectly controls the base via token #0.
-
-> **Linking domain:** “Foundational planes” are `0..18` and **cannot** be link *targets*. Link targets must have `id > 18` (user Digils and/or extended planes `19-20`).
+**Practical note**: End-user Digils may **align** to a foundational plane during creation (see Create). That alignment doesn’t create a user-visible token transfer—it sets internal state used by the **affinity** algorithm.
 
 ---
 
 ## Global Configuration
 
-Owner-set parameters (`configure`):
+Owner-only `configure(coins, incrementalValue, transferValue, batchSize)` with checks:
+- `_coinRate = coins × coinMultiplier` • `coins ∈ (0, 1e9]`
+- `_incrementalValue > 0` (global per-coin ETH floor)
+- `_transferValue ∈ [0.9, 1.0] × _incrementalValue`
+- `_batchSize > 0`
 
-| Parameter | Purpose | Default |
-|---|---|---|
-| **Coin rate** (`_coinRate`) | Fees (linking, metadata updates, opt-out) and the cap for withdrawal bonuses | `100 × 10^decimals` |
-| **Incremental value** (`_incrementalValue`) | Minimum ETH per “coin unit” for charging | `100,000 gwei` |
-| **Transfer value** (`_transferValue`) | Share of the incremental value that accrues to users (90-100% of incremental) | `95,000 gwei` |
-| **Batch size** (`_batchSize`) | Contributors processed per tx during activation/discharge | `350` |
+**Constants**
+- `BONUS_INTERVAL = 15 minutes` → withdraw time bonus step
+- `MAX_LINKS = 10`
+- Rescue windows: `STALLED_TIMEOUT = 30 days`, `INACTIVITY_PERIOD = 365 days`
+
+**Why it matters**: these dials shape costs (fees), minimum ETH coupling per coin, payout fairness, and throughput of batch operations.
 
 ---
 
 ## Per-Token Properties
 
-- **charge** - coins contributed to an *inactive* token.  
-- **activeCharge** - coins accumulated by an *active* token and via links.  
-- **value** - intrinsic ETH held by the token.  
-- **incrementalValue** - min ETH per coin unit for this token (≥ global minimum if non-zero).  
-- **activationThreshold** - coins required to activate.  
-- **links** - up to **10** outgoing links to other tokens (by ID).  
-- **contributors** - addresses that contributed to charge/value (used for distribution).  
-- **restricted** - only whitelisted accounts may contribute. Current owner is auto-whitelisted on transfer.
+**Economics**
+- `charge` — pre-activation coins (base units); grows via `chargeToken/As` on inactive tokens.
+- `distributionCharge` / `distributionValue` — snapshots used when a distribution is in progress.
+- `activeCharge` — post-activation working coins; also accrues from link inflows.
+- `value` — intrinsic ETH the token holds.
+- `incrementalValue` — per-coin ETH requirement for *this* token (can be 0 but must be ≥ global min if set).
+- `activationThreshold` — required coins to allow activation.
 
-Internal batch state (`distributionIndex`, `dischargeIndex`) tracks progress across large contributor sets.
+**Workflow state**
+- `activating` / `discharging` — multi-tx operation flags.
+- `distributionIndex` / `dischargeIndex` — cursor into `contributors[]` for paging.
+- `lastActivity` — updated on meaningful operations; used by rescue logic.
+
+**Links & contributors**
+- `links[]` (≤ 10) • `linkEfficiency[linkId].base` and `.affinityBonus` (percent-like integers).
+- `contributors[]` plus per-address `TokenContribution { charge, value, exists, distributed, whitelisted }`.
+
+**Metadata & flags**
+- `data` (bytes) and `uri` (string). Planar tokens require `data.length ≥ 4` to preserve affinity codec.
+- `active` and `restricted`. New owners are **auto-whitelisted** for the token.
+
+This is a **mini-ledger** per token: balances, connections, contributors, and progress cursors for safe, resumable payouts.
 
 ---
 
 ## Lifecycle
 
+High-level: **Create** → **Charge** → **Activate**. Later: **Deactivate** or **Discharge**.
+
 ### Create
-Creating a Digil mints a new ERC-721 with optional restrictions and an optional alignment to a foundational plane. You can set its per-coin ETH floor (`incrementalValue`) and the coins required to activate (`activationThreshold`). If you align it to a plane, a one-time coin fee applies and the token is seeded with a base link to that plane. Any ETH you send at creation time is stored as the token’s intrinsic `value`.
 `createToken(incrementalValue, activationThreshold, restricted, plane, data)`
-- Optional **restriction**: requires an ETH deposit (≥ max(token incremental, global minimum)).
-- Optional **plane** link at mint time: `plane ∈ [1..18]` charges a **coin fee** tiered by plane group and seeds a link (base efficiency 100).
-- Any sent ETH becomes token `value`.
+- Enforces `incrementalValue == 0 || incrementalValue ≥ globalMin`.
+- If `restricted = true`, caller must send `ETH ≥ max(token.incrementalValue, globalMin)`; sets `restricted = true`.
+- If `plane ∈ [1..18]`, charges a one-time **coin fee tier** (see Admin & Security Notes) and records the alignment with base 100% link to that plane (internal only).
+- Any `msg.value` becomes token `value`.
+- Returns the new `tokenId` minted to the caller.
 
 ### Charge
-Charging supplies **coins** (via the ERC-20) and **ETH** (meeting the token’s per-coin floor). Restricted tokens only accept charges from whitelisted accounts. The contract records each contributor; for inactive tokens it accumulates `charge` toward activation, and for active tokens it may route value/coins through existing links to other Digils based on efficiency and affinity.
-
-> **Proxy charging note (`chargeTokenAs`)**: when the caller is **not** the `contributor`, the call must include at least **one full increment of ETH** (the token’s `incrementalValue`, or the **global** minimum if the token’s is zero). This amount is a **floor**, **not** an extra fee on top of the per-coin requirement—the required ETH is the **greater of** (a) this floor and (b) the normal per-coin minimum for the requested `coins`.
-
-
-`chargeToken` / `chargeTokenAs(contributor, tokenId, coins)`
-- Enforces **minimum ETH** per coin unit (token’s incremental or global).
-- If the token is **restricted**, contributor must be whitelisted.
-- Pulls **coins** (ERC-20 `transferFrom`) from contributor.
-- **Inactive tokens:** records contributor, books minimum ETH as **Contribute** (meets charging floor), surplus ETH → `value`; coins above floor → `activeCharge`.
-- **Active tokens:** routes coins/ETH through links (see next section); leftover ETH → owner distribution.
+`chargeToken(tokenId, coins)` and `chargeTokenAs(contributor, tokenId, coins)` (the latter is `nonReentrant`)
+- **Inputs**: coins (base units) and `msg.value` (ETH). If contributor ≠ caller (proxy), call must include at least **one full increment** of ETH: `max(token.incrementalValue, globalMin)`.
+- **Inactive token path**:
+  - Minimum ETH consumed per coin: `minValue = token.incrementalValue × (coins / coinMultiplier)` (rounded down).
+  - Records `minValue` as contributor **value**; excess ETH → token `value`.
+  - If provided coins > minimum coins implied by ETH, surplus coins → `activeCharge`.
+  - Emits `Contribute`, `ContributeValueAs`, `Charge` as applicable.
+- **Active token path**:
+  - If the token has **links**, splits ETH evenly across links; coins are apportioned by `base` efficiency and global **affinity bonus** (below). Each eligible linked target is charged via the **linked** mode (no ERC-20 pull; constraints enforced).
+  - Unused link slices fall back as `activeCharge` on the source. Remaining ETH (not consumed by links) becomes a pending distribution for the source **owner**.
+  - Without links, all coins credit `activeCharge` directly.
 
 ### Activate
-Activation transforms a sufficiently charged token from a pending state into an active one. During activation, the contract processes contributors in batches, migrating `charge` into `activeCharge`, sharing a portion of the token’s `value` with contributors proportionally to their charge, and crediting the owner with the required contribution portion. Once all batches finish, the token’s `active` flag is set.
-`activateToken(tokenId)`
-- Requires `charge ≥ activationThreshold` (or already in progress).  
-- **Batched distribution:** converts `charge → activeCharge`, pays contributors a slice of `value` proportional to their charge, and credits the owner with the “minimum ETH” portion of contributions.  
-- Sets `active = true` on completion.
+`activateToken(tokenId)` (multi-tx)
+- Requires `!active` and `charge ≥ activationThreshold` (or currently `activating`).
+- Runs `_distribute(..., discharge=false)` in pages:
+  - **Contributors** receive ETH **pro-rata** from `distributionValue` according to contributed `charge`.
+  - **Owner** receives the “required contribution” slice (derived from per-coin floors).
+  - `distributionCharge` is moved to **`activeCharge`**.
+- Emits `Activate(tokenId, complete)` on each step; sets `active = true` on completion.
 
 ### Deactivate
-Deactivation is a lightweight operation that turns off an active Digil when it has no remaining `charge`. It requires a minimal ETH payment (the token’s own `incrementalValue`) to proceed, updates activity timestamps, and flips the token’s `active` state to false.
 `deactivateToken(tokenId)`
-- Requires `active == true`, `charge == 0`, and **ETH ≥ token.incrementalValue**.
+- Requires `active == true` and `charge == 0`.
+- Requires `msg.value ≥ token.incrementalValue` (credited to the contract’s pool).
+- Sets `active = false`.
 
 ### Discharge
-Discharge unwinds a token’s state and contributor records. It’s also batched and requires a fee that scales with the number of links. For **inactive** tokens, contributors are refunded their coins and ETH while any remaining `value` goes to the owner. For **active** tokens, contributors receive a pro-rata share of `value` and the owner is credited with the required contribution portion—similar to activation’s distribution phase.
-`dischargeToken(tokenId)`
-- Requires a **per-link scaled ETH** fee.
-- **Batched** reset of contributor records and value distribution:  
-  - If **inactive**: refund each contributor’s coins + ETH; remaining token `value` to owner.  
-  - If **active**: distribute token `value` to contributors (proportional to charge) and credit owner with contributed portion (similar to activation).
+`dischargeToken(tokenId)` (multi-tx; `nonReentrant`)
+- Requires some `charge`/`value` **or** currently `discharging`.
+- Requires `msg.value ≥ max(globalMin, tokenMin) × max(1, linkCount)`.
+- Two modes:
+  - **Inactive token**: contributors are refunded their contributed **coins + ETH**; any remaining token `value` is distributed to the **owner**.
+  - **Active token**: contributors receive a **pro-rata** share of token `value`; the **owner** receives the required contribution portion; **activeCharge is retained**.
+- Clears contributor tallies and arrays in pages; emits `Discharge(tokenId, complete)` updates.
 
 ---
 
 ## Linking & Affinity
-`linkToken(tokenId, linkId, efficiency)`
-- Source must be approved; **destination must have id > 18**. Max **10** links per token.
-- Requires **ETH ≥ (source.incremental + dest.incremental)**, split 50/50 into both tokens’ `value`.
-- If destination is restricted, caller must be whitelisted there.
-- Sets/raises **base efficiency** and computes an **affinity bonus** using each token’s foundational plane (`0..18`), with multipliers for same/strong/weak/ethereal relationships and a balancing adjustment if the destination’s `activeCharge` exceeds the source’s.
-- Charges a **coin fee** that scales with efficiency and current link count.
 
-Active-token charging distributes coins/ETH to each link according to base efficiency and affinity bonus; unconsumed ETH flows to the source owner.
+`linkToken(tokenId, linkId, efficiency)` (`nonReentrant`)
+- Preconditions: `tokenId != linkId`; `linkId > 18` (no links to foundational planes); link count < 10; `efficiency` must strictly improve over current base.
+- **Value**: `msg.value ≥ source.incrementalValue + dest.incrementalValue`; split 50/50 into both tokens’ `value`.
+- **Access**: if destination token is `restricted`, caller must be whitelisted on **destination**.
+- **Affinity bonus**: uses the tokens’ **foundational planes** to compute extra efficiency:
+  - Strong match: `+ 2 × efficiency`; same plane or ethereal source (17–18): `+ 1 ×`; weak match: `+ efficiency / 2`.
+  - Multipliers: ethereal source ×4; energy planes (12–16) or destination `World (18)` ×2.
+  - Balancer: if destination’s `activeCharge` > source’s, **halve** the bonus.
+- **Fees**: coin fee grows with the requested efficiency and current link count (includes a triangular/quadratic term).
 
-`unlinkToken(tokenId, linkId)` removes a link and clears its efficiency parameters.
+`unlinkToken(tokenId, linkId)` removes the relationship and clears its efficiency parameters.
 
 ---
 
 ## Vaulting External ERC-721s
-The contract implements `IERC721Receiver`:
 
-- **Deposit** - Safe-transfer an external NFT to this contract. The contract verifies custody and **mints a new Digil** representing the vaulted NFT (token data is appended to the Digil’s URI as `?account=...&tokenId=...`). The external NFT’s contract address is recorded as the first “contributor” for book-keeping.
-- **Recall** - After distributions mark it recallable, `recallToken(collection, digilId)` safely returns the external NFT to the current Digil owner and credits them the Digil’s `activeCharge` in coins.
+Implements `IERC721Receiver`:
+- **Deposit**: safe-transfer an external NFT to the contract. The contract verifies custody, then **mints a new Digil** to the depositor with `incrementalValue = min-nonzero` and `activationThreshold = 0`. The external collection + tokenId are appended to the Digil’s **URI** as query parameters. The collection address is also recorded as an initial “contributor” marker.
+- **Recall**: when distributions mark the vault **recallable**, `recallToken(collection, digilId)` transfers the external NFT back to the current Digil owner and credits them with the Digil’s **activeCharge** in coins. Any `data` bytes on the Digil are forwarded in the safe transfer.
 
 ---
 
 ## Distributions, Withdrawals & Bonuses
 
-**Where value goes**
-- `_addDistributedValue(addr, value)` splits `value` into a **contract fee** and **user value** (based on `transferValue` vs `incrementalValue`) and mints **bonus coins** per **full** multiples of the global `_incrementalValue`.
+**Crediting value**
+- `_addDistributedValue(addr, value)` splits a value amount into:
+  - **Contract fee** = `value × ( (incrementalValue − transferValue) / incrementalValue )` (applied to the full `value` to avoid integer-division loss).
+  - **User value** = `value − fee`, credited to `addr`.
+- **Bonus coins**: for each **full multiple** of the **global** `_incrementalValue` inside a credited amount, the recipient gets `(_coinRate / 100)` coins (1% of coin rate) per multiple.
 
 **Withdrawals**
-- Call `withdraw()` to claim pending **ETH** and **coins**.
-- **Time bonus:** if you hold any Digil or any Coin balance, you accrue **+1 coin unit every 15 minutes** since your last withdrawal, **capped by `_coinRate` per withdrawal**.
+- `withdraw()` pays out the caller’s pending **ETH** and **coins**. If the caller holds **any** Digil **or** has **any** coin balance, they also accrue a **time bonus** of `+1 coin unit` per **15 minutes** since last withdrawal, **capped at `_coinRate` per call**. If the ERC-20 transfer fails, coins remain pending; ETH always uses a safe native send.
+
+**Admin value creation**
+- `createValue(tokenId, value)` transfers ETH from the contract’s **distribution balance** to a token’s intrinsic `value` (reverts if the contract’s pool is short).
 
 ---
 
 ## Opt-Out / Blacklist
-Users can toggle their status with `setOptStatus(bool)` (fee required: `_incrementalValue * _coinRate / 10^decimals`).  
-Blacklisted addresses cannot receive tokens or interact where blocked. Opt-in is allowed later by calling the same function.
+
+`setOptStatus(bool optOut)` toggles participation. Requires `ETH ≥ (_incrementalValue × _coinRate / coinMultiplier)`. Blacklisted addresses are blocked by guards on transfers, charges, and receiver hooks. Call again with the opposite flag to opt back in. Emits `OptOut`/`OptIn`.
 
 ---
 
 ## Rescue & Recovery
-Owner can `rescueToken(tokenId, to)` when:
-- **Blacklisted owner**, or
-- **Stalled** in a batch op for **≥ 30 days**, or
-- **Inactive** for **≥ 365 days** **and** the token still holds value/charge or unresolved contributions.
 
-Approvals are cleared before/after rescue transfer.
+Owner can `rescueToken(tokenId, to)` if:
+- Current owner **opted out** (blacklisted), or
+- Token is **stalled** mid-batch for ≥ 30 days, or
+- Token is **inactive** for ≥ 365 days **and** still has material state (non-zero `value` or meaningful contributor/charge/increment traces).
+
+Approvals are cleared pre/post rescue. Planar tokens effectively must remain with the admin due to planar transfer rules.
 
 ---
 
 ## Admin & Security Notes
-- **Planar policy:** planar tokens `0..20` are admin-locked and non-burnable; only moved during `transferOwnership` via a temporary window. Token #0 controls the base URI.
-- **Batched ops:** activation/discharge scale to many contributors via `_batchSize` windows; repeated calls progress the operation.
-- **Reentrancy guard:** critical flows are protected.
-- **Approvals on planar tokens:** ignored by design; no third party can operate them.
+
+- **Planar policy**: IDs `0..20` are admin-locked; approvals ignored; non-burnable; short transfer window only during ownership change.
+- **Foundational plane fees at mint** (applies when `plane ∈ [1..18]`):
+  - Void/Karma/Kaos (1–3): **5× coin rate**
+  - Para-elemental (8–11): **1× coin rate**
+  - Energy (12–16): **25× coin rate**
+  - Ethereal (17–18): **100× coin rate**
+- **Metadata updates**: `updateToken` allows changing `uri` and/or `data` if caller sends `ETH ≥ (token.incrementalValue + globalMin)` and pays **1000× coin rate per field** updated. If token has any `charge`, `incrementalValue` and `activationThreshold` are **frozen**. Planar tokens must keep both at **0** and `data.length ≥ 4`.
+- **Batching**: activation/discharge stream contributors in pages; activation uses effectively **double page size** during distribution; progress is evented.
+- **Auto-whitelist on transfer**; **blacklist guards**; **reentrancy** on sensitive paths; **custom errors** for precise failures.
 
 ---
 
 ## How it Works: End-to-End Examples
 
-> The examples use defaults: `_coinRate = 100 * 10^decimals`, `_incrementalValue = 100,000 gwei`, `_transferValue = 95,000 gwei`. Exact numbers vary with your configuration and token settings.
+> The examples below demonstrate common flows with realistic numbers. Adjust coin decimals to your ERC-20 configuration (examples assume 18 decimals).
 
-### 1) Create a token aligned to a Plane
-Alice calls:
-```solidity
+### 1) Create tokens (open vs. restricted) with and without plane alignment
+
+**Open token with custom economics**
+```
 createToken(
-  incrementalValue = 200_000 gwei,   // per-coin ETH floor for this token
-  activationThreshold = 10 * 10^dec, // needs 10 coin units to activate
+  incrementalValue = 200_000 gwei,
+  activationThreshold = 10 * 10^18,
   restricted = false,
-  plane = 12,                        // Harmony
-  data = "ipfs://..."
+  plane = 0,
+  data = "ipfs://token-A"
 )
 ```
-- She pays the **plane fee** (since plane ∈ 12..16, fee = `25 × _coinRate` coins).  
-- Any `msg.value` she sends is added to the token’s `value`.  
-- The token stores a foundational plane link (base efficiency 100).
 
-### 2) Charge an inactive token
-Bob contributes to Alice’s token:
-```solidity
-chargeToken(tokenId, coins = 5 * 10^dec) with msg.value >= 5 × 200_000 gwei
+**Restricted token (invite-only)**
 ```
-- Minimum ETH per coin is enforced.  
-- The “floor” ETH is recorded as **Contribute** (meets charging requirement).  
-- Any **excess ETH** raises the token’s `value`.  
-- `charge` increases by 5 coin units (any extra coins above the floor would go to `activeCharge`).  
-- Bob gets recorded as a **contributor**.
+createToken(
+  incrementalValue = 300_000 gwei,
+  activationThreshold = 5 * 10^18,
+  restricted = true,
+  plane = 0,
+  data = "ipfs://token-B"
+)
+```  
+Send `msg.value >= max(token.incrementalValue, globalMin)` to enable restriction.
 
-### 3) Activate
-Alice calls `activateToken(tokenId)` once `charge ≥ activationThreshold`.  
-- In **batches**, contributors receive slices of the token’s `value` proportional to their charge.  
-- The sum of contributed “floor ETH” is credited to the owner via distribution.  
-- `charge → activeCharge`, and the token becomes **active**.
-
-### 4) Link to another Digil (or extended plane)
-Alice links her active token to Carol’s token (id > 18):
-```solidity
-linkToken(srcId, dstId, efficiency = 120) with msg.value >= src.incremental + dst.incremental
+**Aligned token (energy tier fee @ 25× coin rate)**
 ```
-- The ETH is split 50/50 into both tokens’ `value`.  
-- The link records **base efficiency** and an **affinity bonus** derived from their foundational planes.  
-- A **coin fee** is charged that scales with efficiency and existing link count.
-
-### 5) Charge an active, linked token
-Dana charges Alice’s now-active token:
-```solidity
-chargeToken(tokenId, coins = 3 * 10^dec) with msg.value >= 3 × 200_000 gwei
+createToken(
+  incrementalValue = 150_000 gwei,
+  activationThreshold = 8 * 10^18,
+  restricted = false,
+  plane = 12,              // Harmony
+  data = "ipfs://token-C"
+)
 ```
-- Coins/ETH are **fanned out** across links using each link’s base efficiency and affinity bonus.  
-- If a destination cannot be charged (e.g., restricted), the proportional coins are retained as the source’s `activeCharge`.  
-- Any **leftover ETH** becomes a distribution for Alice (the owner).
 
-### 6) Discharge
-If Alice calls `dischargeToken(tokenId)`:
-- Pays a fee that scales with link count.  
-- In **batches**:
-  - If **inactive**: each contributor gets their coins + ETH back; remaining token `value` goes to owner.  
-  - If **active**: contributors receive token `value` proportional to charge; the “floor ETH” portion accrues to the owner.  
-- Contributor records are reset.
+### 2) Whitelist management (restrict/unrestrict)
 
-### 7) Vault and recall an external NFT
-Eve safe-transfers her ERC-721 to the Digil contract. The contract:
-- Verifies custody, **mints a new Digil**, and appends `?account=<collection>&tokenId=<id>` to the Digil’s URI.
-- Once distributions mark it recallable, Eve (or the Digil owner) calls:
-```solidity
+**Add whitelisted addresses** (enables restriction if not already)
+```
+restrictToken(tokenB, [0xAlice, 0xBob])   // send ETH >= max(tokenB.incremental, globalMin)
+```
+
+**Disable restriction** (open contributions again)
+```
+restrictToken(tokenB, [])
+```
+
+### 3) Charging inactive tokens and proxy charging
+
+**Direct charge (inactive token)**
+```
+chargeToken(tokenA, coins = 5 * 10^18)
+with msg.value >= 5 × tokenA.incrementalValue
+```
+
+**Proxy charge on behalf of Alice**
+```
+chargeTokenAs(0xAlice, tokenA, coins = 3 * 10^18)
+with msg.value >= max(tokenA.incremental, globalMin)   // at least one full increment
+```
+
+- Minimum ETH per coin is accounted as Alice’s contributed value.
+- Excess ETH → tokenA.value; excess coins → tokenA.activeCharge.
+
+### 4) Activate with multiple contributors (batched)
+
+After several charges by Alice and Bob:
+```
+activateToken(tokenA)
+```
+- Runs in pages. Each page:
+  - Pays contributors from `distributionValue` **pro-rata** by their contributed `charge`.
+  - Credits the owner with the required-contribution slice.
+  - Moves `distributionCharge` to `activeCharge`.
+- Emits `Activate(tokenA, false)` while in progress and `Activate(tokenA, true)` when finished.
+
+### 5) Linking and affinity effects
+
+**Create a link with efficiency and value split**
+```
+linkToken(tokenA, tokenC, efficiency = 120)
+with msg.value >= tokenA.incremental + tokenC.incremental
+```
+- ETH is split **50/50** into tokenA.value and tokenC.value.
+- Base efficiency = 120%; affinity bonus derived from planes (e.g., A aligned to 12 Harmony, C aligned to 15 Exergy may gain multipliers).
+- Coin fee scales with efficiency and current link count on tokenA.
+
+**Charge the active, linked source**
+```
+chargeToken(tokenA, coins = 4 * 10^18)
+with msg.value >= 4 × tokenA.incremental
+```
+- ETH splits evenly across A’s links; coins flow per base+bonus.
+- If tokenC is `restricted` and caller not whitelisted there, that slice reverts to tokenA.activeCharge.
+- Residual ETH not consumed by linked charging becomes a distribution for tokenA’s owner.
+
+**Unlink**
+```
+unlinkToken(tokenA, tokenC)
+```
+
+### 6) Discharge (inactive vs active)
+
+**Inactive discharge (refund contributors)**
+```
+dischargeToken(tokenB)
+with msg.value >= max(globalMin, tokenB.incremental) × max(1, tokenB.links.length)
+```
+- Refunds each contributor’s **coins + ETH**.
+- Any remaining tokenB.value is distributed to its owner.
+- Clears contributor arrays in pages; emits `Discharge(..., complete)`.
+
+**Active discharge (settle value; keep activeCharge)**
+```
+dischargeToken(tokenA)
+with msg.value >= max(globalMin, tokenA.incremental) × max(1, tokenA.links.length)
+```
+- Distributes tokenA.value **pro-rata** by contributed charge.
+- Owner receives required-contribution slice.
+- tokenA.activeCharge remains untouched.
+
+### 7) Withdrawals and time bonus
+
+Suppose 0xAlice has pending distributions:
+```
+withdraw()
+```
+- Pays ETH and coins.
+- If Alice holds any Digil or any coin balance, bonus coins accrue at **+1 coin unit per 15 minutes** since her last withdrawal, **capped at `_coinRate` per call**.
+
+### 8) Updating metadata (URI/data) and economic parameters
+
+**Update a token’s URI and data**
+```
+updateToken(
+  tokenA,
+  incrementalValue = tokenA.incrementalValue,      // unchanged
+  activationThreshold = tokenA.activationThreshold,// unchanged
+  data = "0x1234...",
+  uri = "ipfs://new-metadata"
+)
+with msg.value >= (tokenA.incrementalValue + globalMin)
+and coins transferred = 1000×coinRate for URI + 1000×coinRate for data
+```
+- If token has **any charge**, `incrementalValue` and `activationThreshold` cannot change.
+- Planar tokens must keep both zero and `data.length ≥ 4`.
+
+**Reconfigure global knobs (owner-only)**
+```
+configure(coins = 150, incrementalValue = 120_000 gwei, transferValue = 110_000 gwei, batchSize = 400)
+```
+- Re-approves ERC-20 allowance internally and emits `Configure(...)`.
+
+### 9) Opt-out / opt-in and rescue
+
+**Opt-out**
+```
+setOptStatus(true)
+with msg.value >= (_incrementalValue × _coinRate / coinMultiplier)
+```
+- Address becomes blacklisted; transfers/charges guarded.
+
+**Opt-in**
+```
+setOptStatus(false)
+with msg.value >= (_incrementalValue × _coinRate / coinMultiplier)
+```
+
+**Rescue an abandoned token (owner-only)**
+```
+rescueToken(tokenId, to = 0xReceiver)
+```
+- Allowed if the current owner is blacklisted, or the token is **stalled ≥ 30 days**, or **inactive ≥ 365 days** with meaningful state.
+- Approvals are cleared before/after.
+
+### 10) Vaulting and recalling an external NFT
+
+**Deposit external NFT**  
+From the external collection, safe-transfer to this contract:
+```
+ERC721(collection).safeTransferFrom(msg.sender, address(DigilToken), externalTokenId, data)
+```
+- Contract verifies custody, mints a new Digil to you (`activationThreshold = 0`, `incrementalValue = min-nonzero`) and appends `?account=<collection>&tokenId=<id>` to the URI.
+
+**Recall later**
+```
 recallToken(collection, digilId)
 ```
-- The external NFT is safely returned, and the Digil’s `activeCharge` is paid out to the owner in coins.
+- Transfers the external NFT back to the current Digil owner and credits them with the Digil’s **activeCharge** in coins.
 
 ---
 
-## Notes for Integrators
-- Planar tokens are not tradable on marketplaces (admin-locked). User Digils are standard ERC-721s.
-- Bonus coins accrue only when the caller holds **any** Digil or **any** Coin balance.
-- Whitelists are **append-only** (addresses cannot be removed). The recipient of a token is always auto-whitelisted on receipt.
-- Long-running activation/discharge must be **continued** in subsequent txs until completion (watch `Activate(..., complete)` / `Discharge(..., complete)` events).
-
----
-
-© Digil - Dynamic NFTs for programmable value and intent.
+© Digil — Dynamic NFTs for programmable value and intent.
