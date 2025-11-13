@@ -1387,7 +1387,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         The behavior depends on whether the token is active or inactive at the time of discharge.
     ///         - If the token is INACTIVE: Contributions are refunded. The ETH value and coins from each contribution are
     ///           returned directly to the original contributors. Any remaining intrinsic value (`token.value`) in the
-    ///           token is sent to the token's owner.
+    ///           token is sent to the token's owner, less any fees.
     ///         - If the token is ACTIVE: Value is redistributed based on the activation logic. Contributors receive a
     ///           share of the token's intrinsic value proportional to their charge contribution, while the token's owner
     ///           receives the value that was directly contributed to satisfy the charge requirements. Active charge is not affected.
@@ -1474,7 +1474,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Deactivates an active token.
-    ///         Requires the token have zero charge, and a value sent greater than or equal to the token's incremental value.
+    ///         Requires the token have zero charge (activeCharge can be non zero), and a value sent greater than or equal to the token's incremental value.
     /// @param  tokenId The ID of the token to deactivate
     function deactivateToken(uint256 tokenId) external payable approved(tokenId) {
         Token storage t = _tokens[tokenId];
