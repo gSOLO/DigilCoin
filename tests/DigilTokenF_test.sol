@@ -206,7 +206,7 @@ contract FoxtrotTestSuite {
         Assert.equal(value, 0, "Invalid final Source value");
     }
 
-    /// #sender: account-5
+    /// #sender: account-6
     /// #value: 200000000000000
     function testDeactivateToken() external payable {
         uint256 coinMultiplier = 10 ** 18;
