@@ -105,7 +105,7 @@ Owner-only `configure(coins, incrementalValue, transferValue, batchSize)` with c
 - `activating` / `discharging` — multi-tx operation flags.
 - `distributionIndex` — cursor into `contributors[]` for paging.
 - `contributionEpoch` — logical epoch; incrementing this treats all prior `TokenContribution` entries as reset without clearing the mapping.
-- `lastActivity` — updated on meaningful operations; used by rescue logic.
+- `lastActivity` — updated on meaningful operations; used by rescue logic. It is only bumped when an operation actually succeeds (charges, lifecycle transitions, link updates, etc.), so failed calls—including failed linked charges—do not keep a sigil "fresh" for rescue purposes.
 
 **Links & contributors**
 - `links[]` (≤ 10) • `linkEfficiency[linkId].base` and `.affinityBonus` (percent-like integers).
@@ -423,7 +423,7 @@ Additional rules:
 - Approvals are cleared before and after the transfer.
 - Planar tokens are still constrained by planar policy: effectively, they must stay aligned with admin control.
 
-This provides a bounded way for the admin to clean up truly abandoned or stuck sigils while respecting user opt-out status.
+This provides a bounded way for the admin to clean up truly abandoned or stuck sigils while respecting user opt-out status. Because `lastActivity` only advances on successful state changes, repeated failing calls (for example, link-charge attempts that do not meet requirements and revert) cannot be used as a cheap "keep-alive"; only real usage moves the rescue window forward.
 
 ---
 
