@@ -848,11 +848,59 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return restricted Whether the token is restricted.
     /// @return links The number of links associated with the token.
     /// @return contributors The number of contributor addresses.
+    /// @return contributionEpoch The logical epoch for contributions on this token.
     /// @return distributionIndex The current distribution index.
     /// @return data Arbitrary data stored with the token.
-    function tokenData(uint256 tokenId) external view tokenExists(tokenId) returns(bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 distributionIndex, bytes memory data) {
+    function tokenData(uint256 tokenId) external view tokenExists(tokenId) returns(bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data) {
         Token storage t = _tokens[tokenId]; 
-        return (t.active, t.activating, t.discharging, t.restricted, t.links.length, t.contributors.length, t.distributionIndex, t.data);
+        return (t.active, t.activating, t.discharging, t.restricted, t.links.length, t.contributors.length, t.contributionEpoch, t.distributionIndex, t.data);
+    }
+
+    /// @notice Retrieves contribution details for a specific address on a given token.
+    /// @dev    Returns the raw contribution state as currently stored, without mutating it.
+    ///         The returned `epoch` can be compared against the token's current
+    ///         `contributionEpoch` to determine whether this contribution is from the
+    ///         current logical epoch or from a previous one that has been logically reset.
+    ///         Note that this function does not call `_touchContribution`, so the values
+    ///         may represent pre-reset state until a write operation occurs for that contributor.
+    /// @param  tokenId The ID of the token to query.
+    /// @param  contributor The address whose contribution details are being requested.
+    /// @return charge The amount of coin units this address has contributed to the token's charge.
+    /// @return value The amount of native value (in wei) attributed to this contributor on this token.
+    /// @return exists True if a contribution record currently exists for this contributor.
+    /// @return distributed True if this contributor has already been processed in the current distribution epoch.
+    /// @return whitelisted True if this contributor is whitelisted for this token (relevant when the token is restricted).
+    /// @return epoch The logical contribution epoch this record belongs to.
+    function tokenContributionOf(uint256 tokenId, address contributor) external view tokenExists(tokenId) returns (uint256 charge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch) {
+        Token storage t = _tokens[tokenId];
+        TokenContribution storage c = t.contributions[contributor];
+        return (c.charge, c.value, c.exists, c.distributed, c.whitelisted, c.epoch);
+    }
+
+    /// @notice Retrieves link information for a token at a specific index.
+    /// @dev    If the index is out of bounds for the token's `links` array, this
+    ///         function returns zeros for all fields instead of reverting.
+    ///         The returned `base` and `affinityBonus` correspond to the stored
+    ///         `LinkEfficiency` for the given `linkId`, where:
+    ///             - `base` is the base efficiency percentage used for link transfers.
+    ///             - `affinityBonus` is the additional efficiency derived from planar affinity.
+    /// @param  tokenId The ID of the source token whose link is being queried.
+    /// @param  index The zero-based index into the token's `links` array.
+    /// @return linkId The ID of the linked token (or plane) at the given index, or 0 if out of bounds.
+    /// @return base The base efficiency percentage for this link.
+    /// @return affinityBonus The additional affinity-based efficiency for this link.
+    function tokenLinkAt(uint256 tokenId, uint256 index) external view tokenExists(tokenId) returns (uint256 linkId, uint8 base, uint256 affinityBonus)
+    {
+        Token storage t = _tokens[tokenId];
+
+        // If index is out of bounds, return zeros instead of reverting.
+        if (index >= t.links.length) {
+            return (0, 0, 0);
+        }
+
+        linkId = t.links[index];
+        LinkEfficiency storage efficiency = t.linkEfficiency[linkId];
+        return (linkId, efficiency.base, efficiency.affinityBonus);
     }
 
     // Token Creation
@@ -1398,7 +1446,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return True if discharge is complete.
     function dischargeToken(uint256 tokenId) external payable nonReentrant approved(tokenId) returns (bool) {
         Token storage t = _tokens[tokenId];
-        require(t.charge > 0 || t.value > 0 || t.discharging, "DIGIL: Nothing to Discharge");
+        require(t.charge > 0 || t.value > 0 || t.activeCharge > 0 || t.discharging, "DIGIL: Nothing to Discharge");
         require(!t.activating, "DIGIL: Activation In Progress");
         
         // Determine the required minimum value for discharge, scaled by number of links.
