@@ -1474,7 +1474,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Deactivates an active token.
-    ///         Requires the token have zero charge (activeCharge can be non zero), and a value sent greater than or equal to the token's incremental value.
+    ///         Requires the token have zero charge (activeCharge can be non zero),
+    ///         and a value sent greater than or equal to the token's incremental value.
+    ///         The token's activeCharge is reduced by half.
     /// @param  tokenId The ID of the token to deactivate
     function deactivateToken(uint256 tokenId) external payable approved(tokenId) {
         Token storage t = _tokens[tokenId];
@@ -1488,6 +1490,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.lastActivity = block.timestamp;
 
         _addValue(msg.value);
+
+        // Thematic bleed: lose 1 / AFFINITY_REDUCTION of activeCharge on each deactivation.
+        uint256 ac = t.activeCharge;
+        if (ac > 0) {
+            uint256 lost = ac / AFFINITY_REDUCTION;    // e.g. half
+            t.activeCharge = ac - lost;
+            // 'lost' is not credited to anyone. The coins are still held by the contract
+            // (already in its ERC20 balance), but no token tracks them as activeCharge anymore.
+        }
 
         t.active = false;
         emit Deactivate(tokenId);
