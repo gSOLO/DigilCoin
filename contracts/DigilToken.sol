@@ -1383,6 +1383,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Discharges an existing token, processing its contributions and value based on its active state.
+    ///         The token's remaining activeCharge redistributed is into its links.
     /// @dev    This is a multi-step batch operation that may need to be called multiple times to complete.
     ///         The behavior depends on whether the token is active or inactive at the time of discharge.
     ///         - If the token is INACTIVE: Contributions are refunded. The ETH value and coins from each contribution are
@@ -1417,6 +1418,48 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (!distributionComplete) {
             emit Discharge(tokenId, false);
             return false;
+        }
+
+        /// Redistribute this sigil's remaining activeCharge into its links
+        uint256 ac = t.activeCharge;
+        if (ac > 0) {
+            uint256[] storage links = t.links;
+            uint256 linkLength = links.length;
+
+            if (linkLength > 0) {
+                // 1) Sum efficiencies (weights)
+                uint256 sumOfEfficiencies;
+                for (uint256 i = 0; i < linkLength; ++i) {
+                    uint256 lId = links[i];
+                    uint8 baseEfficiency = t.linkEfficiency[lId].base;
+                    if (baseEfficiency > 0) {
+                        sumOfEfficiencies += baseEfficiency;
+                    }
+                }
+
+                // 2) Distribute proportionally to base efficiency
+                if (sumOfEfficiencies > 0) {
+                    for (uint256 i = 0; i < linkLength; ++i) {
+                        uint256 linkId = links[i];
+                        uint8 baseEfficiency = t.linkEfficiency[linkId].base;
+                        if (baseEfficiency == 0) continue;
+
+                        uint256 share = (ac * baseEfficiency) / sumOfEfficiencies;
+                        if (share == 0) continue;
+
+                        Token storage linkedToken = _tokens[linkId];
+                        linkedToken.activeCharge += share;
+
+                        emit ActiveCharge(linkId, share);
+                    }
+
+                    // Any rounding remainder (from integer division) is implicitly lost,
+                    // remaining as untracked power in the contract balance.
+                }
+            }
+
+            // Clear the original token's active charge.
+            t.activeCharge = 0;
         }
 
         // At this point, all contributions for the current epoch have been fully processed.
