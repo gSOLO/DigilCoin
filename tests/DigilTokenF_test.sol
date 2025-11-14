@@ -205,4 +205,39 @@ contract FoxtrotTestSuite {
         Assert.equal(activeCharge, 0, "Invalid final Source active charge");
         Assert.equal(value, 0, "Invalid final Source value");
     }
+
+    /// #sender: account-5
+    /// #value: 200000000000000
+    function testDeactivateToken() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        uint256 incrementalValue = 100000000000000;
+
+        uint256 tokenId = digil.createToken(incrementalValue, 0, false, 4, "Deactivate Test");
+
+        // Charge the token
+        bool approved = coins.approve(address(digil), coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+        digil.chargeToken{value: 100000000000000}(tokenId, coinMultiplier);
+
+        // Verify charge
+        (uint256 charge, uint256 activeCharge, , , ) = digil.tokenCharge(tokenId);
+        Assert.equal(charge, 1 * coinMultiplier, "Invalid initial charge");
+        Assert.equal(activeCharge, 0, "Invalid initial active charge");
+    
+        // Activate the token
+        digil.activateToken(tokenId);
+
+        // Verify charge
+        (charge, activeCharge, , , ) = digil.tokenCharge(tokenId);
+        Assert.equal(charge, 0, "Invalid new charge");
+        Assert.equal(activeCharge, 1 * coinMultiplier, "Invalid new active charge");
+        
+        // Deactivate the token
+        digil.deactivateToken{value: incrementalValue}(tokenId);
+
+        // Verify charge
+        (charge, activeCharge, , , ) = digil.tokenCharge(tokenId);
+        Assert.equal(charge, 0, "Invalid final charge");
+        Assert.equal(activeCharge, coinMultiplier / 2, "Invalid final active charge");
+    }
 }
