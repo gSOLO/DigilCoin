@@ -81,7 +81,7 @@ contract DeltaTestSuite {
 
     /// #sender: account-3
     /// #value: 3000000000000000000
-    function testDischargeTokenPartOne() external payable {
+    function testChargeTokenPartOne() external payable {
         uint256 coinMultiplier = 10 ** 18;
         uint256 incrementalValue = 100000000000000;
 
@@ -101,7 +101,7 @@ contract DeltaTestSuite {
 
     /// #sender: account-3
     /// #value: 3000000000000000000
-    function testDischargeTokenPartTwo() external payable {
+    function testChargeTokenPartTwo() external payable {
         uint256 coinMultiplier = 10 ** 18;
         uint256 incrementalValue = 100000000000000;
 
@@ -119,7 +119,7 @@ contract DeltaTestSuite {
 
     /// #sender: account-3
     /// #value: 3000000000000000000
-    function testDischargeTokenPartThree() external payable {
+    function testChargeTokenPartThree() external payable {
         uint256 coinMultiplier = 10 ** 18;
         uint256 incrementalValue = 100000000000000;
 
@@ -137,7 +137,7 @@ contract DeltaTestSuite {
 
     /// #sender: account-3
     /// #value: 3000000000000000000
-    function testDischargeTokenPartFour() external payable {
+    function testDischargeToken() external payable {
         uint256 incrementalValue = 100000000000000;
 
         bool dischargeComplete = digil.dischargeToken{value: incrementalValue}(dischargeTokenId);
@@ -145,7 +145,8 @@ contract DeltaTestSuite {
             dischargeComplete = digil.dischargeToken{value: incrementalValue}(dischargeTokenId);
         }
 
-        (, , , , , , uint256 distributionIndex, ) = digil.tokenData(dischargeTokenId);
+        (, , , , , , uint256 contributionEpoch, uint256 distributionIndex, ) = digil.tokenData(dischargeTokenId);
+        Assert.equal(contributionEpoch, 1, "Token contribution epoch in invalid state != 1");
         Assert.ok(distributionIndex == 0, "Token distribution in invalid state > 0");
 
         (uint256 finalCharge, , uint256 finalValue, , ) = digil.tokenCharge(dischargeTokenId);

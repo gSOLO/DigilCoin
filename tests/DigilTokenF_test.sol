@@ -107,18 +107,18 @@ contract FoxtrotTestSuite {
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
         Assert.ok(newValue == 0, "Token value should not increase");
 
-        (bool isActive, bool isActivating, bool isDischarging, , , , , ) = digil.tokenData(activeTokenId);
+        (bool isActive, bool isActivating, bool isDischarging, , , , , , ) = digil.tokenData(activeTokenId);
         Assert.ok(!isActive, "Token activation in invalid state (active)");
         Assert.ok(!isActivating, "Token activation in invalid state (activating)");
         Assert.ok(!isDischarging, "Token distribution in invalid state (discharging)");
 
         bool activationComplete = digil.activateToken(activeTokenId);
         while(!activationComplete) {
-            (, isActivating, , , , , , ) = digil.tokenData(activeTokenId);
+            (, isActivating, , , , , , , ) = digil.tokenData(activeTokenId);
             Assert.ok(isActivating, "Token activation in invalid state (not activating)");
             activationComplete = digil.activateToken(activeTokenId);
         }
-        (isActive, isActivating, , , , , , ) = digil.tokenData(activeTokenId);
+        (isActive, isActivating, , , , , , , ) = digil.tokenData(activeTokenId);
         Assert.ok(isActive, "Token activation in invalid state (active == false)");
         Assert.ok(!isActivating, "Token activation in invalid state (activating)");
 
@@ -137,7 +137,7 @@ contract FoxtrotTestSuite {
         bool approved = coins.approve(address(digil), 9694 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        (, , , , uint256 links, , , ) = digil.tokenData(activeTokenId);
+        (, , , , uint256 links, , , , ) = digil.tokenData(activeTokenId);
         Assert.equal(links, 0, "Invalid Link Count (!=0)");
         (uint256 charge, uint256 activeCharge, uint256 value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid initial Source charge");
@@ -150,7 +150,7 @@ contract FoxtrotTestSuite {
         uint256 waterTokenId = digil.createToken(0, 0, false, 7, "Water Destination Plane");
 
         digil.linkToken{value: 100000000000000}(activeTokenId, fireTokenId, 10);
-        (, , , , links, , , ) = digil.tokenData(activeTokenId);
+        (, , , , links, , , , ) = digil.tokenData(activeTokenId);
         Assert.equal(links, 1, "Invalid Link Count (!=1)");
         (charge, activeCharge, value, , ) = digil.tokenCharge(fireTokenId);
         Assert.equal(charge, 0, "Invalid initial Fire Destination charge");
@@ -158,7 +158,7 @@ contract FoxtrotTestSuite {
         Assert.equal(value, 50000000000000, "Invalid initial Fire Destination value");
         
         digil.linkToken{value: 100000000000000}(activeTokenId, airTokenId, 20);                            
-        (, , , , links, , , ) = digil.tokenData(activeTokenId);
+        (, , , , links, , , , ) = digil.tokenData(activeTokenId);
         Assert.equal(links, 2, "Invalid Link Count (!=2)");
         (charge, activeCharge, value, , ) = digil.tokenCharge(airTokenId);
         Assert.equal(charge, 0, "Invalid initial Air Destination charge");
@@ -166,7 +166,7 @@ contract FoxtrotTestSuite {
         Assert.equal(value, 50000000000000, "Invalid initial Air Destination value");
 
         digil.linkToken{value: 200000000000000}(activeTokenId, earthTokenId, 5);  
-        (, , , , links, , , ) = digil.tokenData(activeTokenId);
+        (, , , , links, , , , ) = digil.tokenData(activeTokenId);
         Assert.equal(links, 3, "Invalid Link Count (!=3)");
         (charge, activeCharge, value, , ) = digil.tokenCharge(earthTokenId);
         Assert.equal(charge, 0, "Invalid initial Earth Destination charge");
@@ -174,7 +174,7 @@ contract FoxtrotTestSuite {
         Assert.equal(value, 100000000000000, "Invalid initial Earth Destination value");
 
         digil.linkToken{value: 100000000000000}(activeTokenId, waterTokenId, 5);                         
-        (, , , , links, , , ) = digil.tokenData(activeTokenId);
+        (, , , , links, , , , ) = digil.tokenData(activeTokenId);
         Assert.equal(links, 4, "Invalid Link Count (!=4)");
         (charge, activeCharge, value, , ) = digil.tokenCharge(waterTokenId);
         Assert.equal(charge, 0, "Invalid initial Water Destination charge");
