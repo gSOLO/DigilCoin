@@ -3,7 +3,7 @@ The Web3 Layer of the [Digil Project](https://digil.app)
 **Website**: [digil.co.in](https://digil.co.in)
 
 ## What is a Digil?
-A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrinsic value (ETH)** and accumulate **energy (ERC-20 “coins”)**. Owners and contributors can **charge**, **activate**, **link**, **deactivate**, and **discharge** Digils; the contract fairly tracks and redistributes ETH/coins using on-chain rules and events. Conceptually, a Digil behaves like a **rechargeable node** that can power neighboring nodes when linked.
+A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrinsic value (ETH)** and accumulate **energy (ERC-20 “coins”)**. Owners and contributors can **charge**, **activate**, **link**, **buff**, **deactivate**, and **discharge** Digils; the contract fairly tracks and redistributes ETH/coins using on-chain rules and events. Conceptually, a Digil behaves like a **rechargeable node** that can power neighboring nodes when linked.
 
 > A sigil is a type of symbol used in magic. In modern usage, especially in the context of chaos magic, sigil refers to a symbolic representation of the practitioner's desired outcome.<sup>[?](https://en.wikipedia.org/wiki/Sigil)</sup>
 
@@ -20,7 +20,9 @@ A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrin
   - [Activate](#activate)
   - [Deactivate](#deactivate)
   - [Discharge](#discharge)
+- [Read-Only Views](#read-only-views)
 - [Linking & Affinity](#linking--affinity)
+  - [Temporary Link Buffs](#temporary-link-buffs)
 - [Vaulting External ERC-721s](#vaulting-external-erc-721s)
 - [Distributions, Withdrawals & Bonuses](#distributions-withdrawals--bonuses)
 - [Opt-Out / Blacklist](#opt-out--blacklist)
@@ -43,7 +45,7 @@ Used for **charge units**, feature fees (linking, metadata updates, opt-out), an
 Implements core NFT logic plus:
 - **Economics**: per-token `charge`, `activeCharge`, and ETH `value`; per-address contribution ledgers; pending distributions.
 - **Batched workflows**: `activateToken`, `dischargeToken` process contributors in pages using `distributionIndex` and a configurable `_batchSize`.
-- **Link graph**: up to 10 links per token with `LinkEfficiency { base %, affinityBonus }` and plane-driven bonuses.
+- **Link graph**: up to 10 links per token with `LinkEfficiency { base %, affinityBonus }`, optional **temporary link buffs**, and plane-driven bonuses.
 - **Vaulting**: accepts external ERC-721s via `onERC721Received` and exposes `recallToken`.
 - **Access & safety**: blacklist gating; planar invariants; `nonReentrant` on sensitive paths; robust event surface; custom errors.
 
@@ -79,7 +81,7 @@ Owner-only `configure(coins, incrementalValue, transferValue, batchSize)` with c
 - `_transferValue ∈ [0.9, 1.0] × _incrementalValue`
 - `_batchSize > 0`
 
-**Constants**
+**Core constants**
 - `BONUS_INTERVAL = 15 minutes` → withdraw time bonus step
 - `VALUE_MULTIPLIER = 1000 gwei`
 - `PLANAR_MAX_ID = 18`, `PLANAR_TRANSFER_MAX_ID = 20`
@@ -87,7 +89,12 @@ Owner-only `configure(coins, incrementalValue, transferValue, batchSize)` with c
 - Rescue windows: `STALLED_TIMEOUT = 30 days`, `INACTIVITY_PERIOD = 365 days`
 - Affinity helpers: `AFFINITY_BOOST = 2`, `AFFINITY_REDUCTION = 2`
 
-**Why it matters**: these dials shape costs (fees), minimum ETH coupling per coin, payout fairness, and throughput of batch operations.
+**Link buff configuration**
+- `MAX_LINK_BUFF_BONUS = 100` — cap on temporary bonus applied to outgoing links (percentage points).
+- `MAX_LINK_BUFF_DURATION_MIN = 24 × 60` — maximum buff duration (24 hours, in minutes).
+- `LINK_BUFF_COST_FACTOR = 24 × 60` — calibration constant for buff pricing in terms of `activeCharge`.
+
+These dials collectively shape costs (fees), minimum ETH coupling per coin, payout fairness, throughput of batch operations, and the economics of short-lived **link buffs**.
 
 ---
 
@@ -96,7 +103,7 @@ Owner-only `configure(coins, incrementalValue, transferValue, batchSize)` with c
 **Economics**
 - `charge` — pre-activation coins (base units); grows via `chargeToken/As` on inactive tokens.
 - `distributionCharge` / `distributionValue` — snapshots used when a distribution is in progress.
-- `activeCharge` — post-activation working coins; also accrues from link inflows and some overpay scenarios.
+- `activeCharge` — post-activation working coins; also accrues from link inflows, some overpay scenarios, and is **spent** by link buffing.
 - `value` — intrinsic ETH the token holds.
 - `incrementalValue` — per-coin ETH requirement for *this* token (can be 0 but must be ≥ global min if set).
 - `activationThreshold` — required coins to allow activation.
@@ -105,10 +112,11 @@ Owner-only `configure(coins, incrementalValue, transferValue, batchSize)` with c
 - `activating` / `discharging` — multi-tx operation flags.
 - `distributionIndex` — cursor into `contributors[]` for paging.
 - `contributionEpoch` — logical epoch; incrementing this treats all prior `TokenContribution` entries as reset without clearing the mapping.
-- `lastActivity` — updated on meaningful operations; used by rescue logic. It is only bumped when an operation actually succeeds (charges, lifecycle transitions, link updates, etc.), so failed calls—including failed linked charges—do not keep a sigil "fresh" for rescue purposes.
+- `lastActivity` — updated on meaningful operations; used by rescue logic. It is only bumped when an operation actually succeeds (charges, lifecycle transitions, link updates, buffing, etc.), so failed calls—including failed linked charges—do not keep a sigil "fresh" for rescue purposes.
 
 **Links & contributors**
 - `links[]` (≤ 10) • `linkEfficiency[linkId].base` and `.affinityBonus` (percent-like integers).
+- `linkBuff { bonus, expiresAt }` — optional **temporary buff** applied to all outgoing links from this token; affects effective link efficiency while active.
 - `contributors[]` plus per-address  
   `TokenContribution { charge, value, epoch, exists, distributed, whitelisted }`.
 
@@ -116,7 +124,7 @@ Owner-only `configure(coins, incrementalValue, transferValue, batchSize)` with c
 - `data` (bytes) and `uri` (string). Planar tokens require `data.length ≥ 4` to preserve the affinity codec.
 - `active` and `restricted`. New owners are **auto-whitelisted** for the token.
 
-This is a **mini-ledger** per token: balances, connections, contributors, and progress cursors for safe, resumable payouts and resets.
+This is a **mini-ledger** per token: balances, connections (including temporary buffs), contributors, and progress cursors for safe, resumable payouts and resets.
 
 ---
 
@@ -151,13 +159,14 @@ High-level: **Create** → **Charge** → **Activate**. Later: **Deactivate** an
 - **Active token path** (active charging):
   - If the token has **no links**, all coins (plus any `activeCoins` used in linked paths) credit `activeCharge`.
   - If the token **has links**:
-    - ETH is split evenly across links: each link slice has `linkedValue = value / links.length`.
+    - ETH is evenly split across the links.
     - Coins are apportioned per link by:
-      - `linkedCoins = (coins × baseEfficiency) / links.length / 100`
+      - `linkedCoins = (coins × effectiveBaseEfficiency) / links.length / 100`
       - `bonusCoins = (coins × affinityBonus) / 100`
+    - Here, `effectiveBaseEfficiency` is the link’s base efficiency **plus any active buff bonus**, capped at 255.
     - For each link, `_chargeToken` runs in **link mode**, which:
       - Does **not** pull ERC-20 from the contributor.
-      - Still enforces restriction/whitelist and minimum ETH/coin logic.
+      - Still enforces restriction/whitelist and minimum ETH/coin logic, and may also use the source’s `activeCoins` when charging via links.
     - If a target link cannot be charged (fails checks), its slice of coins falls back into the source’s `activeCharge`.
     - Unused ETH after linked charging becomes a pending distribution for the source **owner**.
 
@@ -165,7 +174,7 @@ High-level: **Create** → **Charge** → **Activate**. Later: **Deactivate** an
 
 `activateToken(tokenId)` (multi-tx)
 
-- Requires `active == false` and either `charge >= activationThreshold` or the token is already in `activating` mode.
+- Requires `active == false` and either `charge ≥ activationThreshold` or the token is already in `activating` mode.
 - Also requires `!discharging`.
 - Internally calls `_distribute(tokenId, discharge=false)` in batches:
   - For each contributor:
@@ -174,8 +183,8 @@ High-level: **Create** → **Charge** → **Activate**. Later: **Deactivate** an
     - Their original contributed ETH (`contribution.value`) is accumulated into a pool `distribution`.
   - After all contributors:
     - `distributionCharge` is moved to `activeCharge`.
-    - The owner receives `distribution` via `_addDistributedValue(owner, distribution)`.
-    - Any remaining token `value` (if any) is absorbed by the contract pool via `_addValue(tValue)`.
+    - The owner receives `distribution`.
+    - Any leftover `token.value` (if any) is absorbed by the contract pool via `_addValue(tValue)`.
 - Emits `Activate(tokenId, false)` while in progress and `Activate(tokenId, true)` on completion.
 - The token is then marked `active = true`, and `activating = false`.
 
@@ -202,7 +211,7 @@ This models the idea that **turning a sigil off** leaks some of its power back i
 `dischargeToken(tokenId)` (multi-tx; `nonReentrant`)
 
 - Requires there is something meaningful to discharge:  
-  `t.charge > 0 || t.value > 0 || t.discharging == true`.
+  `t.charge > 0 || t.value > 0 || t.activeCharge > 0 || t.discharging == true`.
 - Requires `!activating`.
 - Requires `msg.value ≥ max(globalMin, token.incrementalValue) × max(1, links.length)`.  
   This scales the discharge cost with link complexity.
@@ -220,8 +229,8 @@ Two main modes:
 
 2. **Active token discharge** (`active == true` → `discharge = false`)
    - The `_distribute` call behaves similarly to activation:
-     - Contributors receive a **pro-rata share** of token `value` via `_addDistributedValue(contributor, distributableTokenValue)`.
-     - The owner receives the pool of required-contribution ETH (`distribution`) via `_addDistributedValue(owner, distribution)`.
+     - Contributors receive a pro-rata share of token `value` via `_addDistributedValue(contributor, distributableTokenValue)`.
+     - The owner receives the “required contribution” slice.
      - `distributionCharge` is added to `activeCharge`.
      - Any remaining `t.value` goes to the contract pool via `_addValue(tValue)`.
    - After this **value settlement**, the token still has `activeCharge`—but it is now treated as **surplus power to be pushed outward**.
@@ -233,7 +242,7 @@ After `_distribute` completes in either mode:
   - `contributionEpoch` is incremented. Any future interaction with an existing `TokenContribution` mapping entry will logically see a “fresh” state, avoiding double-counting old contributions.
 - If a contract token is attached (`contractTokenAddress != 0`) and still present, it becomes **non-recallable** and its address is reinserted as a placeholder contributor for future epochs.
 
-Finally, for **both active and inactive tokens**, any remaining `activeCharge` on the discharged token is **redistributed into its links**:
+Then, for **both active and inactive tokens**, any remaining `activeCharge` on the discharged token is **redistributed into its links**:
 
 - Let `ac = t.activeCharge`. If `ac > 0` and there are links:
   - Sum all linked base efficiencies:  
@@ -245,9 +254,108 @@ Finally, for **both active and inactive tokens**, any remaining `activeCharge` o
   - Any rounding remainder from integer division is effectively **lost** as dust.
 - The original token’s `activeCharge` is then set to **0**.
 
-You can read this as: **discharging a sigil pushes its remaining power outward along its link graph**, weighted by link efficiency.
+Finally:
 
-On completion, `discharging = false` and `Discharge(tokenId, true)` is emitted.
+- Any active **link buff** on the discharged token is cleared:
+  - `linkBuff.bonus = 0`
+  - `linkBuff.expiresAt = 0`
+
+You can read this as: **discharging a sigil settles value, pushes its remaining power outward along its link graph based on base efficiencies, and wipes any temporary buff state**. On completion, `discharging = false` and `Discharge(tokenId, true)` is emitted.
+
+---
+
+## Read-Only Views
+
+Several view functions expose token state for off-chain UIs, analytics, or game logic. They do **not** modify state.
+
+### `tokenCharge(tokenId)`
+
+Returns the core economic state of a token:
+
+```solidity
+(
+  uint256 charge,
+  uint256 activeCharge,
+  uint256 value,
+  uint256 incrementalValue,
+  uint256 activationThreshold
+)
+```
+
+Use this to show a sigil’s current **stored energy**, working **activeCharge**, intrinsic **ETH value**, and its economic parameters.
+
+### `tokenData(tokenId)`
+
+Returns high-level lifecycle and bookkeeping state:
+
+```solidity
+(
+  bool    active,
+  bool    activating,
+  bool    discharging,
+  bool    restricted,
+  uint256 links,
+  uint256 contributors,
+  uint256 contributionEpoch,
+  uint256 distributionIndex,
+  bytes   data
+)
+```
+
+- `links` and `contributors` are **counts**, not arrays.
+- `contributionEpoch` can be compared against `tokenContributionOf(...).epoch` to see if a contribution record belongs to the current epoch.
+- `distributionIndex` reveals whether a **batch operation is in progress** and how far along it is.
+- `data` is arbitrary bytes (planar IDs 0–20 encode affinity data here).
+
+### `tokenContributionOf(tokenId, contributor)`
+
+Returns raw per-address contribution data:
+
+```solidity
+(
+  uint256 charge,
+  uint256 value,
+  bool    exists,
+  bool    distributed,
+  bool    whitelisted,
+  uint256 epoch
+)
+```
+
+Notes:
+
+- This function is **read-only** and does **not** call the internal `_touchContribution` helper, so it may show pre-reset values from an older epoch.
+- To interpret safely:
+  - Compare `epoch` with `tokenData(tokenId).contributionEpoch`.
+  - If they differ, the contribution is from a **previous logical round** and is effectively stale, even if values are non-zero.
+- `distributed` indicates whether this contributor has already been processed in the current distribution/discharge cycle.
+- `whitelisted` is preserved across epochs and controls access for restricted tokens.
+
+### `tokenLinkAt(tokenId, index)`
+
+Returns link data for a given source token and index in its `links[]` array:
+
+```solidity
+(
+  uint256 linkId,
+  uint8   base,
+  uint256 affinityBonus,
+  uint8   buffBonus,
+  uint64  buffExpiresAt,
+  uint256 effectiveBase
+)
+```
+
+- If `index` is out of range, all fields are `0`.
+- `base` and `affinityBonus` are the **stored** efficiency parameters.
+- `buffBonus` / `buffExpiresAt` reflect the **shared link buff state** on the source token:
+  - `buffBonus` is the temporary bonus added to each link’s base (0–100).
+  - `buffExpiresAt` is a Unix timestamp in seconds; `0` if no buff active.
+- `effectiveBase` is the **actual efficiency** used right now for that link:
+  - When a buff is active: `effectiveBase ≈ min(base + buffBonus, 255)`.
+  - After expiry or without buff: `effectiveBase = base`.
+
+This makes it easy for UIs to show whether a token is currently buffed, when the buff expires, and what real effectiveness each link is operating at.
 
 ---
 
@@ -283,11 +391,87 @@ On completion, `discharging = false` and `Discharge(tokenId, true)` is emitted.
 - Fees:
   - Additional coin fee scales with requested `efficiency` and the link count.
   - Uses a small triangular/quadratic term to keep ultra-high efficiencies expensive.
+- Buff-aware behavior:
+  - If a **link buff** is currently active on the source token, creating a **new link** will also burn extra `activeCharge` proportional to the remaining buff duration (see [Temporary Link Buffs](#temporary-link-buffs)).
 
 `unlinkToken(tokenId, linkId)`:
 
 - Clears `linkEfficiency[linkId]` and removes `linkId` from the `links[]` array by swap-and-pop.
 - Emits `Unlink(tokenId, linkId)`.
+
+### Temporary Link Buffs
+
+`buffLinks(tokenId, bonus, duration)` (`nonReentrant`)
+
+This function lets the owner **temporarily boost all outgoing links** from an active token, spending `activeCharge` to increase link effectiveness for a limited time.
+
+**Inputs**
+
+- `tokenId` — the source sigil whose outgoing links will be buffed.
+- `bonus` — additional effectiveness added to each link’s base (0–100).
+- `duration` — buff duration in **minutes**, up to 1440 (24 hours).
+
+**Preconditions**
+
+- Token must be **active**.
+- Token must have at least **one link**.
+- `bonus` must be in `(0, MAX_LINK_BUFF_BONUS]`.
+- `duration` must be in `(0, MAX_LINK_BUFF_DURATION_MIN]`.
+- Token must have enough `activeCharge` to pay the cost; otherwise it reverts with `InsufficientActiveCharge`.
+
+**Cost model**
+
+The buff cost is computed in **coin units** and paid entirely from `activeCharge`:
+
+```text
+cost = bonus × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
+```
+
+- `linkCount` is the number of outgoing links on the source token.
+- `LINK_BUFF_COST_FACTOR = 24 × 60` is chosen so that:
+  - Buffs that are strong and/or long and/or on many links become significantly expensive.
+  - Very short or weak buffs are cheaper.
+- Any **non-zero buff** is clamped to a minimum cost of `_coinRate`, so buffs are never effectively free.
+
+**Effects**
+
+- If the token’s `activeCharge` is **less than** `cost`, the call reverts with `InsufficientActiveCharge(cost)`.
+- Otherwise:
+  - `activeCharge` is reduced by `cost`.
+  - `linkBuff.bonus = bonus`.
+  - `linkBuff.expiresAt = block.timestamp + duration * 60`.
+  - Emits `LinkBuff(tokenId, bonus, duration)`.
+
+During the buff window:
+
+- For any link from this token, the **effective base efficiency** is computed as:
+
+  ```text
+  effectiveBase = min(base + buffBonus, 255)
+  ```
+
+  (as long as `buffBonus > 0` and `block.timestamp < buffExpiresAt`).
+
+- This `effectiveBase` is what drives `linkedCoins` in active charging:
+  - More coins will be routed into linked tokens (relative to the unbuffed state).
+- The affinity bonus is **unchanged**; buffs only affect the base portion.
+
+When the buff expires:
+
+- `effectiveBase` automatically falls back to `base`.
+- Buff state is visible via `tokenLinkAt` (`buffBonus` and `buffExpiresAt`).
+- The buff is **explicitly cleared** (bonus/expiresAt set to 0) when:
+  - `dischargeToken` fully completes for that token, or
+  - A new buff overwrites the old one.
+
+**New links during a buff**
+
+If you call `linkToken` to add **another link** while a buff is active:
+
+- The contract charges an additional **per-link buff cost** based on the remaining buff duration:
+  - Remaining time is computed in whole minutes (minimum 1).
+  - Cost is `buffCost(bonus, remainingMinutes, linkCount = 1)`.
+- This ensures that adding new links during an ongoing buff properly **pays into** the buffed state, rather than getting a free ride.
 
 ---
 
@@ -377,7 +561,7 @@ i.e. 1% of the coin rate per full increment.
   - For each `BONUS_INTERVAL` since the last withdrawal, +`coinMultiplier` coins.
   - Capped at `_coinRate` per withdrawal call.
 
-This structure allows the contract’s internal fee pool and “lost” power to fuel long-term participant bonuses.
+This structure allows the contract’s internal fee pool and “lost” power (from bleeds and rounding dust) to fuel long-term participant bonuses.
 
 ### Admin value creation
 
@@ -454,6 +638,10 @@ This provides a bounded way for the admin to clean up truly abandoned or stuck s
   - Transfers auto-whitelist the new owner on that token.
   - Sensitive functions are `nonReentrant`.
   - Custom errors convey precise failure reasons.
+- **Link buffs**:
+  - Temporarily increase link effectiveness at the cost of `activeCharge`.
+  - Buff state is global per source token (applies to all outgoing links), visible via `tokenLinkAt`.
+  - Buffs are time-limited, cost scales with **bonus**, **duration**, and **linkCount**, and they are cleared on full discharge.
 
 ---
 
@@ -472,7 +660,7 @@ createToken(
   restricted            = false,
   plane                 = 0,
   data                  = "ipfs://token-A"
-)
+);
 ```
 
 **Restricted token (invite-only)**
@@ -484,7 +672,7 @@ createToken(
   restricted            = true,
   plane                 = 0,
   data                  = "ipfs://token-B"
-)
+);
 // send msg.value >= max(tokenB.incrementalValue, globalMin)
 ```
 
@@ -497,7 +685,7 @@ createToken(
   restricted            = false,
   plane                 = 12,              // Harmony
   data                  = "ipfs://token-C"
-)
+);
 ```
 
 ### 2) Whitelist management (restrict/unrestrict)
@@ -583,7 +771,7 @@ chargeToken(tokenA, coins = 4 * 10**18);
 
 - If `tokenA` has links and is active:
   - ETH is evenly split across the links.
-  - Each link receives coins based on `base` and `affinityBonus`.
+  - Each link receives coins based on **effectiveBase** (base + buff, if any) and `affinityBonus`.
   - If a target link is restricted and the caller isn’t whitelisted there, that slice fails and its coins fall back to `tokenA.activeCharge`.
 - Remaining ETH (not consumed by linked charging) becomes a distribution to `ownerOf(tokenA)` via `_addDistributedValue`.
 
@@ -622,6 +810,7 @@ dischargeToken(tokenB);
 - Contributors get **all** of their contributed ETH and coins back.
 - Any remaining `tokenB.value` is paid to the owner (less implicit contract fees).
 - `contributors[]` is cleared and `contributionEpoch` increments, so old contributions are logically reset.
+- Any active link buff on `tokenB` is cleared as part of the discharge completion.
 
 **Active discharge (settle value + push power into links)**
 
@@ -637,6 +826,7 @@ dischargeToken(tokenA);
   - Remaining `tokenA.value` is taken as a contract fee.
 - Then any remaining `tokenA.activeCharge` is redistributed to linked tokens weighted by their base efficiencies.
 - `tokenA.activeCharge` is set to 0; `contributors[]` cleared; `contributionEpoch` increments.
+- Any active link buff on `tokenA` is cleared at the end of the discharge.
 
 ### 8) Withdrawals and time bonus
 
@@ -735,6 +925,44 @@ When `dischargeToken(tokenX)` finishes its `_distribute` phase and reaches the r
 The total assigned is `16 + 33 + 50 = 99`; 1 unit is lost as rounding dust. `tokenX.activeCharge` becomes 0. Each of Y, Z, and W fires an `ActiveCharge` event with its assigned share.
 
 From a lore standpoint, **discharging X sends a wave of power along its links**, strengthening its neighbors in proportion to how strong those links are.
+
+### 12) Temporarily buffing links (example)
+
+Assume:
+
+- `tokenA` is active with `activeCharge = 1000 * _coinRate`.
+- `tokenA.links.length = 4`.
+- You want a moderate buff: `bonus = 30` (i.e., +30 percentage points), for `duration = 60` minutes.
+
+Calling:
+
+```solidity
+buffLinks(
+  tokenId  = tokenA,
+  bonus    = 30,
+  duration = 60        // minutes
+);
+```
+
+Cost is:
+
+```text
+cost = bonus × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
+     = 30 × 60 × 4 × _coinRate / (24 × 60)
+     = (30 × 4 / 24) × _coinRate
+     = 5 × _coinRate
+```
+
+So:
+
+- `tokenA.activeCharge` is reduced by `5 × _coinRate`.
+- All outgoing links temporarily use `effectiveBase = min(base + 30, 255)` when routing coins.
+- `tokenLinkAt(tokenA, i)` will show:
+  - `buffBonus = 30`
+  - `buffExpiresAt ≈ now + 3600 seconds`
+  - `effectiveBase` reflecting the buff.
+
+Subsequent `chargeToken(tokenA, ...)` calls during this hour will route **more coins into linked tokens** than they would without the buff, at the cost of having burned some of `tokenA`’s active power up front.
 
 ---
 
