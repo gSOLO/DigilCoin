@@ -783,7 +783,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Recalls an external contract token attached to a Digil token.
     ///         The token the contract token is attached to must have been activated.
-    ///         The active charge of the contract token is distributed to the owner. 
+    ///         The token's activeCharge is reduced by half. 
     /// @param  account The address of the external ERC721 contract.
     /// @param  tokenId The internal Digil token ID whose attached contract token is to be recalled.
     function recallToken(address account, uint256 tokenId) external nonReentrant approved(tokenId) {
@@ -805,11 +805,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         address owner = ownerOf(tokenId);
 
-        uint256 activeCharge = t.activeCharge;
-        t.activeCharge = 0;
-
-        // Distribute the active charge to the owner as coins.
-        _addValue(owner, 0, activeCharge);
+        // Thematic bleed: lose 1 / AFFINITY_REDUCTION of activeCharge when recalled.
+        _applyActiveChargeBleed(t);
 
         // --- Interaction: external call happens after state updates ---
         // Safely transfer the external ERC721 token back to the current owner of the Digil token.
@@ -1637,6 +1634,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return true;
     }
 
+    /// @dev Applies the thematic bleed to a token's activeCharge:
+    ///      loses 1 / AFFINITY_REDUCTION of current activeCharge.
+    ///      The lost portion is simply untracked; coins remain in the
+    ///      contract's ERC20 balance but no token accounts for them.
+    function _applyActiveChargeBleed(Token storage t) internal {
+        uint256 ac = t.activeCharge;
+        if (ac == 0) return;
+
+        uint256 lost = ac / AFFINITY_REDUCTION; // e.g., half
+        t.activeCharge = ac - lost;
+    }
+
     /// @notice Deactivates an active token.
     ///         Requires the token have zero charge (activeCharge can be non zero),
     ///         and a value sent greater than or equal to the token's incremental value.
@@ -1656,13 +1665,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(msg.value);
 
         // Thematic bleed: lose 1 / AFFINITY_REDUCTION of activeCharge on each deactivation.
-        uint256 ac = t.activeCharge;
-        if (ac > 0) {
-            uint256 lost = ac / AFFINITY_REDUCTION;    // e.g. half
-            t.activeCharge = ac - lost;
-            // 'lost' is not credited to anyone. The coins are still held by the contract
-            // (already in its ERC20 balance), but no token tracks them as activeCharge anymore.
-        }
+        _applyActiveChargeBleed(t);
 
         t.active = false;
         emit Deactivate(tokenId);
