@@ -808,12 +808,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 activeCharge = t.activeCharge;
         t.activeCharge = 0;
 
+        // Distribute the active charge to the owner as coins.
+        _addValue(owner, 0, activeCharge);
+
         // --- Interaction: external call happens after state updates ---
         // Safely transfer the external ERC721 token back to the current owner of the Digil token.
         ERC721(account).safeTransferFrom(_this, owner, contractTokenId, t.data);
-
-        // Distribute the active charge to the owner as coins.
-        _addValue(owner, 0, activeCharge);
     }
 
     // Token Information
