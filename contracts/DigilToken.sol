@@ -966,7 +966,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return distributed True if this contributor has already been processed in the current distribution epoch.
     /// @return whitelisted True if this contributor is whitelisted for this token (relevant when the token is restricted).
     /// @return epoch The logical contribution epoch this record belongs to.
-    function tokenContributionOf(uint256 tokenId, address contributor) external view tokenExists(tokenId) returns (uint256 charge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch) {
+    function tokenContribution(uint256 tokenId, address contributor) external view tokenExists(tokenId) returns (uint256 charge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch) {
         Token storage t = _tokens[tokenId];
         TokenContribution storage c = t.contributions[contributor];
         return (c.charge, c.value, c.exists, c.distributed, c.whitelisted, c.epoch);
@@ -1011,6 +1011,24 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         effectiveBase = _effectiveBaseEfficiency(linkId, t);
 
         return (linkId, base, affinityBonus, buffBonus, buffExpiresAt, effectiveBase);
+    }
+
+    /// @notice Returns information about an external ERC721 token attached to this Digil.
+    /// @dev    If no external token is attached, `contractTokenAddress` will be zero,
+    ///         and both `externalTokenId` and `recallable` will be zero/false.
+    /// @param  tokenId The internal Digil token ID being queried.
+    /// @return contractTokenAddress The ERC721 contract address of the attached token (zero if none).
+    /// @return externalTokenId      The external ERC721 tokenId attached to this Digil (zero if none).
+    /// @return recallable           True if the attached token can currently be recalled via {recallToken}.
+    function tokenAttachment(uint256 tokenId) external view tokenExists(tokenId) returns (address contractTokenAddress, uint256 externalTokenId, bool recallable) {
+        Token storage t = _tokens[tokenId];
+        contractTokenAddress = t.contractTokenAddress;
+
+        if (contractTokenAddress != address(0)) {
+            ContractToken storage ct = _contractTokens[contractTokenAddress][tokenId];
+            externalTokenId = ct.tokenId;
+            recallable      = ct.recallable;
+        }
     }
 
     // Token Creation
