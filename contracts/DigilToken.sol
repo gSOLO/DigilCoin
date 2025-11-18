@@ -32,6 +32,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Constants for bonus interval and multiplier
     uint256 private constant BONUS_INTERVAL = 15 minutes;       // Time interval for bonus coin accrual upon withdrawal. Allows 100% of bonus coins to be retrieved every 25 hours 
     uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
+    uint256 private constant FIRST_WITHDRAW_MULTIPLIER = 50;    // First withdraw can grant up to 50x the normal coin-rate cap
 
     // Configuration values for incremental and transfer values
     uint256 private _incrementalValue = 100 * VALUE_MULTIPLIER; // Minimum incremental ETH value required for charging
@@ -470,8 +471,42 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(msg.value);
     }
 
+    /// @dev    Computes the time-based bonus coins that would be awarded to `addr`
+    ///         at `nowTs`, without mutating state. Mirrors the logic used in {withdraw}.
+    ///         - Requires the user to hold at least one Digil token or some Coins.
+    ///         - On the first qualifying withdrawal (distribution.time == 0), the cap
+    ///           is FIRST_WITHDRAW_MULTIPLIER * _coinRate; afterwards it is _coinRate.
+    /// @param  addr The address whose bonus is being computed.
+    /// @param  distribution The Distribution storage slot for this address.
+    /// @param  nowTs The timestamp to use for the calculation (typically block.timestamp).
+    /// @return bonus The number of bonus coin units that would be granted.
+    function _pendingBonus(address addr, Distribution storage distribution, uint256 nowTs) internal view returns (uint256 bonus) {
+        // Must have at least one Digil token or some ERC20 Coins.
+        if (balanceOf(addr) == 0 && _coins.balanceOf(addr) == 0) {
+            return 0;
+        }
+
+        uint256 lastBonusTime = distribution.time;
+
+        // If this is the first time (time == 0), allow a larger cap.
+        uint256 cap = _coinRate;
+        if (lastBonusTime == 0) {
+            cap = _coinRate * FIRST_WITHDRAW_MULTIPLIER;
+        }
+
+        // If lastBonusTime > nowTs (weird but possible in some edge cases), clamp.
+        if (nowTs <= lastBonusTime) {
+            return 0;
+        }
+
+        uint256 rawBonus = (nowTs - lastBonusTime) / BONUS_INTERVAL * _coinMultiplier;
+        bonus = rawBonus < cap ? rawBonus : cap;
+    }
+
     /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
     /// @dev    Bonus coins are calculated based on the time since the last distribution.
+    ///         On the first qualifying withdrawal (when distribution.time == 0), the user can receive
+    ///         up to FIRST_WITHDRAW_MULTIPLIER times the normal coin-rate cap in bonus coins.
     /// @return coins The number of coin units transferred to the sender.
     /// @return value The native Ether value transferred to the sender.
     function withdraw() external nonReentrant returns(uint256 coins, uint256 value) {
@@ -487,13 +522,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         coins = distribution.coins;
         distribution.coins = 0;
 
-        // Award bonus coins if user holds tokens
-        if (balanceOf(addr) > 0 || _coins.balanceOf(addr) > 0) {
-            uint256 lastBonusTime = distribution.time;            
-            distribution.time = block.timestamp;
-            uint256 bonus = (block.timestamp - lastBonusTime) / BONUS_INTERVAL * _coinMultiplier;
-            // Limit the bonus to the current coin rate.
-            coins += (bonus < _coinRate ? bonus : _coinRate);
+        // Compute time-based bonus coins using the shared helper.
+        uint256 nowTs = block.timestamp;
+        uint256 bonus = _pendingBonus(addr, distribution, nowTs);
+        if (bonus > 0) {
+            // Update the last bonus time *only* in the stateful withdraw path.
+            distribution.time = nowTs;
+            coins += bonus;
         }
 
         // Transfer any pending native value to the sender.
@@ -508,6 +543,46 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         return (coins, value);
+    }
+
+    /// @notice Returns a preview of the caller's pending withdrawal, including
+    ///         queued distributions and the time-based bonus coins they would
+    ///         receive if they called {withdraw} in the current block.
+    /// @dev    This is a convenience wrapper around {previewWithdrawOf}, using
+    ///         `_msgSender()` as the address. It does not modify state and
+    ///         performs no transfers.
+    /// @return totalCoins The total coins that would be transferred (base + bonus).
+    /// @return baseCoins  The pending distribution coins currently stored.
+    /// @return bonusCoins The additional time-based bonus coins that would be granted.
+    /// @return value      The pending Ether value that would be transferred.
+    function previewWithdraw() external view returns (uint256 totalCoins, uint256 baseCoins, uint256 bonusCoins, uint256 value) {
+        return previewWithdrawOf(_msgSender());
+    }
+
+    /// @notice Returns a preview of an address's pending withdrawal, including
+    ///         queued distributions and the time-based bonus coins they would
+    ///         receive if they called {withdraw} in the current block.
+    /// @dev    This function:
+    ///         - Reuses the shared bonus calculation logic via {_pendingBonus}
+    ///           to stay in sync with {withdraw}.
+    ///         - Does not modify state and performs no transfers.
+    ///         - Reverts if `addr` has opted out via the blacklist.
+    /// @param  addr The address whose pending withdrawal is being queried.
+    /// @return totalCoins The total coins that would be transferred (base + bonus).
+    /// @return baseCoins  The pending distribution coins currently stored for `addr`.
+    /// @return bonusCoins The additional time-based bonus coins that would be granted.
+    /// @return value      The pending Ether value that would be transferred.
+    function previewWithdrawOf(address addr) public view returns (uint256 totalCoins, uint256 baseCoins, uint256 bonusCoins, uint256 value) {
+        _notOnBlacklist(addr);
+        Distribution storage distribution = _distributions[addr];
+
+        baseCoins = distribution.coins;
+        value = distribution.value;
+
+        uint256 nowTs = block.timestamp;
+        bonusCoins = _pendingBonus(addr, distribution, nowTs);
+
+        totalCoins = baseCoins + bonusCoins;
     }
 
     // Add Value and Distributions
@@ -968,16 +1043,28 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Creates a new token.
-    ///         Linking to a plane other than the 4 elemental planes (4-7; fire, air, earth, water) requires a Coin transfer:
-    ///             void, karmic, and kaotic planes (1-3; void, karma, kaos): 5x Coin Rate
-    ///             paraelemental planes (8-11; ice, lightning, metal, nature): 1x Coin Rate
-    ///             energy planes (12-16; harmony, discord, entropy, exergy, magick): 25x Coin Rate
-    ///             ethereal planes (17-18; aether, world): 100x Coin Rate
-    /// @param  incrementalValue The incremental value (in wei) to be required with each coin used for charging.
+    ///         The `plane` chosen here becomes the token's foundational planar identity
+    ///         and is permanently attached for the lifetime of the token.
+    ///         This foundational link:
+    ///         - Is stored as the first entry in the token's `links` array.
+    ///         - Is used to compute planar affinity bonuses when linking to other tokens.
+    ///         - Cannot be removed or re-assigned later (see {unlinkToken} restrictions).
+    ///
+    ///         Linking to a plane other than the 4 elemental planes (4–7; fire, air, earth, water)
+    ///         requires a Coin transfer at the current coin rate:
+    ///             - Void / karmic / kaotic planes (1–3; void, karma, kaos): 5x coin rate
+    ///             - Paraelemental planes (8–11; ice, lightning, metal, nature): 1x coin rate
+    ///             - Energy planes (12–16; harmony, discord, entropy, exergy, magick): 25x coin rate
+    ///             - Ethereal planes (17–18; aether, world): 100x coin rate
+    ///
+    /// @param  incrementalValue The incremental value (in wei) required with each coin used for charging.
+    ///                          Must be 0 or at least the global minimum incremental value.
     /// @param  activationThreshold The number of coins required for token activation.
-    /// @param  restricted Whether the token is restricted to whitelisted addresses.
-    /// @param  plane The chosen planar token (numeric index) to link with.
-    /// @param  data Optional data to store with the token.
+    /// @param  restricted Whether the token is restricted to whitelisted addresses for charging.
+    /// @param  plane The chosen planar token (numeric index) to link with. This becomes the immutable
+    ///               foundational plane for this token. Must be 0 (no plane) or in the planar range
+    ///               [1 .. PLANAR_MAX_ID]. Foundational planes cannot be linked or changed later.
+    /// @param  data Optional arbitrary data to store with the token.
     /// @return tokenId The ID of the newly created token.
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable nonReentrant returns(uint256) {
         // Require minimum incremental value
@@ -1673,70 +1760,113 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Token Links
 
-    /// @notice Links two tokens together to facilitate coin generation or transfers. A token can have no more than 10 links.
-    ///         Requires a value greater than the sum of the source and destination token's incremental value.
-    ///         Any value contributed is split between and added to the source and destination token.
-    ///         Requires a summation of coins at the coin rate depending on the number of existing links.
-    ///         An efficiency of 1 is meant to indicate a coin generation or transfer of 1%; 100 would be 100%; 200 would be 200%; et. cetera.
-    /// @dev    A token's foundational Plane link (its "element") can only be set at creation.
-    ///         This function is for creating peer-to-peer links between Digils. The affinity
-    ///         bonus for this link is calculated based on the foundational Planes of the
-    ///         two Digils involved. Cannot link to foundational planes (IDs 0-18).
-    /// @param  tokenId The source token ID.
-    /// @param  linkId The destination token ID to link to.
+    /// @dev    Computes the coin cost for creating/updating a link with a given
+    ///         efficiency and current link count, including early-link discounts.
+    ///         - Base cost is still derived from efficiency and link count
+    ///           (using the existing triangular scale logic).
+    ///         - If this is a brand new link:
+    ///             * First link on the token: 25% of base cost.
+    ///             * Second link on the token: 50% of base cost.
+    ///           All subsequent new links pay full base cost.
+    /// @param  efficiency  The link efficiency (percentage).
+    /// @param  linkCount   The total number of links on the token *after* this call.
+    /// @param  isNewLink   True if this is the first time linking to `linkId`.
+    /// @return cost        The number of coin units to charge (in `_coinRate` units).
+    function _linkCoinCost(uint8 efficiency, uint256 linkCount, bool isNewLink) internal view returns (uint256 cost) {
+        // Existing scaling logic: efficiency plus triangular escalation.
+        uint256 linkScale = 200 / linkCount;
+        uint256 eAdj = efficiency > linkScale ? efficiency - linkScale : 0;
+        uint256 baseCost = (efficiency + (eAdj * (eAdj + 1) / 2)) * _coinRate;
+
+        cost = baseCost;
+
+        if (isNewLink) {
+            // `linkCount` includes the newly added link, so:
+            //  - existingCount == 0 => this is the 1st link
+            //  - existingCount == 1 => this is the 2nd link
+            uint256 existingCount = linkCount - 1;
+            if (existingCount == 0) {
+                // First link: 25% of base cost
+                cost = baseCost / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
+            } else if (existingCount == 1) {
+                // Second link: 50% of base cost
+                cost = baseCost / AFFINITY_REDUCTION;
+            }
+        }
+    }
+
+        /// @notice Links two tokens together to facilitate coin generation or transfers.
+    ///         A token can have no more than 10 links.
+    ///         Requires a value greater than or equal to the sum of the source and
+    ///         destination token's incremental value. Any value contributed is split
+    ///         between and added to the source and destination token.
+    ///         The coin cost for linking scales with efficiency and number of links,
+    ///         with early-link discounts:
+    ///             - First new link on a token: 25% of base cost.
+    ///             - Second new link on a token: 50% of base cost.
+    ///             - Subsequent links: full base cost.
+    ///         An efficiency of 1 indicates ~1% transfer; 100 indicates 100%; 200
+    ///         indicates 200%, etc.
+    /// @dev    A token's foundational Plane link (its "element") can only be set at
+    ///         creation (in {createToken}) and is immutable. This function is for
+    ///         creating peer-to-peer links between Digils, not for changing the
+    ///         foundational Plane. The affinity bonus for this link is calculated
+    ///         based on the foundational Planes (planar links) of the two Digils
+    ///         involved. Cannot link directly to foundational planar tokens
+    ///         (IDs 0–PLANAR_MAX_ID).
+    /// @param  tokenId    The source token ID.
+    /// @param  linkId     The destination token ID to link to.
     /// @param  efficiency The efficiency of the link (percentage based).
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) external payable nonReentrant approved(tokenId) tokenExists(linkId) {
         Token storage t = _tokens[tokenId];
         require(t.links.length < MAX_LINKS, "DIGIL: Too Many Links");
 
+        // Existing link state
         uint8 baseEfficiency = t.linkEfficiency[linkId].base;
-        uint256 bonusEfficiency = t.linkEfficiency[linkId].affinityBonus;
 
-        // Validate link: tokens must be different, destination must be in allowed range, and efficiency must be greater than current base.
-        require(tokenId != linkId && linkId > PLANAR_MAX_ID && efficiency > baseEfficiency, "DIGIL: Invalid Link");
+        // Validate link: tokens must be different, destination must be non-planar,
+        // and the new efficiency must strictly improve on the current base.
+        require(tokenId != linkId && linkId > PLANAR_MAX_ID && efficiency > baseEfficiency, "DIGIL: Invalid Link" );
 
-        // If a temporary link buff is active, charge an incremental cost for this
-        // new outgoing link based on the remaining buff duration.
+        // If a temporary link buff is active, charge additional activeCharge
+        // for adding a new outgoing link while the buff is still running.
         _chargeBuffForNewLink(t);
-        
+
         Token storage d = _tokens[linkId];
         // Ensure the destination token is not restricted or the sender is whitelisted.
         require(!d.restricted || d.contributions[_msgSender()].whitelisted, "DIGIL: Restricted");
 
         uint256 value = msg.value;
-        // Ensure sufficient value is provided for linking.
-        if (value < (t.incrementalValue + d.incrementalValue)) revert InsufficientFunds(t.incrementalValue + d.incrementalValue);
+        uint256 requiredValue = t.incrementalValue + d.incrementalValue;
+        if (value < requiredValue) revert InsufficientFunds(requiredValue);
 
         // Update last activity
         t.lastActivity = block.timestamp;
 
-        // Split the value evenly between the two tokens.
-        _createValue(tokenId, value / 2);
-        _createValue(linkId, value / 2);
+        // Split the contributed value evenly between the two tokens.
+        uint256 half = value / 2;
+        _createValue(tokenId, half);
+        _createValue(linkId, value - half);
 
-        // If both tokens are associated with planes, calculate bonus affinity.
-        uint256 sourcePlane = t.links.length > 0 ? t.links[0] : 0;
-        uint256 destinationPlane = d.links.length > 0 ? d.links[0] : 0;
-        if (sourcePlane > 0 && sourcePlane <= PLANAR_MAX_ID && destinationPlane > 0 && destinationPlane <= PLANAR_MAX_ID) {            
-            uint256 bonus = _affinityBonus(sourcePlane, destinationPlane, efficiency);
-            bonusEfficiency = bonus > bonusEfficiency ? bonus : bonusEfficiency;
-        }
+        // Update affinity bonus in storage, if applicable.
+        _updateLinkAffinity(t, d, linkId, efficiency);
 
-        // Update link efficiency details.
+        // Update base efficiency in storage.
         t.linkEfficiency[linkId].base = efficiency;
-        t.linkEfficiency[linkId].affinityBonus = bonusEfficiency;
-        
-        // If the link was not already present, add it.
-        if (baseEfficiency == 0) {
+
+        // If this is a brand-new link (no previous baseEfficiency), add it to the list.
+        bool isNewLink = (baseEfficiency == 0);
+        if (isNewLink) {
             t.links.push(linkId);
         }
 
-        emit Link(tokenId, linkId, efficiency, bonusEfficiency);
-        
-        // Calculate additional coin fee based on efficiency and current link count.
-        uint256 linkScale = 200 / t.links.length;
-        uint256 e = efficiency > linkScale ? efficiency - linkScale : 0;
-        _coinsFromSender((efficiency + (e * (e + 1) / 2)) * _coinRate);
+        // For the event and cost, read back the final stored efficiency.
+        LinkEfficiency storage eff = t.linkEfficiency[linkId];
+        emit Link(tokenId, linkId, eff.base, eff.affinityBonus);
+
+        // Compute and charge coin cost, including early-link discounts.
+        uint256 coinCost = _linkCoinCost(efficiency, t.links.length, isNewLink);
+        _coinsFromSender(coinCost);
     }
 
     /// @dev    Computes the activeCharge cost of a link buff given:
@@ -1840,12 +1970,66 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return _bonus;
     }
 
+    /// @dev    Updates the affinity bonus for a link between two tokens based on
+    ///         their foundational Planes. If either token has no foundational
+    ///         plane, or the planes are out of the planar range, this is a no-op.
+    ///         The computed bonus is only applied if it exceeds the existing
+    ///         stored `affinityBonus` for this link.
+    /// @param  t          The source token storage reference.
+    /// @param  d          The destination token storage reference.
+    /// @param  linkId     The destination token ID (same as `d`'s ID).
+    /// @param  efficiency The current link efficiency (percentage).
+    function _updateLinkAffinity( Token storage t, Token storage d, uint256 linkId, uint8 efficiency) internal {
+        // Both tokens must have a foundational plane as their first link.
+        if (t.links.length == 0 || d.links.length == 0) {
+            return;
+        }
+
+        uint256 sourcePlane = t.links[0];
+        uint256 destinationPlane = d.links[0];
+
+        // Basic planar range checks
+        if (
+            sourcePlane == 0 ||
+            sourcePlane > PLANAR_MAX_ID ||
+            destinationPlane == 0 ||
+            destinationPlane > PLANAR_MAX_ID
+        ) {
+            return;
+        }
+
+        uint256 newBonus = _affinityBonus(sourcePlane, destinationPlane, efficiency);
+        if (newBonus == 0) {
+            return;
+        }
+
+        LinkEfficiency storage eff = t.linkEfficiency[linkId];
+        if (newBonus > eff.affinityBonus) {
+            eff.affinityBonus = newBonus;
+        }
+    }
+
     /// @notice Unlinks a token from another token.
-    /// @param  tokenId The source token ID.
-    /// @param  linkId The destination token ID to unlink.
+    ///         This function is only for removing peer-to-peer Digil links (IDs > PLANAR_MAX_ID).
+    ///         The foundational planar link chosen at creation time is immutable and cannot
+    ///         be removed or changed:
+    ///         - Attempts to unlink a planar ID in the range [0 .. PLANAR_MAX_ID] will revert.
+    ///         - The first link in a token's `links` array (when present) is its foundational plane.
+    ///           That link is never removed by this function.
+    ///
+    /// @dev    When a non-planar link is removed:
+    ///         - The corresponding `linkEfficiency[linkId]` entry is reset to (0, 0).
+    ///         - The link ID is removed from the `links` array using swap-and-pop to avoid gaps.
+    ///         - A {Unlink} event is emitted for off-chain consumers.
+    ///
+    /// @param  tokenId The source token ID initiating the unlink.
+    /// @param  linkId The destination token ID to unlink. 
     function unlinkToken(uint256 tokenId, uint256 linkId) external approved(tokenId) tokenExists(linkId) {
         Token storage t = _tokens[tokenId];
-        require(linkId > 0 && t.linkEfficiency[linkId].base > 0, "DIGIL: Invalid Link");
+
+        // Disallow unlinking foundational planes (IDs 0..PLANAR_MAX_ID)
+        // so the token's elemental identity cannot be removed.
+        require(linkId > PLANAR_MAX_ID && t.linkEfficiency[linkId].base > 0, "DIGIL: Invalid Link");
 
         // Update last activity
         t.lastActivity = block.timestamp;
