@@ -1620,14 +1620,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(t.charge > 0 || t.value > 0 || t.activeCharge > 0 || t.discharging, "DIGIL: Nothing to Discharge");
         require(!t.activating, "DIGIL: Activation In Progress");
         
-        // Determine the required minimum value for discharge, scaled by number of links.
-        uint256 required = (_incrementalValue > t.incrementalValue ? _incrementalValue : t.incrementalValue) * (t.links.length > 0 ? t.links.length : 1);
-        if (msg.value < required) revert InsufficientFunds(required);
-
+        // On the first call of a discharge cycle, enforce the fee.
+        if (!t.discharging) {
+            // Determine the required minimum value for discharge, scaled by number of links.
+            uint256 required = (_incrementalValue > t.incrementalValue ? _incrementalValue : t.incrementalValue) * (t.links.length > 0 ? t.links.length : 1);
+            if (msg.value < required) revert InsufficientFunds(required);
+        }
+        
         // Update last activity
         t.lastActivity = block.timestamp;
 
-        _addValue(msg.value);
+        if (msg.value > 0) {
+            _addValue(msg.value);
+        }
 
         // Mark the token as being in a discharge operation.
         t.discharging = true;

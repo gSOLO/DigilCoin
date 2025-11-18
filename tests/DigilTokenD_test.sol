@@ -142,7 +142,7 @@ contract DeltaTestSuite {
 
         bool dischargeComplete = digil.dischargeToken{value: incrementalValue}(dischargeTokenId);
         while (!dischargeComplete) {
-            dischargeComplete = digil.dischargeToken{value: incrementalValue}(dischargeTokenId);
+            dischargeComplete = digil.dischargeToken(dischargeTokenId);
         }
 
         (, , , , , , uint256 contributionEpoch, uint256 distributionIndex, ) = digil.tokenData(dischargeTokenId);
