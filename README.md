@@ -28,6 +28,7 @@ A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrin
 - [Opt-Out / Blacklist](#opt-out--blacklist)
 - [Rescue & Recovery](#rescue--recovery)
 - [Admin & Security Notes](#admin--security-notes)
+- [Pricing and Costs](#pricing-and-costs)
 - [How it Works: End-to-End Examples](#how-it-works-end-to-end-examples)
 
 ---
@@ -45,7 +46,7 @@ Used for **charge units**, feature fees (linking, metadata updates, opt-out), an
 Implements core NFT logic plus:
 - **Economics**: per-token `charge`, `activeCharge`, and ETH `value`; per-address contribution ledgers; pending distributions.
 - **Batched workflows**: `activateToken`, `dischargeToken` process contributors in pages using `distributionIndex` and a configurable `_batchSize`.
-- **Link graph**: up to 10 links per token with `LinkEfficiency { base %, affinityBonus }`, optional **temporary link buffs**, and plane-driven bonuses.
+- **Link graph**: up to 10 links per token with `LinkEfficiency { base %, affinityBonus }`, optional **temporary link buffs**, and plane-driven bonuses (including buff-aware costs for adding new links).
 - **Vaulting**: accepts external ERC-721s via `onERC721Received` and exposes `recallToken`.
 - **Access & safety**: blacklist gating; planar invariants; `nonReentrant` on sensitive paths; robust event surface; custom errors.
 
@@ -75,15 +76,22 @@ At deployment the contract mints **21 planar tokens** (IDs `0..20`) to the admin
 
 ## Global Configuration
 
-Owner-only `configure(coins, incrementalValue, transferValue, batchSize)` with checks:
+Owner-only:
+
+```solidity
+configure(coins, incrementalValue, transferValue, batchSize)
+```
+
+with checks:
 - `_coinRate = coins × coinMultiplier` • `coins ∈ (0, 1e9]`
 - `_incrementalValue > 0` (global per-coin ETH floor)
 - `_transferValue ∈ [0.9, 1.0] × _incrementalValue`
 - `_batchSize > 0`
 
 **Core constants**
-- `BONUS_INTERVAL = 15 minutes` → withdraw time bonus step
-- `VALUE_MULTIPLIER = 1000 gwei`
+- `BONUS_INTERVAL = 15 minutes` → withdraw time bonus step.
+- `FIRST_WITHDRAW_MULTIPLIER = 50` → first qualifying withdraw can grant up to **50×** the normal coin-rate bonus cap.
+- `VALUE_MULTIPLIER = 1000 gwei` (used for default minimums).
 - `PLANAR_MAX_ID = 18`, `PLANAR_TRANSFER_MAX_ID = 20`
 - `MAX_LINKS = 10`
 - Rescue windows: `STALLED_TIMEOUT = 30 days`, `INACTIVITY_PERIOD = 365 days`
@@ -94,7 +102,7 @@ Owner-only `configure(coins, incrementalValue, transferValue, batchSize)` with c
 - `MAX_LINK_BUFF_DURATION_MIN = 24 × 60` — maximum buff duration (24 hours, in minutes).
 - `LINK_BUFF_COST_FACTOR = 24 × 60` — calibration constant for buff pricing in terms of `activeCharge`.
 
-These dials collectively shape costs (fees), minimum ETH coupling per coin, payout fairness, throughput of batch operations, and the economics of short-lived **link buffs**.
+These dials collectively shape costs (fees), minimum ETH coupling per coin, payout fairness, throughput of batch operations, the economics of **link buffs**, and the **first-withdraw windfall** for new participants.
 
 ---
 
@@ -103,7 +111,7 @@ These dials collectively shape costs (fees), minimum ETH coupling per coin, payo
 **Economics**
 - `charge` — pre-activation coins (base units); grows via `chargeToken/As` on inactive tokens.
 - `distributionCharge` / `distributionValue` — snapshots used when a distribution is in progress.
-- `activeCharge` — post-activation working coins; also accrues from link inflows, some overpay scenarios, and is **spent** by link buffing.
+- `activeCharge` — post-activation working coins; also accrues from link inflows, some overpay scenarios, and is **spent** by link buffing and certain thematic effects.
 - `value` — intrinsic ETH the token holds.
 - `incrementalValue` — per-coin ETH requirement for *this* token (can be 0 but must be ≥ global min if set).
 - `activationThreshold` — required coins to allow activation.
@@ -134,11 +142,19 @@ High-level: **Create** → **Charge** → **Activate**. Later: **Deactivate** an
 
 ### Create
 
-`createToken(incrementalValue, activationThreshold, restricted, plane, data)`
+```solidity
+createToken(
+  uint256 incrementalValue,
+  uint256 activationThreshold,
+  bool    restricted,
+  uint256 plane,
+  bytes   data
+)
+```
 
 - Enforces `incrementalValue == 0 || incrementalValue ≥ globalMin`.
-- If `restricted = true`, caller must send `ETH ≥ max(token.incrementalValue, globalMin)`; sets `restricted = true`.
-- If `plane ∈ [1..PLANAR_MAX_ID]`, charges a one-time **coin fee tier** (see Admin & Security Notes) and records the alignment with base 100% link to that plane (internal only).
+- If `restricted = true`, caller must send `ETH ≥ max(token.incrementalValue, globalMin)`.
+- If `plane ∈ [1..PLANAR_MAX_ID]`, charges a one-time **coin fee tier** (see [Admin & Security Notes](#admin--security-notes)) and records the alignment with base 100% link to that plane (internal only).
 - Any `msg.value` becomes token `value`.
 - Returns the new `tokenId` minted to the caller.
 
@@ -148,7 +164,7 @@ High-level: **Create** → **Charge** → **Activate**. Later: **Deactivate** an
 `chargeTokenAs(contributor, tokenId, coins)` (the latter is `nonReentrant`)
 
 - **Inputs**: `coins` (base units) and `msg.value` (ETH).  
-  If `contributor ≠ caller` (proxy), call must include at least one full ETH increment:  
+  If `contributor ≠ caller` (proxy), call must include at least:  
   `requiredValue = max(token.incrementalValue, globalMin)`.
 - **Inactive token path**:
   - Compute minimum ETH for the requested coins:  
@@ -172,7 +188,11 @@ High-level: **Create** → **Charge** → **Activate**. Later: **Deactivate** an
 
 ### Activate
 
-`activateToken(tokenId)` (multi-tx)
+```solidity
+activateToken(tokenId)
+```
+
+(multi-tx)
 
 - Requires `active == false` and either `charge ≥ activationThreshold` or the token is already in `activating` mode.
 - Also requires `!discharging`.
@@ -190,33 +210,42 @@ High-level: **Create** → **Charge** → **Activate**. Later: **Deactivate** an
 
 ### Deactivate
 
-`deactivateToken(tokenId)`
+```solidity
+deactivateToken(tokenId)
+```
+
+Deactivation is a **purely stateful** operation — no ETH moves in or out:
 
 - Requires `active == true` and `charge == 0`.
-- Requires `msg.value ≥ token.incrementalValue` (credited to the contract’s pool).
 - Requires no batch in progress (`distributionIndex == 0`).
 - On success:
-  - Credits `msg.value` to the contract via `_addValue`.
-  - Applies a **thematic bleed**:  
-    - Let `ac = activeCharge`. If `ac > 0`, compute `lost = ac / AFFINITY_REDUCTION` (currently half).  
-    - New `activeCharge = ac - lost`.  
-    - The lost portion is no longer tracked by any token, but the underlying ERC-20 coins remain held by the contract and can support future global distributions/bonuses.
+  - Applies a **thematic bleed**:
+    - Let `ac = activeCharge`. If `ac > 0`, compute `lost = ac / AFFINITY_REDUCTION` (currently half).
+    - New `activeCharge = ac - lost`.
+    - The lost portion is no longer tracked by any token; the underlying coins remain in the contract as un-attributed “ambient power”.
   - Sets `active = false`.
   - Emits `Deactivate(tokenId)`.
 
-This models the idea that **turning a sigil off** leaks some of its power back into the system.
+This models the idea that **turning a sigil off** leaks some of its power back into the system, but it doesn’t require you to spend ETH at that moment.
 
 ### Discharge
 
-`dischargeToken(tokenId)` (multi-tx; `nonReentrant`)
+```solidity
+dischargeToken(tokenId)
+```
+
+(multi-tx; `nonReentrant`)
 
 - Requires there is something meaningful to discharge:  
   `t.charge > 0 || t.value > 0 || t.activeCharge > 0 || t.discharging == true`.
 - Requires `!activating`.
-- Requires `msg.value ≥ max(globalMin, token.incrementalValue) × max(1, links.length)`.  
-  This scales the discharge cost with link complexity.
-- Sets `discharging = true`, credits `msg.value` to the contract, and calls:  
-  `_distribute(tokenId, discharge = !t.active)`.
+- On the first call of a discharge cycle, requires:
+
+```text
+msg.value ≥ max(globalMin, token.incrementalValue) × max(1, links.length)
+```
+
+This scales the discharge cost with link complexity. The value is added to the contract’s pool.
 
 Two main modes:
 
@@ -228,39 +257,29 @@ Two main modes:
      - `distributionCharge` and `distributionValue` are cleared.
 
 2. **Active token discharge** (`active == true` → `discharge = false`)
-   - The `_distribute` call behaves similarly to activation:
+   - `_distribute` behaves similarly to activation:
      - Contributors receive a pro-rata share of token `value` via `_addDistributedValue(contributor, distributableTokenValue)`.
      - The owner receives the “required contribution” slice.
      - `distributionCharge` is added to `activeCharge`.
      - Any remaining `t.value` goes to the contract pool via `_addValue(tValue)`.
-   - After this **value settlement**, the token still has `activeCharge`—but it is now treated as **surplus power to be pushed outward**.
+   - After this **value settlement**, the token can still have `activeCharge`—but it is now treated as **surplus power to be pushed outward**.
 
 After `_distribute` completes in either mode:
 
-- All contributions for the current epoch are considered fully processed:
-  - `contributors[]` is cleared (`delete t.contributors`).
-  - `contributionEpoch` is incremented. Any future interaction with an existing `TokenContribution` mapping entry will logically see a “fresh” state, avoiding double-counting old contributions.
-- If a contract token is attached (`contractTokenAddress != 0`) and still present, it becomes **non-recallable** and its address is reinserted as a placeholder contributor for future epochs.
-
-Then, for **both active and inactive tokens**, any remaining `activeCharge` on the discharged token is **redistributed into its links**:
-
-- Let `ac = t.activeCharge`. If `ac > 0` and there are links:
-  - Sum all linked base efficiencies:  
-    `sumOfEfficiencies = Σ linkEfficiency[linkId].base` (only links with `base > 0`).
-  - For each linked token:
-    - `share = ac × baseEfficiency / sumOfEfficiencies`
-    - `linkedToken.activeCharge += share`
-    - Emit `ActiveCharge(linkId, share)`
+- Any remaining `activeCharge` is **redistributed into the token’s links**:
+  - Sum base efficiencies across links: `sum = Σ base`.
+  - Each link receives: `share = ac × base / sum`, added to its `activeCharge`.
+  - `ActiveCharge` events are emitted for each link.
   - Any rounding remainder from integer division is effectively **lost** as dust.
-- The original token’s `activeCharge` is then set to **0**.
-
-Finally:
-
-- Any active **link buff** on the discharged token is cleared:
+- The original token’s `activeCharge` is set to **0**.
+- `contributors[]` is cleared and `contributionEpoch` is incremented.
+- If a contract token is attached and still present, it becomes **non-recallable** and its address is reinserted as a placeholder contributor for future epochs.
+- Any active **link buff** is cleared:
   - `linkBuff.bonus = 0`
   - `linkBuff.expiresAt = 0`
+- `discharging = false` and `Discharge(tokenId, true)` is emitted.
 
-You can read this as: **discharging a sigil settles value, pushes its remaining power outward along its link graph based on base efficiencies, and wipes any temporary buff state**. On completion, `discharging = false` and `Discharge(tokenId, true)` is emitted.
+You can read this as: **discharging a sigil settles value, pushes its remaining power outward along its link graph based on base efficiencies, and wipes any temporary buff state**.
 
 ---
 
@@ -303,11 +322,11 @@ Returns high-level lifecycle and bookkeeping state:
 ```
 
 - `links` and `contributors` are **counts**, not arrays.
-- `contributionEpoch` can be compared against `tokenContributionOf(...).epoch` to see if a contribution record belongs to the current epoch.
+- `contributionEpoch` can be compared against `tokenContribution(tokenId).epoch` to see if a contribution record belongs to the current epoch.
 - `distributionIndex` reveals whether a **batch operation is in progress** and how far along it is.
 - `data` is arbitrary bytes (planar IDs 0–20 encode affinity data here).
 
-### `tokenContributionOf(tokenId, contributor)`
+### `tokenContribution(tokenId, contributor)`
 
 Returns raw per-address contribution data:
 
@@ -357,11 +376,37 @@ Returns link data for a given source token and index in its `links[]` array:
 
 This makes it easy for UIs to show whether a token is currently buffed, when the buff expires, and what real effectiveness each link is operating at.
 
+### `previewWithdraw()` / `previewWithdrawOf(address)`
+
+Convenience views around the withdraw logic:
+
+```solidity
+(
+  uint256 totalCoins,
+  uint256 baseCoins,
+  uint256 bonusCoins,
+  uint256 value
+)
+```
+
+- `previewWithdraw()` runs for `_msgSender()`.
+- `previewWithdrawOf(addr)` runs for an arbitrary address (must not be blacklisted).
+- Both:
+  - Return **pending** ETH (`value`) and pending **distribution coins** (`baseCoins`).
+  - Simulate the **time-based bonus** coins that would be granted **if `withdraw()` were called now**, respecting the same cap logic (including the first-withdraw multiplier).
+  - Do **not** modify state or transfer anything.
+
+Use these to show “what you would get if you withdrew right now” without forcing the user to actually withdraw.
+
 ---
 
 ## Linking & Affinity
 
-`linkToken(tokenId, linkId, efficiency)` (`nonReentrant`)
+```solidity
+linkToken(tokenId, linkId, efficiency)
+```
+
+(`nonReentrant`)
 
 - Preconditions:
   - `tokenId != linkId`
@@ -388,20 +433,28 @@ This makes it easy for UIs to show whether a token is currently buffed, when the
   - `linkEfficiency[linkId].base = efficiency`
   - `linkEfficiency[linkId].affinityBonus = max(existingAffinityBonus, computedBonus)`
   - If this is a new link (previous base = 0), `linkId` is appended to the `links[]` array.
-- Fees:
-  - Additional coin fee scales with requested `efficiency` and the link count.
-  - Uses a small triangular/quadratic term to keep ultra-high efficiencies expensive.
-- Buff-aware behavior:
-  - If a **link buff** is currently active on the source token, creating a **new link** will also burn extra `activeCharge` proportional to the remaining buff duration (see [Temporary Link Buffs](#temporary-link-buffs)).
+- Coin fees:
+  - A coin fee is charged that grows with requested `efficiency` and the number of links on the token.
+  - The base cost uses a mix of efficiency and a small triangular/quadratic term to keep ultra-high efficiencies expensive.
+  - **Early-link discounts** for **new links** on a token:
+    - 1st link on a token: **25%** of the base cost.
+    - 2nd link on a token: **50%** of the base cost.
+    - 3rd+ new links: **100%** of the base cost.
+  - Upgrading an **existing link** (increasing efficiency) uses the **full** base cost; early-link discounts only apply when a link is first added to the token.
 
 `unlinkToken(tokenId, linkId)`:
 
 - Clears `linkEfficiency[linkId]` and removes `linkId` from the `links[]` array by swap-and-pop.
+- Cannot remove foundational planar links (`linkId ≤ PLANAR_MAX_ID` will revert).
 - Emits `Unlink(tokenId, linkId)`.
 
 ### Temporary Link Buffs
 
-`buffLinks(tokenId, bonus, duration)` (`nonReentrant`)
+```solidity
+buffLinks(tokenId, bonus, duration)
+```
+
+(`nonReentrant`)
 
 This function lets the owner **temporarily boost all outgoing links** from an active token, spending `activeCharge` to increase link effectiveness for a limited time.
 
@@ -444,7 +497,7 @@ cost = bonus × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACT
 
 During the buff window:
 
-- For any link from this token, the **effective base efficiency** is computed as:
+- For any link from this token, the **effective base efficiency** is:
 
   ```text
   effectiveBase = min(base + buffBonus, 255)
@@ -452,7 +505,7 @@ During the buff window:
 
   (as long as `buffBonus > 0` and `block.timestamp < buffExpiresAt`).
 
-- This `effectiveBase` is what drives `linkedCoins` in active charging:
+- This `effectiveBase` drives `linkedCoins` in active charging:
   - More coins will be routed into linked tokens (relative to the unbuffed state).
 - The affinity bonus is **unchanged**; buffs only affect the base portion.
 
@@ -470,7 +523,7 @@ If you call `linkToken` to add **another link** while a buff is active:
 
 - The contract charges an additional **per-link buff cost** based on the remaining buff duration:
   - Remaining time is computed in whole minutes (minimum 1).
-  - Cost is `buffCost(bonus, remainingMinutes, linkCount = 1)`.
+  - Cost is the same `buffCost(bonus, remainingMinutes, linkCount = 1)` formula.
 - This ensures that adding new links during an ongoing buff properly **pays into** the buffed state, rather than getting a free ride.
 
 ---
@@ -524,9 +577,11 @@ recallToken(collection, digilId)
   - `_contractTokenExists[collection][contractTokenId] = false`
   - `token.contractTokenAddress = address(0)`
 - The external NFT is transferred back to the current Digil owner using `safeTransferFrom`, forwarding the Digil’s `data` bytes.
-- The Digil’s `activeCharge` is **paid out to the owner** as coins via `_addValue(owner, 0, activeCharge)`, and `activeCharge` is reset to 0.
+- As part of recall, the Digil experiences **thematic bleed** on its `activeCharge`:
+  - `_applyActiveChargeBleed` is called, which currently burns ~50% of `activeCharge` (via division by `AFFINITY_REDUCTION`) and leaves the remainder on the token.
+  - There is **no direct coin payout** from recall; instead, the act of pulling the vaulted NFT back to its owner “drains” part of the sigil’s power.
 
-Vaulted NFTs thus become **chargeable artifacts** whose built-up energy can be reclaimed alongside the original asset.
+Vaulted NFTs thus become **chargeable artifacts** whose built-up energy dynamics matter even when you decide to reclaim the underlying asset.
 
 ---
 
@@ -546,26 +601,67 @@ The fee is credited to the contract’s own distribution bucket; the user value 
 
 **Bonus coins**: For each **full multiple** of the **global** `_incrementalValue` contained in `value`, the recipient gets:  
 
-`bonusCoins = (coinRate / BONUS_RATE_DIVISOR) × fullIncrements`  
+```text
+bonusCoins = (coinRate / BONUS_RATE_DIVISOR) × fullIncrements
+```
 
 i.e. 1% of the coin rate per full increment.
 
 ### Withdrawals
 
-`withdraw()` lets any address claim its pending ETH and coins.
+```solidity
+withdraw()
+```
+
+lets any **non-blacklisted** address claim its pending ETH and coins.
 
 - Looks up `Distribution { time, coins, value }` for `msg.sender`.
+- Resets stored `coins` and `value` to 0.
 - Pays out all `value` (ETH) via a safe send.
-- Attempts to transfer all `coins` from the contract to the user via `_coins.transferFrom`; if that fails, the coins are left pending and `coins` output is reported as 0.
-- If the user holds **any Digils** (`balanceOf(addr) > 0`) or any **coins** (`_coins.balanceOf(addr) > 0`), they also receive a **time-based coin bonus**:
-  - For each `BONUS_INTERVAL` since the last withdrawal, +`coinMultiplier` coins.
-  - Capped at `_coinRate` per withdrawal call.
+- Attempts to transfer all `coins` from the contract to the user via `_coins.transferFrom`; if that fails, the coins are left pending and reported as 0 in the return value.
 
-This structure allows the contract’s internal fee pool and “lost” power (from bleeds and rounding dust) to fuel long-term participant bonuses.
+**Time-based bonus coins**
+
+If the address holds **any Digil** (`balanceOf(addr) > 0`) or any **coin balance** (`_coins.balanceOf(addr) > 0`), it also receives a **time-based coin bonus**:
+
+- For each `BONUS_INTERVAL` (15 minutes) since the last bonus timestamp (`distribution.time`), the account earns `+coinMultiplier` coins.
+- The raw bonus is capped per call:
+  - On the **first qualifying withdrawal** (i.e. when `distribution.time == 0`), the cap is:
+
+    ```text
+    cap = FIRST_WITHDRAW_MULTIPLIER × _coinRate
+    ```
+
+    so the first withdraw can grant up to **50×** the usual coin-rate cap.
+  - On all subsequent withdrawals, the cap is just:
+
+    ```text
+    cap = _coinRate
+    ```
+
+- The contract computes:
+
+  ```text
+  rawBonus = (now - lastBonusTime) / BONUS_INTERVAL × coinMultiplier
+  bonus    = min(rawBonus, cap)
+  ```
+
+- On successful `withdraw`, `distribution.time` is updated to the current timestamp and the user receives `bonus` in addition to any base `coins` in their distribution bucket.
+
+You can see what a withdraw would yield (including time-based bonus) **without** actually withdrawing by using the read-only helpers:
+
+- `previewWithdraw()` — for the caller.
+- `previewWithdrawOf(addr)` — for an arbitrary address.
+
+Both return `(totalCoins, baseCoins, bonusCoins, value)`.
 
 ### Admin value creation
 
-`createValue(tokenId, value)` (owner-only):
+```solidity
+createValue(tokenId, value)
+```
+
+(owner-only):
 
 - Optionally allows the admin to send additional ETH with the call (credited to the contract’s distribution pool).
 - Requires that the contract’s distribution pool already has at least `value` ETH; otherwise reverts.
@@ -577,7 +673,12 @@ This structure allows the contract’s internal fee pool and “lost” power (f
 
 `setOptStatus(bool optOut)` toggles an address’ participation:
 
-- Requires `msg.value ≥ (_incrementalValue × _coinRate / _coinMultiplier)`.
+- Requires:
+
+  ```text
+  msg.value ≥ (_incrementalValue × _coinRate / _coinMultiplier)
+  ```
+
 - Adds that ETH to the contract pool via `_addValue(msg.value)`.
 - Sets `_blacklisted[account] = optOut` and emits `OptOut` or `OptIn`.
 
@@ -585,13 +686,20 @@ Blacklisted addresses:
 
 - Cannot send or receive Digils (`_update` enforces `_notOnBlacklist`).
 - Cannot participate in charges or as `operator` in ERC-721 receptions.
-- Still retain their existing distribution balances, which can be withdrawn if they later opt in again.
+- Cannot call `withdraw()` or `previewWithdrawOf()` until they opt back in.
+- Still retain their existing distribution balances internally, which can be withdrawn if they later opt in again.
 
 ---
 
 ## Rescue & Recovery
 
-Owner-only `rescueToken(tokenId, to)` supports recovering stuck or abandoned Digils.
+Owner-only:
+
+```solidity
+rescueToken(tokenId, to)
+```
+
+supports recovering stuck or abandoned Digils.
 
 A token can be rescued if **any** of the following holds:
 
@@ -642,6 +750,172 @@ This provides a bounded way for the admin to clean up truly abandoned or stuck s
   - Temporarily increase link effectiveness at the cost of `activeCharge`.
   - Buff state is global per source token (applies to all outgoing links), visible via `tokenLinkAt`.
   - Buffs are time-limited, cost scales with **bonus**, **duration**, and **linkCount**, and they are cleared on full discharge.
+- **First-withdraw bonus**:
+  - `_pendingBonus` centralizes bonus math and is reused by `withdraw` and `previewWithdraw*`.
+  - The first qualifying withdraw for an address can grant up to `FIRST_WITHDRAW_MULTIPLIER × _coinRate` in time-based bonus coins, after which future withdraws are capped at `_coinRate` per call.
+
+---
+
+## Pricing and Costs
+
+This section summarizes how **coins** and **ETH** are consumed across the major operations. Exact values depend on `configure(...)` and on per-token `incrementalValue`.
+
+### Global knobs
+
+- `coins` (from `configure`) → scales:
+  - `_coinRate` (base coin cost unit).
+  - Many feature fees (`updateToken`, `linkToken`, etc).
+- `_incrementalValue` → minimum ETH-per-coin for the system.
+- `_transferValue` → share of ETH that flows through to users vs contract as fees.
+- `_batchSize` → gas/per-transaction tradeoff for long distributions.
+
+### Per-operation cost sketch
+
+**Token creation**
+
+- `createToken(...)`
+  - ETH:
+    - Optional `msg.value` becomes token `value`.
+    - If `restricted = true`, must send at least `max(token.incrementalValue, globalMin)`.
+  - Coins:
+    - If `plane ∈ [1..PLANAR_MAX_ID]`, upfront **plane alignment fee**:
+      - Planes 1–3: `5 × _coinRate`
+      - Planes 8–11: `1 × _coinRate`
+      - Planes 12–16: `25 × _coinRate`
+      - Planes 17–18: `100 × _coinRate`
+
+**Charging**
+
+- `chargeToken` / `chargeTokenAs`
+  - ETH:
+    - Inactive token:  
+      `msg.value ≥ incrementalValue × (coins / coinMultiplier)` (rounded to at least one increment if non-zero).
+    - Proxy (`chargeTokenAs` where `contributor != msg.sender` and not via links):  
+      `msg.value ≥ max(token.incrementalValue, globalMin)`.
+  - Coins:
+    - Caller must have enough ERC-20 to cover `coins` (unless the charge is coming via links).
+    - Links redistribute coins and ETH downstream; failed linked charges fall back into `activeCharge` of the source.
+
+**Activation**
+
+- `activateToken`
+  - ETH:
+    - No additional ETH required at call time.
+    - Uses the token’s existing `value` and contributors’ `contribution.value`.
+  - Coins:
+    - Moves `distributionCharge` into `activeCharge` upon completion.
+
+**Deactivation**
+
+- `deactivateToken`
+  - ETH:
+    - **No ETH cost**; call is not payable.
+  - Coins:
+    - Burns approximately **50%** of `activeCharge` (via `_applyActiveChargeBleed`), leaving the rest on the token.
+
+**Discharge**
+
+- `dischargeToken`
+  - ETH:
+    - First call in a cycle must send:  
+
+      ```text
+      msg.value ≥ max(globalMin, token.incrementalValue) × max(1, links.length)
+      ```
+
+      which is credited to the contract pool.
+    - The token’s internal `value` is then distributed among contributors, owner, and contract depending on active/inactive mode.
+  - Coins:
+    - Contributor coins may be returned (inactive discharge) or used to compute value shares (active discharge).
+    - Remaining `activeCharge` is pushed into linked tokens; any rounding remainder is lost as dust.
+
+**Metadata updates**
+
+- `updateToken`
+  - ETH:
+    - To update `data` and/or `uri`, must send at least:  
+
+      ```text
+      msg.value ≥ (token.incrementalValue + globalMin)
+      ```
+
+      which is credited to the contract’s distribution bucket.
+  - Coins:
+    - `1000 × _coinRate` for **URI** update.
+    - `1000 × _coinRate` for **data** update.
+    - If both are changed, both fees apply.
+  - Restrictions:
+    - If `charge > 0`, cannot change `incrementalValue` or `activationThreshold`.
+    - Planar tokens must keep `incrementalValue = 0`, `activationThreshold = 0`, `data.length ≥ 4`.
+
+**Linking**
+
+- `linkToken`
+  - ETH:
+    - Must send:  
+
+      ```text
+      msg.value ≥ token.incrementalValue + dest.incrementalValue
+      ```
+
+    - Split 50/50 between the two tokens’ `value`.
+  - Coins:
+    - Pays a coin fee based on `efficiency` and **post-link** link count.
+    - Early-link discounts:
+      - 1st link on a token: pay **25%** of base cost.
+      - 2nd link: pay **50%** of base cost.
+      - 3rd+ new links: pay **100%** of base cost.
+    - Upgrading efficiency on an **existing link** always pays full base cost (no discount).
+
+**Buffing**
+
+- `buffLinks`
+  - ETH:
+    - No ETH cost; call is not payable.
+  - Coins / power:
+    - Consumes `activeCharge` via:
+
+      ```text
+      cost = bonus × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
+      ```
+
+    - Any non-zero buff is clamped to a minimum cost of `_coinRate`.
+- Adding a **new link during an active buff** triggers an **extra cost**:
+  - Uses the same formula but with `linkCount = 1` and only the **remaining** buff duration.
+  - If `activeCharge < cost`, linking reverts with `InsufficientActiveCharge`.
+
+**Opt-out / Opt-in**
+
+- `setOptStatus(true|false)`
+  - ETH:
+    - Must send:
+
+      ```text
+      msg.value ≥ (_incrementalValue × _coinRate / _coinMultiplier)
+      ```
+
+    - Added to the contract’s distribution bucket.
+  - Coins:
+    - No coin cost, but blacklisting affects the ability to participate in future coin-generating flows.
+
+**Vault recall**
+
+- `recallToken`
+  - ETH:
+    - No ETH cost; call is not payable.
+  - Coins / power:
+    - Applies `_applyActiveChargeBleed` to the Digil, burning ~50% of `activeCharge`.
+
+**Withdrawals**
+
+- `withdraw`
+  - ETH:
+    - Transfers the caller’s pending ETH distribution in full (subject to a safe-send).
+  - Coins:
+    - Transfers pending distribution coins (if ERC-20 transfer succeeds).
+    - Adds **time-based bonus** coins:
+      - 1st qualifying withdraw: up to `FIRST_WITHDRAW_MULTIPLIER × _coinRate`.
+      - Subsequent withdraws: up to `_coinRate`.
 
 ---
 
@@ -760,7 +1034,10 @@ linkToken(
 
 - ETH is split **50/50** into `tokenA.value` and `tokenC.value`.
 - Base efficiency = 120%; affinity bonus is computed from their foundational planes (for example, Harmony ↔ Exergy may receive multipliers).
-- A coin fee is charged that grows with both efficiency and link count.
+- Because this is a **new** link:
+  - If it is the **first** link on `tokenA`, the coin fee is 25% of the base cost.
+  - If it is the **second**, the fee is 50% of the base cost.
+  - If `tokenA` already had ≥ 2 links, the fee is full cost.
 
 **Charge the active, linked source**
 
@@ -787,10 +1064,9 @@ Assume `tokenA` is active with `activeCharge = 10 * 10**18` and `charge = 0`.
 
 ```solidity
 deactivateToken(tokenA);
-// with msg.value >= tokenA.incrementalValue
 ```
 
-- `msg.value` is added to the contract pool.
+- No ETH is required.
 - With `AFFINITY_REDUCTION = 2`:
   - `lost = activeCharge / 2 = 5 * 10**18`
   - New `activeCharge = 5 * 10**18`
@@ -828,7 +1104,7 @@ dischargeToken(tokenA);
 - `tokenA.activeCharge` is set to 0; `contributors[]` cleared; `contributionEpoch` increments.
 - Any active link buff on `tokenA` is cleared at the end of the discharge.
 
-### 8) Withdrawals and time bonus
+### 8) Withdrawals and time bonus (including first-withdraw boost)
 
 Suppose `0xAlice` has pending distributions:
 
@@ -838,7 +1114,18 @@ withdraw();
 
 - Pays her ETH and coin balances.
 - If Alice holds any Digil or any coin balance, she also receives a time-based bonus:
-  - `+1 × coinMultiplier` per `BONUS_INTERVAL` (15 minutes) elapsed since her last withdrawal, capped at `_coinRate`.
+  - For each 15-minute interval since her last bonus time, she accrues `+coinMultiplier` coins.
+  - On her **first qualifying withdraw**, this bonus is capped at `FIRST_WITHDRAW_MULTIPLIER × _coinRate` (up to **50×** the normal cap).
+  - On subsequent withdraws, the cap is `_coinRate`.
+
+She can inspect the numbers beforehand by calling:
+
+```solidity
+previewWithdraw();
+// or previewWithdrawOf(0xAlice)
+```
+
+and reading `totalCoins`, `baseCoins`, `bonusCoins`, and `value`.
 
 ### 9) Updating metadata (URI/data) and economic parameters
 
