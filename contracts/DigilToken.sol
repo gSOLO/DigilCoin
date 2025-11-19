@@ -770,6 +770,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Rescues a token from an account that has opted out or that hasnt seen significant action.
     /// @dev    Only callable by the contract owner. Transfers the token from a blacklisted/inactive address to a specified address.
     ///         If a planar token is rescued, to must be the contract owner, otherwise the transaction will revert.
+    ///         Even when an address has opted out (blacklisted), rescue is only allowed after the
+    ///         appropriate inactivity timeout (`STALLED_TIMEOUT` for stalled batch operations,
+    ///         or `INACTIVITY_PERIOD` for normal inactivity), giving the user time to opt back in.
     /// @param  tokenId The token ID to rescue.
     /// @param  to The address to which the token is transferred.
     function rescueToken(uint256 tokenId, address to) external tokenExists(tokenId) onlyOwner {
@@ -790,19 +793,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Conditions for rescue:
-        // - Owner is blacklisted OR
-        // - Token is inactive for the specified period AND meets ETH-related criteria
-        require(
-            _blacklisted[currentOwner] || 
+        // - Owner is blacklisted AND the inactivity timer has elapsed, OR
+        // - Token is inactive for the specified period AND meets ETH-related criteria.
+        bool canRescueByBlacklist = _blacklisted[currentOwner] && canBeRescued;
+        bool canRescueByAbandonment =
+            canBeRescued &&
             (
-                canBeRescued && 
-                (
-                    t.value > 0 || 
-                    (t.active == false && t.contributors.length > 0 && t.charge > 0 && t.incrementalValue > 0)
-                )
-            ),
-            "DIGIL: Token Cannot Be Rescued"
-        );
+                t.value > 0 ||
+                (t.active == false && t.contributors.length > 0 && t.charge > 0 && t.incrementalValue > 0)
+            );
+
+        require(canRescueByBlacklist || canRescueByAbandonment, "DIGIL: Token Cannot Be Rescued");
 
         // Remove approvals before transfer.
         _approve(_this, tokenId, address(0), false);
@@ -1744,10 +1745,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return true;
     }
 
-    /// @dev Applies the thematic bleed to a token's activeCharge:
-    ///      loses 1 / AFFINITY_REDUCTION of current activeCharge.
-    ///      The lost portion is simply untracked; coins remain in the
-    ///      contract's ERC20 balance but no token accounts for them.
+    /// @dev    Applies thematic "bleed" to a token's active charge:
+    ///         - Computes a loss of 1 / AFFINITY_REDUCTION of the current `activeCharge`.
+    ///         - Subtracts the lost portion from `activeCharge`.
+    ///         - The lost units remain in the contract's ERC20 balance as untracked power
+    ///         and are no longer attributed to any token.
+    ///
+    ///         With the current configuration (AFFINITY_REDUCTION = 2), each call burns
+    ///         approximately 50% of the token's activeCharge.
+    /// @param  t The token whose activeCharge will be reduced.
     function _applyActiveChargeBleed(Token storage t) internal {
         uint256 ac = t.activeCharge;
         if (ac == 0) return;
@@ -1757,8 +1763,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Deactivates an active token.
-    ///         Requires the token have zero charge (activeCharge can be non-zero).
-    ///         Deactivation burns half of the token's current activeCharge.
+    /// @dev    Deactivation is a purely stateful operation:
+    ///         - No ETH is required or charged by this function.
+    ///         - The token must have zero `charge` (its staged pre-activation charge),
+    ///           but may still hold non-zero `activeCharge`.
+    ///         - On every deactivation, the token suffers "power bleed": a portion of
+    ///           its current `activeCharge` is permanently burned via
+    ///           {_applyActiveChargeBleed}. With the current configuration
+    ///           (AFFINITY_REDUCTION = 2), this burns ~50% of activeCharge.
+    ///         - The token cannot be in the middle of a batch activation/discharge
+    ///           operation (`distributionIndex` must be zero).
+    ///
+    ///         This design allows owners to toggle a sigil off without paying ETH,
+    ///         while still making frequent toggling economically meaningful through
+    ///         the activeCharge loss.
     /// @param  tokenId The ID of the token to deactivate.
     function deactivateToken(uint256 tokenId) external approved(tokenId) {
         Token storage t = _tokens[tokenId];
