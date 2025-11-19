@@ -1757,22 +1757,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Deactivates an active token.
-    ///         Requires the token have zero charge (activeCharge can be non zero),
-    ///         and a value sent greater than or equal to the token's incremental value.
-    ///         The token's activeCharge is reduced by half.
-    /// @param  tokenId The ID of the token to deactivate
-    function deactivateToken(uint256 tokenId) external payable approved(tokenId) {
+    ///         Requires the token have zero charge (activeCharge can be non-zero).
+    ///         Deactivation burns half of the token's current activeCharge.
+    /// @param  tokenId The ID of the token to deactivate.
+    function deactivateToken(uint256 tokenId) external approved(tokenId) {
         Token storage t = _tokens[tokenId];
         require(t.active == true && t.charge == 0, "DIGIL: Token Cannot Be Deactivated");
         // Make sure the token isn't currently being discharged or activated
         require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
-        
-        if (msg.value < t.incrementalValue) revert InsufficientFunds(t.incrementalValue);
 
         // Update last activity
         t.lastActivity = block.timestamp;
-
-        _addValue(msg.value);
 
         // Thematic bleed: lose 1 / AFFINITY_REDUCTION of activeCharge on each deactivation.
         _applyActiveChargeBleed(t);
