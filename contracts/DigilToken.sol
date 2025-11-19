@@ -1509,7 +1509,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Calculate incremental value per coin unit for distribution.
-        uint256 incrementalValue = dCharge >= _coinMultiplier ? dValue / (dCharge / _coinMultiplier) : 0;
+        // Use full-precision ratio so we never over-distribute dValue when dCharge
+        // is not an exact multiple of _coinMultiplier.
+        uint256 incrementalValue = dCharge > 0 ? (dValue * _coinMultiplier) / dCharge : 0;
 
         uint256 dIndex = t.distributionIndex;
 
