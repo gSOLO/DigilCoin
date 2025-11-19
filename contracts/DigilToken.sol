@@ -1553,6 +1553,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     distribution += contribution.value;
                     // A percentage of the token's intrinsic value is sent to the contributor
                     uint256 distributableTokenValue = incrementalValue * contribution.charge / _coinMultiplier;
+
+                    // Ensure we do not subtract more than exists in t.value due to rounding.
+                    // If distributable is > t.value, we just take what is left.
+                    if (distributableTokenValue > t.value) {
+                        distributableTokenValue = t.value;
+                    }
+
                     t.value -= distributableTokenValue;
                     _addDistributedValue(contributor, distributableTokenValue);
 
