@@ -102,6 +102,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint64 expiresAt;       // Unix timestamp (in seconds) when the buff expires
         uint8 efficiencyBonus;  // Temporary bonus on top of base efficiency (0–100)
         uint8 attunement;       // ID of the plane to mimic (1-18)
+        uint8 amplification;    // Bonus multiplier for charge (0-100)
         bool stabilized;        // Prevents activeCharge bleed on next event
     }
 
@@ -223,8 +224,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token whose outgoing links were buffed.
     /// @param  efficiencyBonus The temporary bonus applied on top of each link's base efficiency.
     /// @param  attunement The temporary plan this token is attuned with
+    /// @param  amplification The temporary amplification applied to activeBonus
     /// @param  duration The buff duration, in minutes.
-    event Buff(uint256 indexed tokenId, uint8 efficiencyBonus, uint8 attunement, uint256 duration);
+    event Buff(uint256 indexed tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint256 duration);
 
     /// @notice Emitted when a token is stabilized to prevent active charge bleed.
     /// @param  tokenId The ID of the token being stabilized.
@@ -1003,9 +1005,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return affinityBonus The additional affinity-based efficiency for this link.
     /// @return buffBonus The temporary buff bonus applied to all outgoing links (0–100).
     /// @return buffAttunement The current attunement (0 if none)
+    /// @return buffAmplification The temporary buff bonus applied to all outgoing links (0–100).
     /// @return buffExpiresAt The unix timestamp when the buff expires (0 if none).
     /// @return effectiveBase The effective base efficiency including any active buff.
-    function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 base, uint256 affinityBonus, uint8 buffBonus, uint8 buffAttunement, uint64 buffExpiresAt, uint256 effectiveBase) {
+    function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 base, uint256 affinityBonus, uint8 buffBonus, uint8 buffAttunement, uint8 buffAmplification, uint64 buffExpiresAt, uint256 effectiveBase) {
         _checktokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
@@ -1021,12 +1024,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         BuffState storage buff = t.buff;
         buffBonus = buff.efficiencyBonus;
-        buffExpiresAt = buff.expiresAt;
+        buffExpiresAt = buff.expiresAt;        
         buffAttunement = buff.attunement;
+        buffAmplification = buff.amplification;
 
         effectiveBase = _effectiveBaseEfficiency(linkId, t);
 
-        return (linkId, base, affinityBonus, buffBonus, buffAttunement, buffExpiresAt, effectiveBase);
+        return (linkId, base, affinityBonus, buffBonus, buffAttunement, buffAmplification, buffExpiresAt, effectiveBase);
     }
 
     /// @notice Returns information about an external ERC721 token attached to this Digil.
@@ -1300,8 +1304,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // If there are no links or the charge is directly linked, add the coins to the active charge.
         if (linksLength == 0 || link) {
             
-            t.activeCharge += coins + activeCoins;
-            emit ActiveCharge(tokenId, coins + activeCoins);
+            uint256 totalIncoming = coins + activeCoins;
+            
+            // Check for Amplifier Buff
+            // activeCoins here includes Affinity Bonuses from upstream
+            if (t.buff.amplification > 0 && block.timestamp < t.buff.expiresAt) {
+                // Calculate bonus: (Total * Multiplier) / 100
+                uint256 boost = (totalIncoming * t.buff.amplification) / 100;
+                totalIncoming += boost;
+            }
+            
+            t.activeCharge += totalIncoming;
+            emit ActiveCharge(tokenId, totalIncoming);
 
         } else {    
             // Distribute the value and coins among all linked tokens.
@@ -2007,10 +2021,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             remainingMinutes = 1;
         }
         
-        // Calculate Magnitude based on efficiency + optional attunement
-        uint8 magnitude = buff.efficiencyBonus;
+        // Calculate Magnitude based on efficiency + optional attunement + optional amplification
+        uint8 magnitude = buff.efficiencyBonus + buff.amplification;
         if (buff.attunement > 0) {
-            magnitude += MAX_BUFF_BONUS;
+            magnitude += uint8(MAX_BUFF_BONUS / AFFINITY_REDUCTION);
         }
 
         uint256 cost = _buffCost(magnitude, remainingMinutes, 1);
@@ -2182,23 +2196,24 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  efficiencyBonus The temporary bonus (0–100) added to each link's base efficiency.
     /// @param  attunement      Planar ID to mimic for affinity (1-18, or 0 for none).
     /// @param  duration        The buff duration in minutes (1–1440).
-    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint256 duration) external nonReentrant {
+    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint256 duration) external nonReentrant {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
 
         require(t.active, "DIGIL: Token Not Active");
 
-        require((efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) || (attunement > 0 && attunement <= PLANAR_MAX_ID), "DIGIL: Invalid Buff");
+        require((efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) || (attunement > 0 && attunement <= PLANAR_MAX_ID) || (amplification > 0 && amplification <= MAX_BUFF_BONUS), "DIGIL: Invalid Buff");
         
         require(duration > 0 && duration <= MAX_BUFF_DURATION_MIN, "DIGIL: Invalid Buff Duration");
 
         uint256 linkCount = t.links.length;
         uint256 count = linkCount < 1 ? 1 : linkCount;
 
-        uint8 magnitude = efficiencyBonus;
+        // Cost Calculation: Sum of Efficiency + Amplification + fixed cost for Attunement
+        uint8 magnitude = efficiencyBonus + amplification;
         if (attunement > 0) {
-            magnitude += MAX_BUFF_BONUS;
+            magnitude += uint8(MAX_BUFF_BONUS / AFFINITY_REDUCTION);
         }
 
         uint256 cost = _buffCost(magnitude, duration, count);
@@ -2212,8 +2227,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.buff.expiresAt = uint64(expiry);
         t.buff.efficiencyBonus = efficiencyBonus;
         t.buff.attunement = attunement;
+        t.buff.amplification = amplification;
 
-        emit Buff(tokenId, efficiencyBonus, attunement, duration);
+        emit Buff(tokenId, efficiencyBonus, attunement, amplification, duration);
     }
 
     /// @notice Pays ERC20 Coins to protect the token from "bleed" during the next
