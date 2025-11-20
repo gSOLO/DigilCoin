@@ -145,7 +145,7 @@ contract DeltaTestSuite {
             dischargeComplete = digil.dischargeToken(dischargeTokenId);
         }
 
-        (, , , , , , uint256 contributionEpoch, uint256 distributionIndex, ) = digil.tokenData(dischargeTokenId);
+        (, , , , , , , uint256 contributionEpoch, uint256 distributionIndex, ) = digil.tokenData(dischargeTokenId);
         Assert.equal(contributionEpoch, 1, "Token contribution epoch in invalid state != 1");
         Assert.ok(distributionIndex == 0, "Token distribution in invalid state > 0");
 

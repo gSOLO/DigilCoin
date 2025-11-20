@@ -88,7 +88,7 @@ contract GammaTestSuite {
         Assert.ok(approved, "Coin approval failed");
 
         uint256 tokenId = digil.createToken(0, 0, false, 4, "Source Plane");
-        (, , , , uint256 links, , , , ) = digil.tokenData(tokenId);
+        (, , , , , uint256 links, , , , ) = digil.tokenData(tokenId);
         Assert.equal(links, 1, "Invalid Link Count (!=1)");
         (uint256 charge, uint256 activeCharge, uint256 value, , ) = digil.tokenCharge(tokenId);
         Assert.equal(charge, 0, "Invalid initial Source charge");
@@ -106,7 +106,7 @@ contract GammaTestSuite {
         uint256 waterTokenId = digil.createToken(0, 0, false, 7, "Water Destination Plane");
 
         digil.linkToken(tokenId, fireTokenId, 10);                           // coins: 1000 base: 10 bonus: 10
-        (, , , , links, , , , ) = digil.tokenData(tokenId);
+        (, , , , , links, , , , ) = digil.tokenData(tokenId);
         Assert.equal(links, 2, "Invalid Link Count (!=2)");
         (charge, activeCharge, value, , ) = digil.tokenCharge(fireTokenId);
         Assert.equal(charge, 0, "Invalid initial Fire Destination charge");
@@ -119,7 +119,7 @@ contract GammaTestSuite {
         Assert.equal(affinityBonus, 10, "Invalid fire link affinity bonus");
         
         digil.linkToken(tokenId, airTokenId, 10);                            // coins: 1000 base: 10 bonus: 20
-        (, , , , links, , , , ) = digil.tokenData(tokenId);
+        (, , , , , links, , , , ) = digil.tokenData(tokenId);
         Assert.equal(links, 3, "Invalid Link Count (!=3)");
         (charge, activeCharge, value, , ) = digil.tokenCharge(airTokenId);
         Assert.equal(charge, 0, "Invalid initial Air Destination charge");
@@ -132,7 +132,7 @@ contract GammaTestSuite {
         Assert.equal(affinityBonus, 20, "Invalid air link affinity bonus");
 
         digil.linkToken{value: 100000000000000}(tokenId, earthTokenId, 10);  // coins: 1000 base: 10 bonus: 0
-        (, , , , links, , , , ) = digil.tokenData(tokenId);
+        (, , , , , links, , , , ) = digil.tokenData(tokenId);
         Assert.equal(links, 4, "Invalid Link Count (!=4)");
         (charge, activeCharge, value, , ) = digil.tokenCharge(earthTokenId);
         Assert.equal(charge, 0, "Invalid initial Earth Destination charge");
@@ -145,7 +145,7 @@ contract GammaTestSuite {
         Assert.equal(affinityBonus, 0, "Invalid earth link affinity bonus");
 
         digil.linkToken(tokenId, waterTokenId, 5);                          // coins: 1000 base: 5 bonus: 0
-        (, , , , links, , , , ) = digil.tokenData(tokenId);
+        (, , , , , links, , , , ) = digil.tokenData(tokenId);
         Assert.equal(links, 5, "Invalid Link Count (!=5)");
         (charge, activeCharge, value, , ) = digil.tokenCharge(waterTokenId);
         Assert.equal(charge, 0, "Invalid initial Water Destination charge");

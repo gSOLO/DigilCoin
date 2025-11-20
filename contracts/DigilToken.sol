@@ -947,14 +947,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return activating Whether the token is being activated.
     /// @return discharging Whether the token is being discharged.
     /// @return restricted Whether the token is restricted.
+    /// @return stabilized Whether the token is stabilized.
     /// @return links The number of links associated with the token.
     /// @return contributors The number of contributor addresses.
     /// @return contributionEpoch The logical epoch for contributions on this token.
     /// @return distributionIndex The current distribution index.
     /// @return data Arbitrary data stored with the token.
-    function tokenData(uint256 tokenId) external view tokenExists(tokenId) returns(bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data) {
+    function tokenData(uint256 tokenId) external view tokenExists(tokenId) returns(bool active, bool activating, bool discharging, bool restricted, bool stabilized, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data) {
         Token storage t = _tokens[tokenId]; 
-        return (t.active, t.activating, t.discharging, t.restricted, t.links.length, t.contributors.length, t.contributionEpoch, t.distributionIndex, t.data);
+        return (t.active, t.activating, t.discharging, t.restricted, t.buff.stabilized, t.links.length, t.contributors.length, t.contributionEpoch, t.distributionIndex, t.data);
     }
 
     /// @notice Retrieves contribution details for a specific address on a given token.
@@ -2168,12 +2169,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Pays ERC20 Coins to protect the token from "bleed" during the next
     ///         deactivation or recall.
-    /// @dev    Base Cost is 20% of the current activeCharge, payable in Coins.
+    /// @dev    Base Cost is 25% of the current activeCharge, payable in Coins.
     ///         (This allows the user to pay a smaller fee to save the 50% bleed).
     ///         If a buff is active, cost is further reduced by: cost * 100 / (100 + bonus).
     ///         Sets the `stabilized` flag to true.
     /// @param  tokenId The token ID to stabilize.
-    function stabilizeToken(uint256 tokenId) external nonReentrant  approved(tokenId) {
+    function stabilizeToken(uint256 tokenId) external nonReentrant approved(tokenId) {
         Token storage t = _tokens[tokenId];
         require(!t.buff.stabilized, "DIGIL: Already Stabilized");
         

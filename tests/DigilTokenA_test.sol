@@ -50,23 +50,23 @@ contract AlphaTestSuite {
     function testCreateToken() public {
         uint256 incrementalValue = 100000000000000;
         uint256 activationThreshold = 100000000000000000;
-        bool restricted = false;
         uint256 plane = 4;                    
         bytes memory data = "Test Token";
 
         uint256 balanceTokens = digil.balanceOf(address(this));
         Assert.equal(balanceTokens, 1, "Token balance should be 1"); // Form Withdraw
 
-        uint256 tokenId = digil.createToken(incrementalValue, activationThreshold, restricted, plane, data);
+        uint256 tokenId = digil.createToken(incrementalValue, activationThreshold, false, plane, data);
 
         balanceTokens = digil.balanceOf(address(this));
         Assert.equal(balanceTokens, 2, "Token balance should be 2");
        
-        (bool active, bool activating, bool discharging, bool tokenRestricted, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory tokenData) = digil.tokenData(tokenId);
+        (bool active, bool activating, bool discharging, bool tokenRestricted, bool tokenStabilized, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory tokenData) = digil.tokenData(tokenId);
         Assert.ok(active == false, "Token should be inactive initially");
         Assert.ok(activating == false, "Token should not be activating at creation");
         Assert.ok(discharging == false, "Token should not be discharging at creation");
-        Assert.ok(tokenRestricted == restricted, "Token restriction flag mismatch");
+        Assert.ok(tokenRestricted == false, "Token restriction flag mismatch");
+        Assert.ok(tokenStabilized == false, "Token restriction flag mismatch");
         Assert.ok(links == 1, "Token should have a plane link if plane > 0");
         Assert.ok(contributors == 0, "Token should have no contributors at creation, including creator");
         Assert.ok(contributionEpoch == 0, "Token contribution epoch should be 0 at creation");
@@ -178,16 +178,16 @@ contract AlphaTestSuite {
         Assert.ok(newCharge >= initialCharge + coinMultiplier * 15, "Token charge did not increase appropriately");
         Assert.ok(newValue == initialValue, "Token value should not increase");
 
-        (, , , , , , uint256 contributionEpoch, uint256 distributionIndex, ) = digil.tokenData(tokenId);
+        (, , , , , , , uint256 contributionEpoch, uint256 distributionIndex, ) = digil.tokenData(tokenId);
         Assert.ok(contributionEpoch == 0, "Token contribution epoch in invalid state > 0");
         Assert.ok(distributionIndex == 0, "Token distribution in invalid state > 0");
 
         while(!digil.dischargeToken{value: incrementalValue}(tokenId)) {
-            (, , , , , , , distributionIndex, ) = digil.tokenData(tokenId);
+            (, , , , , , , , distributionIndex, ) = digil.tokenData(tokenId);
             Assert.ok(distributionIndex > 0, "Token distribution in invalid state (0)");
         }
 
-        (, , , , , , contributionEpoch, distributionIndex, ) = digil.tokenData(tokenId);
+        (, , , , , , , contributionEpoch, distributionIndex, ) = digil.tokenData(tokenId);
         Assert.equal(contributionEpoch, 1, "Token contribution epoch in invalid state != 1");
         Assert.ok(distributionIndex == 0, "Token distribution in invalid state > 0");
 
@@ -231,18 +231,18 @@ contract AlphaTestSuite {
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
         Assert.ok(newValue == incrementalValue * 5, "Token value did not increase appropriately");
 
-        (bool isActive, bool isActivating, bool isDischarging, , , , , , ) = digil.tokenData(tokenId);
+        (bool isActive, bool isActivating, bool isDischarging, , , , , , , ) = digil.tokenData(tokenId);
         Assert.ok(!isActive, "Token activation in invalid state (active)");
         Assert.ok(!isActivating, "Token activation in invalid state (activating)");
         Assert.ok(!isDischarging, "Token distribution in invalid state (discharging)");
 
         bool activationComplete = digil.activateToken(tokenId);
         while(!activationComplete) {
-            (, isActivating, , , , , , , ) = digil.tokenData(tokenId);
+            (, isActivating, , , , , , , , ) = digil.tokenData(tokenId);
             Assert.ok(isActivating, "Token activation in invalid state (not activating)");
             activationComplete = digil.activateToken(tokenId);
         }
-        (isActive, isActivating, , , , , , , ) = digil.tokenData(tokenId);
+        (isActive, isActivating, , , , , , , , ) = digil.tokenData(tokenId);
         Assert.ok(isActive, "Token activation in invalid state (active == false)");
         Assert.ok(!isActivating, "Token activation in invalid state (activating)");
 

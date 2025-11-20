@@ -84,7 +84,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     // Token Information
     function tokenURI(uint256 tokenId) external view returns (string memory);
     function tokenCharge(uint256 tokenId) external view returns (uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold);
-    function tokenData(uint256 tokenId) external view returns (bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data);
+    function tokenData(uint256 tokenId) external view returns (bool active, bool activating, bool discharging, bool restricted, bool stabilized, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data);
     function tokenContribution(uint256 tokenId, address contributor) external view returns (uint256 charge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch);
     function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 base, uint256 affinityBonus, uint8 buffBonus, uint64 buffExpiresAt, uint256 effectiveBase);
     function tokenAttachment(uint256 tokenId) external view returns (address contractTokenAddress, uint256 externalTokenId, bool recallable); 
@@ -117,8 +117,14 @@ interface IDigilToken is IERC721, IERC721Receiver {
     // Unlink Token
     function unlinkToken(uint256 tokenId, uint256 linkId) external;
 
-    // Buff Token Links
-    function buffLinks(uint256 tokenId, uint8 bonus, uint256 duration) external;
+    // Buff Token
+    function buffToken(uint256 tokenId, uint8 bonus, uint256 duration) external;
+
+    // Stabilize Token
+    function stabilizeToken(uint256 tokenId) external;
+
+    // Overcharge Token
+    function overchargeToken(uint256 tokenId, uint256 coins) external payable;
 
     // Create Value (Admin Function)
     function createValue(uint256 tokenId, uint256 value) external payable;
