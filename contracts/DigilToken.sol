@@ -975,8 +975,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Retrieves link information for a token at a specific index, including
     ///         current buff state and effective base efficiency.
-    /// @dev    If the index is out of bounds for the token's `links` array, this
-    ///         function returns zeros for all fields instead of reverting.
+    /// @dev    If the index is out of bounds for the token's `links` array, revert.
     ///         - `base` is the stored base efficiency.
     ///         - `affinityBonus` is the stored affinity-based efficiency.
     ///         - `buffBonus` / `buffExpiresAt` describe the shared temporary buff on
@@ -985,7 +984,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///           this link, including any active buff, capped at 255.
     /// @param  tokenId The ID of the source token whose link is being queried.
     /// @param  index The zero-based index into the token's `links` array.
-    /// @return linkId The ID of the linked token (or plane) at the given index, or 0 if out of bounds.
+    /// @return linkId The ID of the linked token (or plane) at the given index.
     /// @return base The stored base efficiency percentage for this link.
     /// @return affinityBonus The additional affinity-based efficiency for this link.
     /// @return buffBonus The temporary buff bonus applied to all outgoing links (0–100).
@@ -994,10 +993,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function tokenLinkAt(uint256 tokenId, uint256 index) external view tokenExists(tokenId) returns (uint256 linkId, uint8 base, uint256 affinityBonus, uint8 buffBonus, uint64 buffExpiresAt, uint256 effectiveBase) {
         Token storage t = _tokens[tokenId];
 
-        // If index is out of bounds, return zeros instead of reverting.
-        if (index >= t.links.length) {
-            return (0, 0, 0, 0, 0, 0);
-        }
+        // If index is out of bounds, revert.
+        require(index < t.links.length, "DIGIL: Link Index Out Of Bounds");
 
         linkId = t.links[index];
         LinkEfficiency storage efficiency = t.linkEfficiency[linkId];
