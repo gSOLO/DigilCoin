@@ -13,7 +13,7 @@ import "../contracts/IDigilToken.sol";
 import "../contracts/DigilTestLibrary.sol";
 
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
-contract HotelTestSuite {
+contract IndiaTestSuite {
     IERC20 public coins;
     IDigilToken public digil;
     uint256 activeTokenId;
@@ -89,7 +89,7 @@ contract HotelTestSuite {
         bool approved = coins.approve(address(digil), 515 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        activeTokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 0, "Source Plane");
+        activeTokenId = digil.createToken(incrementalValue, 0, false, 0, "Source Plane");
 
         for (uint256 accountIndex; accountIndex < 15; accountIndex++) {
             digil.chargeTokenAs{value: incrementalValue}(TestsAccounts.getAccount(accountIndex), activeTokenId, coinMultiplier);
@@ -130,7 +130,7 @@ contract HotelTestSuite {
 
     /// #sender: account-8
     /// #value: 5100000000000000
-    function testLinkToken() external payable {
+    function testBuffToken() external payable {
         uint256 coinMultiplier = 10 ** 18;
 
         // Approve the Digil Token contract to spend the specified coinAmount.
@@ -145,9 +145,6 @@ contract HotelTestSuite {
         Assert.equal(value, 0, "Invalid initial Source value");
 
         uint256 fireTokenId = digil.createToken(0, 0, false, 4, "Fire Destination Plane");
-        uint256 airTokenId = digil.createToken(0, 0, false, 5, "Air Destination Plane");
-        uint256 earthTokenId = digil.createToken(100000000000000, 0, false, 6, "Earth Destination Plane");
-        uint256 waterTokenId = digil.createToken(0, 0, false, 7, "Water Destination Plane");
 
         digil.linkToken{value: 100000000000000}(activeTokenId, fireTokenId, 10);
         (, , , , links, , , , ) = digil.tokenData(activeTokenId);
@@ -156,59 +153,54 @@ contract HotelTestSuite {
         Assert.equal(charge, 0, "Invalid initial Fire Destination charge");
         Assert.equal(activeCharge, 0, "Invalid Fire Destination active charge");
         Assert.equal(value, 50000000000000, "Invalid initial Fire Destination value");
-        
-        digil.linkToken{value: 100000000000000}(activeTokenId, airTokenId, 20);                            
-        (, , , , links, , , , ) = digil.tokenData(activeTokenId);
-        Assert.equal(links, 2, "Invalid Link Count (!=2)");
-        (charge, activeCharge, value, , ) = digil.tokenCharge(airTokenId);
-        Assert.equal(charge, 0, "Invalid initial Air Destination charge");
-        Assert.equal(activeCharge, 0, "Invalid initial Air Destination active charge");
-        Assert.equal(value, 50000000000000, "Invalid initial Air Destination value");
-
-        digil.linkToken{value: 200000000000000}(activeTokenId, earthTokenId, 5);  
-        (, , , , links, , , , ) = digil.tokenData(activeTokenId);
-        Assert.equal(links, 3, "Invalid Link Count (!=3)");
-        (charge, activeCharge, value, , ) = digil.tokenCharge(earthTokenId);
-        Assert.equal(charge, 0, "Invalid initial Earth Destination charge");
-        Assert.equal(activeCharge, 0, "Invalid initial Earth Destination active charge");
-        Assert.equal(value, 100000000000000, "Invalid initial Earth Destination value");
-
-        digil.linkToken{value: 100000000000000}(activeTokenId, waterTokenId, 5);                         
-        (, , , , links, , , , ) = digil.tokenData(activeTokenId);
-        Assert.equal(links, 4, "Invalid Link Count (!=4)");
-        (charge, activeCharge, value, , ) = digil.tokenCharge(waterTokenId);
-        Assert.equal(charge, 0, "Invalid initial Water Destination charge");
-        Assert.equal(activeCharge, 0, "Invalid initial Water Destination active charge");
-        Assert.equal(value, 50000000000000, "Invalid initial Water Destination value");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid new Source charge");
         Assert.equal(activeCharge, coinMultiplier * 512, "Invalid new Source active charge");
-        Assert.equal(value, 250000000000000, "Invalid new Source value");
 
         digil.buffToken(activeTokenId, 30, 24);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post buff Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 312, "Invalid post buff Source active charge");
-        Assert.equal(value, 250000000000000, "Invalid post buff Source value");
+        Assert.equal(activeCharge, coinMultiplier * 412, "Invalid post buff Source active charge");
 
-        digil.chargeToken{value: 200 * 100000000000000}(activeTokenId, 200 * coinMultiplier);
+        digil.deactivateToken(activeTokenId);
 
-        (charge, activeCharge, value, , ) = digil.tokenCharge(fireTokenId);
-        Assert.equal(charge, 20000000000000000000, "Invalid Fire charge");
-        Assert.equal(value, 50000000000000, "Invalid Fire value");
+        (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
+        Assert.equal(charge, 0, "Invalid post deactivate Source charge");
+        Assert.equal(activeCharge, coinMultiplier * 206, "Invalid post deactivate Source active charge");
 
-        (charge, activeCharge, value, , ) = digil.tokenCharge(airTokenId);
-        Assert.equal(charge, 25000000000000000000, "Invalid Air charge");
-        Assert.equal(value, 50000000000000, "Invalid Air value");
+        bool activationComplete = digil.activateToken(activeTokenId);
+        while(!activationComplete) {
+            activationComplete = digil.activateToken(activeTokenId);
+        }
 
-        (charge, activeCharge, value, , ) = digil.tokenCharge(earthTokenId);
-        Assert.equal(charge, 0, "Invalid Earth charge");
-        Assert.equal(value, 100000000000000, "Invalid Earth value");
+        (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
+        Assert.equal(charge, 0, "Invalid post activate Source charge");
+        Assert.equal(activeCharge, coinMultiplier * 206, "Invalid post activate Source active charge");
 
-        (charge, activeCharge, value, , ) = digil.tokenCharge(waterTokenId);
-        Assert.equal(charge, 17500000000000000000, "Invalid Water charge");
-        Assert.equal(value, 50000000000000, "Invalid Water value");
+        digil.overchargeToken{value: 100000000000000 * 306 * 2}(activeTokenId, 306 * coinMultiplier);
+
+        (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
+        Assert.equal(charge, 0, "Invalid post overcharge Source charge");
+        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid post overcharge Source active charge");
+
+        digil.stabilizeToken(activeTokenId);
+        digil.deactivateToken(activeTokenId);
+
+        (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
+        Assert.equal(charge, 0, "Invalid post stabalize and deactivate Source charge");
+        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid post stabalize and deactivate Source active charge");
+
+        activationComplete = digil.activateToken(activeTokenId);
+        while(!activationComplete) {
+            activationComplete = digil.activateToken(activeTokenId);
+        }
+
+        digil.deactivateToken(activeTokenId);
+
+        (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
+        Assert.equal(charge, 0, "Invalid final deactivate Source charge");
+        Assert.equal(activeCharge, coinMultiplier * 256, "Invalid final deactivate Source active charge");
     }
 }
