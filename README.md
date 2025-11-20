@@ -24,11 +24,13 @@ A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrin
 - [Read-Only Views](#read-only-views)
 - [Linking & Affinity](#linking--affinity)
   - [Temporary Link Buffs](#temporary-link-buffs)
+  - [Stabilization (Anti-Bleed)](#stabilization-anti-bleed)
 - [Vaulting External ERC-721s](#vaulting-external-erc-721s)
 - [Distributions, Withdrawals & Bonuses](#distributions-withdrawals--bonuses)
 - [Opt-Out / Blacklist](#opt-out--blacklist)
 - [Rescue & Recovery](#rescue--recovery)
 - [Admin & Security Notes](#admin--security-notes)
+  - [Overcharging](#overcharging)
 - [Pricing and Costs](#pricing-and-costs)
 - [How it Works: End-to-End Examples](#how-it-works-end-to-end-examples)
 
@@ -427,6 +429,20 @@ Returns link data for a given source token and index in its `links[]` array:
 
 This makes it easy for UIs to show whether a token is currently buffed, when the buff expires, and what real effectiveness each link is operating at.
 
+### `tokenAttachment(tokenId)`
+
+Returns information about vaulted external ERC721 tokens:
+
+```solidity
+(
+    address contractTokenAddress,
+    uint256 externalTokenId,
+    bool recallable
+)
+```
+- If `contractTokenAddress` is non-zero, this Digil is wrapping an external NFT.
+- `recallable` indicates if `recallToken` can currently be called.
+
 ### `previewWithdraw()` / `previewWithdrawOf(address)`
 
 Convenience views around the withdraw logic:
@@ -502,7 +518,7 @@ linkToken(tokenId, linkId, efficiency)
 ### Temporary Link Buffs
 
 ```solidity
-buffLinks(tokenId, bonus, duration)
+buffToken(tokenId, bonus, duration)
 ```
 
 (`nonReentrant`)
@@ -577,6 +593,23 @@ If you call `linkToken` to add **another link** while a buff is active:
   - Cost is the same `buffCost(bonus, remainingMinutes, linkCount = 1)` formula.
 - This ensures that adding new links during an ongoing buff properly **pays into** the buffed state, rather than getting a free ride.
 
+### Stabilization (Anti-Bleed)
+
+```solidity
+stabilizeToken(tokenId)
+```
+
+(`nonReentrant`)
+
+This function acts as **insurance** against the thematic bleed that occurs during `deactivateToken` or `recallToken`.
+
+- **Mechanism**: The owner pays ERC-20 Coins upfront to flag the token as `stabilized`.
+- **Benefit**: On the next bleed event, the bleed amount (normally ~50% of `activeCharge`) is **skipped**. The stabilization flag is then consumed.
+- **Cost**:
+  - Base cost is approximately **25%** of current `activeCharge` (calculated as `ac / 4`), subject to a minimum floor.
+  - This allows users to pay a smaller fee (~25%) to save the larger loss (~50%).
+  - If the token currently has an active **buff**, the stabilization cost is discounted (`cost * 100 / (100 + bonus)`).
+
 ---
 
 ## Vaulting External ERC-721s
@@ -629,7 +662,7 @@ recallToken(collection, digilId)
   - `token.contractTokenAddress = address(0)`
 - The external NFT is transferred back to the current Digil owner using `safeTransferFrom`, forwarding the Digil’s `data` bytes.
 - As part of recall, the Digil experiences **thematic bleed** on its `activeCharge`:
-  - `_applyActiveChargeBleed` is called, which currently burns ~50% of `activeCharge` (via division by `AFFINITY_REDUCTION`) and leaves the remainder on the token.
+  - `_applyActiveChargeBleed` is called, which currently burns ~50% of `activeCharge` (via division by `AFFINITY_REDUCTION`) and leaves the remainder on the token (unless the token was `stabilized`).
   - There is **no direct coin payout** from recall; instead, the act of pulling the vaulted NFT back to its owner “drains” part of the sigil’s power.
 
 Vaulted NFTs thus become **chargeable artifacts** whose built-up energy dynamics matter even when you decide to reclaim the underlying asset.
@@ -677,7 +710,7 @@ If the address holds **any Digil** (`balanceOf(addr) > 0`) or any **coin balance
 
 - For each `BONUS_INTERVAL` (15 minutes) since the last bonus timestamp (`distribution.time`), the account earns `+coinMultiplier` coins.
 - The raw bonus is capped per call:
-  - On the **first qualifying withdrawal** (i.e. when `distribution.time == 0`), the cap is:
+  - On the **first qualifying withdraw** (i.e. when `distribution.time == 0`), the cap is:
 
     ```text
     cap = FIRST_WITHDRAW_MULTIPLIER × _coinRate
@@ -811,6 +844,18 @@ This provides a bounded way for the admin to clean up truly abandoned or stuck s
   - `_pendingBonus` centralizes bonus math and is reused by `withdraw` and `previewWithdraw*`.
   - The first qualifying withdraw for an address can grant up to `FIRST_WITHDRAW_MULTIPLIER × _coinRate` in time-based bonus coins, after which future withdraws are capped at `_coinRate` per call.
 
+### Overcharging
+
+```solidity
+overchargeToken(tokenId, coins)
+```
+(Owner-only, payable)
+
+Allows the owner to convert ETH directly into `activeCharge` for a token.
+- No contribution records are created.
+- ETH is treated as system fuel (added to contract value).
+- Cost is premium (2x): `(incrementalValue * coins * AFFINITY_BOOST) / _coinMultiplier`.
+
 ---
 
 ## Pricing and Costs
@@ -929,7 +974,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
 
 **Buffing**
 
-- `buffLinks`
+- `buffToken`
   - ETH:
     - No ETH cost; call is not payable.
   - Coins / power:
@@ -943,6 +988,20 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
 - Adding a **new link during an active buff** triggers an **extra cost**:
   - Uses the same formula but with `linkCount = 1` and only the **remaining** buff duration.
   - If `activeCharge < cost`, linking reverts with `InsufficientActiveCharge`.
+
+**Stabilization**
+
+- `stabilizeToken`
+  - ETH:
+    - No ETH cost.
+  - Coins:
+    - User pays ~25% of the token's `activeCharge` in ERC20 coins (discounted if buff active).
+
+**Overcharging**
+
+- `overchargeToken` (Owner only)
+  - ETH:
+    - Payable. Cost is `(incrementalValue * coins * 2) / _coinMultiplier`.
 
 **Opt-out / Opt-in**
 
@@ -964,7 +1023,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
   - ETH:
     - No ETH cost; call is not payable.
   - Coins / power:
-    - Applies `_applyActiveChargeBleed` to the Digil, burning ~50% of `activeCharge`.
+    - Applies `_applyActiveChargeBleed` to the Digil, burning ~50% of `activeCharge` (unless stabilized).
 
 **Withdrawals**
 
@@ -1288,7 +1347,7 @@ Assume:
 Calling:
 
 ```solidity
-buffLinks(
+buffToken(
   tokenId  = tokenA,
   bonus    = 30,
   duration = 60        // minutes
