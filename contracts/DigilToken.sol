@@ -102,7 +102,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint64 expiresAt;       // Unix timestamp (in seconds) when the buff expires
         uint8 efficiencyBonus;  // Temporary bonus on top of base efficiency (0–100)
         uint8 attunement;       // ID of the plane to mimic (1-18)
-        uint8 amplification;    // Bonus multiplier for charge (0-100)
+        uint8 amplification;    // Bonus multiplier percentage for incoming charge (e.g. 20 = 1.2x)
         bool stabilized;        // Prevents activeCharge bleed on next event
     }
 
@@ -223,8 +223,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Emitted when a temporary buff is applied to a token.
     /// @param  tokenId The token whose outgoing links were buffed.
     /// @param  efficiencyBonus The temporary bonus applied on top of each link's base efficiency.
-    /// @param  attunement The temporary plan this token is attuned with
-    /// @param  amplification The temporary amplification applied to activeBonus
+    /// @param  attunement The temporary plane this token is attuned with.
+    /// @param  amplification The percentage multiplier applied to incoming charge.
     /// @param  duration The buff duration, in minutes.
     event Buff(uint256 indexed tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint256 duration);
 
@@ -989,25 +989,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return (c.charge, c.value, c.exists, c.distributed, c.whitelisted, c.epoch);
     }
 
-    /// @notice Retrieves link information for a token at a specific index, including
-    ///         current buff state and effective base efficiency.
-    /// @dev    If the index is out of bounds for the token's `links` array, revert.
-    ///         - `base` is the stored base efficiency.
-    ///         - `affinityBonus` is the stored affinity-based efficiency.
-    ///         - `buffBonus` / `buffExpiresAt` describe the shared temporary buff on
-    ///           all outgoing links from this token.
-    ///         - `effectiveBase` is the base efficiency actually used right now for
-    ///           this link, including any active buff, capped at 255.
+    /// @notice Retrieves link information for a token at a specific index.
     /// @param  tokenId The ID of the source token whose link is being queried.
     /// @param  index The zero-based index into the token's `links` array.
     /// @return linkId The ID of the linked token (or plane) at the given index.
     /// @return base The stored base efficiency percentage for this link.
     /// @return affinityBonus The additional affinity-based efficiency for this link.
-    /// @return buffBonus The temporary buff bonus applied to all outgoing links (0–100).
-    /// @return buffAttunement The current attunement (0 if none)
-    /// @return buffAmplification The temporary buff bonus applied to all outgoing links (0–100).
+    /// @return buffBonus The temporary efficiency bonus applied to all outgoing links (0–100).
+    /// @return buffAttunement The current attunement Planar ID (0 if none).
+    /// @return buffAmplification The current charge amplification percentage (0 if none).
     /// @return buffExpiresAt The unix timestamp when the buff expires (0 if none).
-    /// @return effectiveBase The effective base efficiency including any active buff.
+    /// @return effectiveBase The effective base efficiency including any active buff
     function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 base, uint256 affinityBonus, uint8 buffBonus, uint8 buffAttunement, uint8 buffAmplification, uint64 buffExpiresAt, uint256 effectiveBase) {
         _checktokenExists(tokenId);
         
@@ -2190,11 +2182,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - Applies the same `bonus` to all outgoing links.
     ///         - Lasts for `duration`, capped at 24 hours.
     ///         Cost is approximately:
-    ///             cost ≈ bonus * hours * linkCount * LINK_BUFF_COST_FACTOR
+    ///             cost ≈ magnitude * hours * linkCount * LINK_BUFF_COST_FACTOR
     ///         where `hours = duration / 60`.
     /// @param  tokenId The ID of the token whose links are to be buffed.
     /// @param  efficiencyBonus The temporary bonus (0–100) added to each link's base efficiency.
     /// @param  attunement      Planar ID to mimic for affinity (1-18, or 0 for none).
+    /// @param  amplification   Percentage multiplier applied to incoming charge (0-100, or 0 for none).
     /// @param  duration        The buff duration in minutes (1–1440).
     function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint256 duration) external nonReentrant {
         _checkApproved(tokenId);
