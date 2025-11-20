@@ -56,9 +56,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private constant AFFINITY_BOOST = 2;                // Multiplier for strong affinity bonuses
     uint256 private constant AFFINITY_REDUCTION = 2;            // Divisor for weak affinity bonuses and charge-balancing penalties
 
-    // Link buff configuration
-    uint8  private constant MAX_LINK_BUFF_BONUS        = 100;          // Maximum temporary bonus on token links
-    uint16 private constant MAX_LINK_BUFF_DURATION_MIN = 24 * 60;      // Maximum duration of link buffs (24 hours)
+    // Buff configuration
+    uint8  private constant MAX_BUFF_BONUS        = 100;          // Maximum temporary bonus
+    uint16 private constant MAX_BUFF_DURATION_MIN = 24 * 60;      // Maximum duration of buffs (24 hours)
     uint256 private constant LINK_BUFF_COST_FACTOR     = 24 * 60;      // The cost per bonus-point-hour per link
 
     // Mappings for token data, blacklisted addresses, distributions, and contract tokens
@@ -97,10 +97,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 affinityBonus;  // Additional bonus efficiency generated from planar affinity
     }
 
-    /// @dev State for a temporary link buff on a token
-    struct LinkBuffState {
-        uint8 bonus;       // temporary bonus on top of base efficiency (0–100)
-        uint64 expiresAt;  // unix timestamp (in seconds) when the buff expires
+    /// @dev State for a temporary buff on a token
+    struct BuffState {
+        uint8 bonus;       // Temporary bonus on top of base efficiency (0–100)
+        bool stabilized;   // Prevents activeCharge bleed on next event
+        uint64 expiresAt;  // Unix timestamp (in seconds) when the buff expires
     }
 
     /// @dev Structure to hold detailed token information
@@ -125,7 +126,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256[] links;            // Array of token IDs or plane IDs the token is linked to
         mapping(uint256 => LinkEfficiency) linkEfficiency;  // Mapping of link ID to its efficiency settings
         // Temporary buff applied to all outgoing links from this token.
-        LinkBuffState linkBuff;
+        BuffState buff;
         
         // Contributor Data
         address[] contributors;                                 // List of contributor addresses that have charged this token
@@ -217,11 +218,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  linkId The ID of the token that was unlinked from
     event Unlink(uint256 indexed tokenId, uint256 indexed linkId);
 
-    /// @notice Emitted when a temporary link buff is applied to a token.
+    /// @notice Emitted when a temporary buff is applied to a token.
     /// @param  tokenId The token whose outgoing links were buffed.
     /// @param  bonusEffectiveness The temporary bonus applied on top of each link's base efficiency.
     /// @param  duration The buff duration, in minutes.
-    event LinkBuff(uint256 indexed tokenId, uint8 bonusEffectiveness, uint256 duration);
+    event Buff(uint256 indexed tokenId, uint8 bonusEffectiveness, uint256 duration);
+
+    /// @notice Emitted when a token is stabilized to prevent active charge bleed.
+    /// @param  tokenId The ID of the token being stabilized.
+    event Stabilize(uint256 indexed tokenId);
 
     /// @notice Emitted when value is generated for the contract.
     /// @dev    Value can be assigned to a token by using the admin function createValue
@@ -1002,7 +1007,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         base = efficiency.base;
         affinityBonus = efficiency.affinityBonus;
 
-        LinkBuffState storage buff = t.linkBuff;
+        BuffState storage buff = t.buff;
         buffBonus = buff.bonus;
         buffExpiresAt = buff.expiresAt;
 
@@ -1246,13 +1251,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _effectiveBaseEfficiency(uint256 linkId, Token storage t) internal view returns (uint256 effectiveBase) {
         uint8 base = t.linkEfficiency[linkId].base;
 
-        LinkBuffState storage buff = t.linkBuff;
-        if (buff.bonus == 0 || block.timestamp >= buff.expiresAt) {
-            // no active buff
+        uint8 bonus = _activeBuffBonus(t);
+        if (bonus == 0) {
+            // No active buff
             return base;
         }
 
-        uint256 boosted = uint256(base) + uint256(buff.bonus);
+        uint256 boosted = uint256(base) + uint256(bonus);
         if (boosted > type(uint8).max) {
             boosted = type(uint8).max;
         }
@@ -1587,9 +1592,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     emit ActiveCharge(tokenId, dCharge);
                 }
 
-                // Create a distribution for the token owner and add remaining value to the contract.
-                _addDistributedValue(ownerOf(tokenId), distribution);
-                _addValue(tValue);
+                // Create a distribution for the token owner and include remaining value.
+                _addDistributedValue(ownerOf(tokenId), distribution + tValue);
                 
             }
 
@@ -1717,8 +1721,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.contributionEpoch += 1;
 
         // Clear any buffs
-        t.linkBuff.bonus = 0;
-        t.linkBuff.expiresAt = 0;
+        delete t.buff;
 
         // Clear flag on completion
         t.discharging = false;
@@ -1767,6 +1770,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _applyActiveChargeBleed(Token storage t) internal {
         uint256 ac = t.activeCharge;
         if (ac == 0) return;
+
+        if (t.buff.stabilized) {
+            // Consume the protection, but skip the bleed
+            t.buff.stabilized = false;
+            return;
+        }
 
         uint256 lost = ac / AFFINITY_REDUCTION; // e.g., half
         t.activeCharge = ac - lost;
@@ -1818,12 +1827,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  linkCount   The total number of links on the token *after* this call.
     /// @param  isNewLink   True if this is the first time linking to `linkId`.
     /// @return cost        The number of coin units to charge (in `_coinRate` units).
-    function _linkCoinCost(uint8 efficiency, uint256 linkCount, bool isNewLink) internal view returns (uint256 cost) {
+    /// @param  buffBonus   The current active buff bonus (0 if inactive).
+    function _linkCoinCost(uint8 efficiency, uint256 linkCount, bool isNewLink, uint8 buffBonus) internal view returns (uint256 cost) {
         // Existing scaling logic: efficiency plus triangular escalation.
         uint256 linkScale = 200 / linkCount;
         uint256 eAdj = efficiency > linkScale ? efficiency - linkScale : 0;
         uint256 baseCost = (efficiency + (eAdj * (eAdj + 1) / 2)) * _coinRate;
 
+        // If a buff is active, discount the base cost.
+        // Formula: cost = cost * 100 / (100 + bonus)
+        if (buffBonus > 0) {
+            baseCost = baseCost * 100 / (100 + uint256(buffBonus));
+        }
+        
         cost = baseCost;
 
         if (isNewLink) {
@@ -1874,7 +1890,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // and the new efficiency must strictly improve on the current base.
         require(tokenId != linkId && linkId > PLANAR_MAX_ID && efficiency > baseEfficiency, "DIGIL: Invalid Link" );
 
-        // If a temporary link buff is active, charge additional activeCharge
+        // If a temporary buff is active, charge additional activeCharge
         // for adding a new outgoing link while the buff is still running.
         _chargeBuffForNewLink(t);
 
@@ -1910,12 +1926,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         LinkEfficiency storage eff = t.linkEfficiency[linkId];
         emit Link(tokenId, linkId, eff.base, eff.affinityBonus);
 
-        // Compute and charge coin cost, including early-link discounts.
-        uint256 coinCost = _linkCoinCost(efficiency, t.links.length, isNewLink);
+        // Determine if a buff is currently active for the a discount.
+        uint8 buffBonus = _activeBuffBonus(t);
+
+        // Compute and charge coin cost, including early-link and active buff discounts.
+        uint256 coinCost = _linkCoinCost(efficiency, t.links.length, isNewLink, buffBonus);
         _coinsFromSender(coinCost);
     }
 
-    /// @dev    Computes the activeCharge cost of a link buff given:
+    /// @dev    Computes the activeCharge cost of a buff given:
     ///         - bonus: temporary bonus effectiveness (0–100)
     ///         - duration: duration in whole minutes
     ///         - linkCount: number of affected links
@@ -1934,22 +1953,22 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         cost = uint256(bonus) * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR;
 
-        // Enforce your "minimum cost = _coinRate" rule for any non-zero buff.
+        // Enforce "minimum cost = _coinRate" rule for any non-zero buff.
         if (cost > 0 && cost < _coinRate) {
             cost = _coinRate;
         }
     }
 
     /// @dev    Charges additional activeCharge when a new link is created while a temporary
-    ///         link buff is active for the given token. Uses the remaining buff duration
+    ///         buff is active for the given token. Uses the remaining buff duration
     ///         and the same cost model as {buffLinks}, but per-link (linkCount = 1).
     ///         No-op if no active buff or the buff has expired.
     /// @param  t The source token storage reference whose buff should be charged.
     function _chargeBuffForNewLink(Token storage t) internal {
-        LinkBuffState storage buff = t.linkBuff;
+        BuffState storage buff = t.buff;
 
         // No active buff, nothing to do.
-        if (buff.bonus == 0 || block.timestamp >= buff.expiresAt) {
+        if (block.timestamp >= buff.expiresAt) {
             return;
         }
 
@@ -2100,8 +2119,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
+    // Buffs
+
+    /// @dev Returns the active buff bonus, or 0 if expired/inactive.
+    function _activeBuffBonus(Token storage t) internal view returns (uint8) {
+        // If inactive, expiresAt is 0, and timestamp < 0 is false.
+        if (block.timestamp < t.buff.expiresAt) {
+            return t.buff.bonus;
+        }
+        return 0;
+    }
+
     /// @notice Temporarily buffs all outgoing links from a token by adding a bonus
-    ///         on top of each link's base efficiency.
+    ///         on top of each link's base efficiency, and offers discounts on linking and stabilization costs.
     /// @dev    The buff:
     ///         - Consumes `activeCharge` from the token as a cost.
     ///         - Applies the same `bonus` to all outgoing links.
@@ -2112,17 +2142,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token whose links are to be buffed.
     /// @param  bonus The temporary bonus (0–100) added to each link's base efficiency.
     /// @param  duration The buff duration in minutes (1–1440).
-    function buffLinks(uint256 tokenId, uint8 bonus, uint256 duration) external nonReentrant approved(tokenId) {
+    function buffToken(uint256 tokenId, uint8 bonus, uint256 duration) external nonReentrant approved(tokenId) {
         Token storage t = _tokens[tokenId];
 
         uint256 linkCount = t.links.length;
+        uint256 count = linkCount < 1 ? 1 : linkCount;
 
         require(t.active, "DIGIL: Token Not Active");
-        require(linkCount > 0, "DIGIL: No Links");
-        require(bonus > 0 && bonus <= MAX_LINK_BUFF_BONUS, "DIGIL: Invalid Buff Bonus");
-        require(duration > 0 && duration <= MAX_LINK_BUFF_DURATION_MIN, "DIGIL: Invalid Buff Duration");
+        require(bonus > 0 && bonus <= MAX_BUFF_BONUS, "DIGIL: Invalid Buff Bonus");
+        require(duration > 0 && duration <= MAX_BUFF_DURATION_MIN, "DIGIL: Invalid Buff Duration");
 
-        uint256 cost = _buffCost(bonus, duration, linkCount);
+        uint256 cost = _buffCost(bonus, duration, count);
         if (t.activeCharge < cost) revert InsufficientActiveCharge(cost);
 
         // Pay the cost in activeCharge
@@ -2130,10 +2160,91 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Compute expiry timestamp in seconds
         uint256 expiry = block.timestamp + (duration * 1 minutes);
-        t.linkBuff.bonus = bonus;
-        t.linkBuff.expiresAt = uint64(expiry);
+        t.buff.bonus = bonus;
+        t.buff.expiresAt = uint64(expiry);
 
-        emit LinkBuff(tokenId, bonus, duration);
+        emit Buff(tokenId, bonus, duration);
+    }
+
+    /// @notice Pays ERC20 Coins to protect the token from "bleed" during the next
+    ///         deactivation or recall.
+    /// @dev    Base Cost is 20% of the current activeCharge, payable in Coins.
+    ///         (This allows the user to pay a smaller fee to save the 50% bleed).
+    ///         If a buff is active, cost is further reduced by: cost * 100 / (100 + bonus).
+    ///         Sets the `stabilized` flag to true.
+    /// @param  tokenId The token ID to stabilize.
+    function stabilizeToken(uint256 tokenId) external nonReentrant  approved(tokenId) {
+        Token storage t = _tokens[tokenId];
+        require(!t.buff.stabilized, "DIGIL: Already Stabilized");
+        
+        uint256 ac = t.activeCharge;
+        require(ac > 0, "DIGIL: No Charge to Stabilize");
+
+        // Calculate Insurance Cost.
+        // Bleed is 50% (ac / 2). We set insurance cost to 25% (ac / 4).
+        // This makes paying the fee mathematically rational.
+        // We enforce a minimum floor of 100 * coinRate to prevent dust spam.
+        uint256 floor = 100 * _coinRate;
+        uint256 calculatedCost = ac / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
+        
+        uint256 cost = calculatedCost > floor ? calculatedCost : floor;
+
+        // Apply Discount if Buff is active
+        uint8 bonus = _activeBuffBonus(t);
+        if (bonus > 0) {
+            cost = cost * 100 / (100 + uint256(bonus));
+        }
+
+        // Transfer Coins from the user to the contract
+        _coinsFromSender(cost);
+
+        // Set protection
+        t.buff.stabilized = true;
+        
+        emit Stabilize(tokenId);
+    }
+
+    /// @notice Overcharges an active token by converting ETH directly into activeCharge.
+    /// @dev    Only the token owner may call this function.
+    ///         - No ERC20 Coins are moved.
+    ///         - No contribution records are created.
+    ///         - All ETH sent is treated as system value and assigned to the
+    ///           contract’s own distribution via {_addValue}.
+    ///
+    ///         The cost per `_coinMultiplier` units of `coins` is:
+    ///             cost = 2x * max(token.incrementalValue, _incrementalValue)
+    ///
+    ///         where `2x` is provided by the AFFINITY_BOOST constant.
+    ///
+    /// @param  tokenId The ID of the token to overcharge.
+    /// @param  coins   The amount of activeCharge to add, in coin units (scaled by `_coinMultiplier`).
+    function overchargeToken(uint256 tokenId, uint256 coins) external payable nonReentrant approved(tokenId) {
+        require(coins >= _coinMultiplier, "DIGIL: Insufficient Charge");
+
+        Token storage t = _tokens[tokenId];
+
+        // Do not interfere with batch operations or activation/discharge flows.
+        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        require(!t.activating && !t.discharging, "DIGIL: Lifecycle In Progress");
+        require(t.active, "DIGIL: Token Not Active");
+
+        // Use the greater of the token's incremental value or the global minimum.
+        uint256 iv = t.incrementalValue > 0 ? t.incrementalValue : _incrementalValue;
+
+        // Premium cost: 2x the normal ETH-per-coin-unit rate.
+        // coins is in "coin units" (scaled by _coinMultiplier), so we normalize by _coinMultiplier.
+        uint256 required = (iv * coins * AFFINITY_BOOST) / _coinMultiplier;
+        if (msg.value < required) revert InsufficientFunds(required);
+
+        // Update last activity timestamp.
+        t.lastActivity = block.timestamp;
+
+        // All ETH becomes contract-level value / system fuel.
+        _addValue(msg.value);
+
+        // Grant raw activeCharge to the token.
+        t.activeCharge += coins;
+        emit ActiveCharge(tokenId, coins);
     }
 
 }
