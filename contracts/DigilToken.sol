@@ -1695,7 +1695,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // At this point, all contributions for the current epoch have been fully processed.
         // Clear the contributor list and logically reset all contribution state via epoch bump.
-        delete t.contributors;
+        address[] storage contributors = t.contributors;
+        // Reset the length to 0 using assembly
+        assembly {
+            sstore(contributors.slot, 0)
+        }
 
         // If a contract token is attached, it should no longer be recallable after a full discharge.
         // Preserve its address as a placeholder contributor so a future activation/distribution round
