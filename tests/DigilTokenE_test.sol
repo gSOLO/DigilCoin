@@ -181,7 +181,7 @@ contract EchoTestSuite {
         digil.activateToken(tokenId);
         
         // Deactivate the token
-        digil.deactivateToken{value: incrementalValue}(tokenId);
+        digil.deactivateToken(tokenId);
         
         // Verify deactivation
         (bool isActive, , , , , , , , ) = digil.tokenData(tokenId);

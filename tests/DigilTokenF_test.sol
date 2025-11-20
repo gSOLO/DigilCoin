@@ -233,7 +233,7 @@ contract FoxtrotTestSuite {
         Assert.equal(activeCharge, 1 * coinMultiplier, "Invalid new active charge");
         
         // Deactivate the token
-        digil.deactivateToken{value: incrementalValue}(tokenId);
+        digil.deactivateToken(tokenId);
 
         // Verify charge
         (charge, activeCharge, , , ) = digil.tokenCharge(tokenId);

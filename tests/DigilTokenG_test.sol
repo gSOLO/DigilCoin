@@ -218,7 +218,7 @@ contract GammaTestSuite {
         }
 
         digil.activateToken(tokenId);
-        digil.deactivateToken{value: incrementalValue}(tokenId);
+        digil.deactivateToken(tokenId);
         digil.dischargeToken{value: incrementalValue}(tokenId);
 
         for (uint256 accountIndex; accountIndex < 9; accountIndex++) {
