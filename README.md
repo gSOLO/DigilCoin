@@ -18,6 +18,7 @@ A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrin
   - [Create](#create)
   - [Charge](#charge)
   - [Activate](#activate)
+  - [Mathematics of Activation Payouts](#mathematics-of-activation-payouts)
   - [Deactivate](#deactivate)
   - [Discharge](#discharge)
 - [Read-Only Views](#read-only-views)
@@ -203,10 +204,60 @@ activateToken(tokenId)
     - Their original contributed ETH (`contribution.value`) is accumulated into a pool `distribution`.
   - After all contributors:
     - `distributionCharge` is moved to `activeCharge`.
-    - The owner receives `distribution`.
-    - Any leftover `token.value` (if any) is absorbed by the contract pool via `_addValue(tValue)`.
+    - The owner receives **`distribution` plus any remaining rounding “dust”** from the token’s value. Internally this is passed through `_addDistributedValue(owner, distribution + tValue)`, so the standard fee split still applies but dust is treated as part of the owner’s payout rather than an extra contract-only pool.
 - Emits `Activate(tokenId, false)` while in progress and `Activate(tokenId, true)` on completion.
 - The token is then marked `active = true`, and `activating = false`.
+
+#### Mathematics of Activation Payouts
+
+Activation converts an inactive, charged sigil into an active one by **settling ETH from the token’s value back to contributors**, proportionally to how much they charged it.
+
+Let:
+
+- `dCharge` = total charge being distributed at activation time.
+- `dValue` = total token value reserved for contributor payouts (snapshot into `distributionValue`).
+- `_coinMultiplier` = the ERC-20 base unit multiplier (e.g., `10**18`).
+
+The contract computes a **per-unit value rate**:
+
+```text
+incrementalValue = (dValue * _coinMultiplier) / dCharge        // if dCharge > 0, else 0
+```
+
+For each contributor `i` with `charge_i`:
+
+```text
+payout_i = incrementalValue * charge_i / _coinMultiplier
+```
+
+The important properties:
+
+- Each `payout_i` is **proportional** to `charge_i / dCharge`.
+- Because of integer division, the total of all `payout_i` is **≤ dValue`.  
+  The difference:
+
+```text
+dust = dValue − Σ payout_i
+```
+
+is “rounding dust” left behind on the token as `t.value`.
+
+At the end of activation:
+
+- All contributor payouts are sent via `_addDistributedValue(contributor, payout_i)` (which itself splits user/contract fee and mints any bonus coins).
+- The token’s remaining `t.value` (including `dust`) is read as `tValue`, then reset to 0.
+- The owner receives their **contributed ETH pool** plus this `dust` in one go via:
+
+```solidity
+_addDistributedValue(ownerOf(tokenId), distribution + tValue);
+```
+
+So the owner’s share includes:
+
+1. The ETH they effectively fronted as part of charging requirements (`distribution`).
+2. Any leftover dust from pro-rata payouts (`tValue`).
+
+The contract only ever takes its normal fee percentage via `_addDistributedValue`; there is no separate “dust tax” paid solely to the contract.
 
 ### Deactivate
 
@@ -253,15 +304,15 @@ Two main modes:
    - For each contributor **once per epoch**:
      - Their contributed ETH (`contribution.value`) and coins (`contribution.charge`) are refunded directly via `_addValue(contributor, value, coins)`.
    - After all contributors:
-     - Any remaining `t.value` is paid to the **owner** via `_addDistributedValue(owner, tValue)`.
+     - Any remaining `t.value` is paid to the **owner** via `_addDistributedValue(owner, tValue)` (again using the standard fee split).
      - `distributionCharge` and `distributionValue` are cleared.
 
 2. **Active token discharge** (`active == true` → `discharge = false`)
    - `_distribute` behaves similarly to activation:
      - Contributors receive a pro-rata share of token `value` via `_addDistributedValue(contributor, distributableTokenValue)`.
-     - The owner receives the “required contribution” slice.
+     - The owner receives the “required contribution” pool via `distribution`.
      - `distributionCharge` is added to `activeCharge`.
-     - Any remaining `t.value` goes to the contract pool via `_addValue(tValue)`.
+     - Any remaining dust from `token.value` is folded into the owner’s payout: the owner is credited with `distribution + tValue` via `_addDistributedValue(owner, distribution + tValue)`, which still enforces the usual contract fee split.
    - After this **value settlement**, the token can still have `activeCharge`—but it is now treated as **surplus power to be pushed outward**.
 
 After `_distribute` completes in either mode:
@@ -322,7 +373,7 @@ Returns high-level lifecycle and bookkeeping state:
 ```
 
 - `links` and `contributors` are **counts**, not arrays.
-- `contributionEpoch` can be compared against `tokenContribution(tokenId).epoch` to see if a contribution record belongs to the current epoch.
+- `contributionEpoch` can be compared against `tokenData(tokenId).contributionEpoch` to see if a contribution record belongs to the current epoch.
 - `distributionIndex` reveals whether a **batch operation is in progress** and how far along it is.
 - `data` is arbitrary bytes (planar IDs 0–20 encode affinity data here).
 
@@ -365,7 +416,7 @@ Returns link data for a given source token and index in its `links[]` array:
 )
 ```
 
-- If `index` is out of range, all fields are `0`.
+- If `index` is out of range, the call **reverts** with a standard out-of-bounds error. Use `tokenData(tokenId).links` to discover how many links exist before calling.
 - `base` and `affinityBonus` are the **stored** efficiency parameters.
 - `buffBonus` / `buffExpiresAt` reflect the **shared link buff state** on the source token:
   - `buffBonus` is the temporary bonus added to each link’s base (0–100).
@@ -492,7 +543,7 @@ cost = bonus × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACT
 - Otherwise:
   - `activeCharge` is reduced by `cost`.
   - `linkBuff.bonus = bonus`.
-  - `linkBuff.expiresAt = block.timestamp + duration * 60`.
+  - `linkBuff.expiresAt = block.timestamp + (duration * 60)`.
   - Emits `LinkBuff(tokenId, bonus, duration)`.
 
 During the buff window:
@@ -701,13 +752,19 @@ rescueToken(tokenId, to)
 
 supports recovering stuck or abandoned Digils.
 
-A token can be rescued if **any** of the following holds:
+Rescue is gated by **time** plus **state**, not by blacklist alone:
 
-1. The current owner is **blacklisted**.
-2. The token is **stalled** mid-batch (i.e. `distributionIndex > 0`) and `now ≥ lastActivity + STALLED_TIMEOUT`.
-3. The token is **inactive** (`active == false`) for ≥ `INACTIVITY_PERIOD` and:
-   - `value > 0`, or
-   - It has non-trivial contributor/charge history (contributors exist, `charge > 0`, and `incrementalValue > 0`).
+1. First, the token must have crossed its rescue delay:
+   - If it is **stalled** mid-batch (`distributionIndex > 0`), require  
+     `now ≥ lastActivity + STALLED_TIMEOUT`.
+   - Otherwise, require  
+     `now ≥ lastActivity + INACTIVITY_PERIOD`.
+
+2. Once the appropriate delay has passed, a rescue is allowed if **either**:
+   - The current owner is **blacklisted** (opted-out), or
+   - The token has meaningful state:
+     - `value > 0`, or
+     - It has non-trivial contributor/charge history (contributors exist, `charge > 0`, and `incrementalValue > 0`).
 
 Additional rules:
 
@@ -715,7 +772,7 @@ Additional rules:
 - Approvals are cleared before and after the transfer.
 - Planar tokens are still constrained by planar policy: effectively, they must stay aligned with admin control.
 
-This provides a bounded way for the admin to clean up truly abandoned or stuck sigils while respecting user opt-out status. Because `lastActivity` only advances on successful state changes, repeated failing calls (for example, link-charge attempts that do not meet requirements and revert) cannot be used as a cheap "keep-alive"; only real usage moves the rescue window forward.
+This provides a bounded way for the admin to clean up truly abandoned or stuck sigils while respecting user opt-out status. Being blacklisted **does not** allow immediate seizure: opted-out owners still benefit from the same inactivity/stall window and have time to opt back in before a rescue becomes possible. Because `lastActivity` only advances on successful state changes, repeated failing calls (for example, link-charge attempts that do not meet requirements and revert) cannot be used as a cheap "keep-alive"; only real usage moves the rescue window forward.
 
 ---
 
@@ -804,6 +861,9 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
     - Uses the token’s existing `value` and contributors’ `contribution.value`.
   - Coins:
     - Moves `distributionCharge` into `activeCharge` upon completion.
+  - Value:
+    - Contributor payouts are pro-rata in `charge`.
+    - Owner receives their contribution pool plus any dust; contract takes only the normal fee on that amount via `_addDistributedValue`.
 
 **Deactivation**
 
@@ -824,7 +884,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
       ```
 
       which is credited to the contract pool.
-    - The token’s internal `value` is then distributed among contributors, owner, and contract depending on active/inactive mode.
+    - The token’s internal `value` is then distributed among contributors, owner, and contract depending on active/inactive mode, with dust again folded into the owner’s payout and subject to the usual fee split.
   - Coins:
     - Contributor coins may be returned (inactive discharge) or used to compute value shares (active discharge).
     - Remaining `activeCharge` is pushed into linked tokens; any rounding remainder is lost as dust.
@@ -1012,12 +1072,11 @@ activateToken(tokenA);
 - Runs in pages controlled by `_batchSize`.
 - Each page:
   - Pays contributors from `distributionValue` pro-rata by `charge` using `_addDistributedValue`.
-  - Accumulates the “required contribution” slice in `distribution`, later paid to the owner.
+  - Accumulates the “required contribution” slice in `distribution`, later paid to the owner (plus any dust).
 - On completion:
   - All `distributionCharge` is added to `tokenA.activeCharge`.
-  - Owner receives `distribution`.
-  - Any leftover `tokenA.value` is taken as a fee to the contract pool.
-  - `activateToken` emits `Activate(tokenA, true)` and marks `tokenA.active = true`.
+  - Owner receives `distribution + tValue` via `_addDistributedValue(owner, distribution + tValue)`.
+- `activateToken` emits `Activate(tokenA, true)` and marks `tokenA.active = true`.
 
 ### 5) Linking and affinity effects
 
@@ -1084,7 +1143,7 @@ dischargeToken(tokenB);
 ```
 
 - Contributors get **all** of their contributed ETH and coins back.
-- Any remaining `tokenB.value` is paid to the owner (less implicit contract fees).
+- Any remaining `tokenB.value` is paid to the owner via `_addDistributedValue(owner, tValue)` (subject to the usual fee split).
 - `contributors[]` is cleared and `contributionEpoch` increments, so old contributions are logically reset.
 - Any active link buff on `tokenB` is cleared as part of the discharge completion.
 
@@ -1097,9 +1156,8 @@ dischargeToken(tokenA);
 
 - `_distribute(..., discharge=false)`:
   - Contributors receive a pro-rata share of `tokenA.value`.
-  - Owner receives the “required contribution” pool.
+  - Owner receives the “required contribution” pool plus any dust via `_addDistributedValue(owner, distribution + tValue)`.
   - `distributionCharge` is added to `tokenA.activeCharge`.
-  - Remaining `tokenA.value` is taken as a contract fee.
 - Then any remaining `tokenA.activeCharge` is redistributed to linked tokens weighted by their base efficiencies.
 - `tokenA.activeCharge` is set to 0; `contributors[]` cleared; `contributionEpoch` increments.
 - Any active link buff on `tokenA` is cleared at the end of the discharge.
@@ -1165,7 +1223,7 @@ configure(
 
 ```solidity
 setOptStatus(true);
-// with msg.value >= (_incrementalValue × _coinRate / coinMultiplier)
+// with msg.value ≥ (_incrementalValue × _coinRate / coinMultiplier)
 ```
 
 - Address becomes blacklisted; many operations are blocked.
@@ -1174,7 +1232,7 @@ setOptStatus(true);
 
 ```solidity
 setOptStatus(false);
-// with msg.value >= (_incrementalValue × _coinRate / coinMultiplier)
+// with msg.value ≥ (_incrementalValue × _coinRate / coinMultiplier)
 ```
 
 **Rescue an abandoned token (owner-only)**
@@ -1183,8 +1241,14 @@ setOptStatus(false);
 rescueToken(tokenId, to = 0xReceiver);
 ```
 
-- Allowed if the current owner is blacklisted, the token is stalled for ≥ 30 days, or inactive ≥ 365 days with meaningful state.
-- Approvals are cleared before/after.
+- Allowed **only after** the token has crossed its rescue delay:
+  - Stalled mid-batch: `now ≥ lastActivity + STALLED_TIMEOUT`.
+  - Otherwise: `now ≥ lastActivity + INACTIVITY_PERIOD`.
+- And then only if either:
+  - The current owner is blacklisted, or
+  - The token has value or non-trivial contributor/charge history.
+
+Approvals are cleared before/after, and planar tokens remain subject to planar policy.
 
 ### 11) Linked discharge with activeCharge redistribution (numerical sketch)
 
