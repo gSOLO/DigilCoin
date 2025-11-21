@@ -95,7 +95,7 @@ contract GammaTestSuite {
         Assert.equal(activeCharge, 0, "Invalid initial Source active charge");
         Assert.equal(value, 0, "Invalid initial Source value");
 
-        (uint256 linkId, uint8 base, uint256 affinityBonus, , ,) = digil.tokenLinkAt(tokenId, links - 1);
+        (uint256 linkId, uint8 base, uint256 affinityBonus, , , , , ,) = digil.tokenLinkAt(tokenId, links - 1);
         Assert.equal(linkId, 4, "Invalid planar link ID");
         Assert.equal(base, 100, "Invalid planar link base efficiency");
         Assert.equal(affinityBonus, 0, "Invalid planar link affinity bonus");
@@ -113,7 +113,7 @@ contract GammaTestSuite {
         Assert.equal(activeCharge, 0, "Invalid Fire Destination active charge");
         Assert.equal(value, 0, "Invalid initial Fire Destination value");
 
-        (linkId, base, affinityBonus, , ,) = digil.tokenLinkAt(tokenId, links - 1);
+        (linkId, base, affinityBonus, , , , , ,) = digil.tokenLinkAt(tokenId, links - 1);
         Assert.equal(linkId, fireTokenId, "Invalid fire link ID");
         Assert.equal(base, 10, "Invalid fire link base efficiency");
         Assert.equal(affinityBonus, 10, "Invalid fire link affinity bonus");
@@ -126,7 +126,7 @@ contract GammaTestSuite {
         Assert.equal(activeCharge, 0, "Invalid initial Air Destination active charge");
         Assert.equal(value, 0, "Invalid initial Air Destination value");
 
-        (linkId, base, affinityBonus, , ,) = digil.tokenLinkAt(tokenId, links - 1);
+        (linkId, base, affinityBonus, , , , , ,) = digil.tokenLinkAt(tokenId, links - 1);
         Assert.equal(linkId, airTokenId, "Invalid air link ID");
         Assert.equal(base, 10, "Invalid air link base efficiency");
         Assert.equal(affinityBonus, 20, "Invalid air link affinity bonus");
@@ -139,7 +139,7 @@ contract GammaTestSuite {
         Assert.equal(activeCharge, 0, "Invalid initial Earth Destination active charge");
         Assert.equal(value, 50000000000000, "Invalid initial Earth Destination value");
 
-        (linkId, base, affinityBonus, , ,) = digil.tokenLinkAt(tokenId, links - 1);
+        (linkId, base, affinityBonus, , , , , ,) = digil.tokenLinkAt(tokenId, links - 1);
         Assert.equal(linkId, earthTokenId, "Invalid earth link ID");
         Assert.equal(base, 10, "Invalid earth link base efficiency");
         Assert.equal(affinityBonus, 0, "Invalid earth link affinity bonus");
@@ -152,7 +152,7 @@ contract GammaTestSuite {
         Assert.equal(activeCharge, 0, "Invalid initial Water Destination active charge");
         Assert.equal(value, 0, "Invalid initial Water Destination value");
 
-        (linkId, base, affinityBonus, , ,) = digil.tokenLinkAt(tokenId, links - 1);
+        (linkId, base, affinityBonus, , , , , ,) = digil.tokenLinkAt(tokenId, links - 1);
         Assert.equal(linkId, waterTokenId, "Invalid water link ID");
         Assert.equal(base, 5, "Invalid water link base efficiency");
         Assert.equal(affinityBonus, 0, "Invalid water link affinity bonus");

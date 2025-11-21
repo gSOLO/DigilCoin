@@ -5,9 +5,9 @@ import "./IDigilToken.sol";
 
 library DigilTestLibrary {
     function getCoins() public pure returns (IERC20) {
-        return IERC20(0xf02A102153DDf132032B7De5D19F43aA049052Dd);
+        return IERC20(0xd9145CCE52D386f254917e481eB44e9943F39138);
     }
     function getToken() public pure returns (IDigilToken) {
-        return IDigilToken(0x6C5b401BcdF3009bDB35613c20f101DF53cc39AC);
+        return IDigilToken(0xd7Ca4e99F7C171B9ea2De80d3363c47009afaC5F);
     }
 }
