@@ -106,44 +106,47 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         bool stabilized;        // Prevents activeCharge bleed on next event
     }
 
-    /// @dev Structure to hold detailed token information
     struct Token {
-        // Core Economic Properties
+        // --- SLOTS 0-6: Core Economic Properties ---
         uint256 charge;             // Accumulated charge from direct contributions
         uint256 distributionCharge; // Charge reserved for distributions
         uint256 activeCharge;       // Charge accumulated from active token operations and links
         uint256 value;              // Intrinsic value accumulated by the token
         uint256 distributionValue;  // Value reserved for distributions
-        uint256 incrementalValue;   // Incremental value used for charging computations (value required per coin to charge)
-        
-        // Batch Processing State
+        uint256 incrementalValue;   // Incremental value used for charging computations
+        uint256 activationThreshold;// Required charge to activate the token (Lifecycle Property)
+
+        // --- SLOTS 7-9: Batch & Logic State (Cannot pack uint256) ---
         uint256 distributionIndex;  // Current index for batch distribution processing
         uint256 contributionEpoch;  // Logical epoch for contributions on this token
-
-        // Lifecycle Properties
-        uint256 activationThreshold;// Required charge to activate the token
         uint256 lastActivity;       // Timestamp of the last significant action
-        
-        // Linking Properties
-        uint256[] links;            // Array of token IDs or plane IDs the token is linked to
-        mapping(uint256 => LinkEfficiency) linkEfficiency;  // Mapping of link ID to its efficiency settings
-        // Temporary buff applied to all outgoing links from this token.
-        BuffState buff;
-        
-        // Contributor Data
-        address[] contributors;                                 // List of contributor addresses that have charged this token
-        mapping(address => TokenContribution) contributions;    // Mapping from contributor to their contribution details
-        address contractTokenAddress;                           // External ERC721 contract address attached (if any)
-        
-        // Metadata
-        bytes data;                 // Arbitrary data stored with the token
-        string uri;                 // Token metadata URI
 
-        // State Flags
+        // --- SLOT 10: State Flags (Packed) ---
+        // 4 bools = 4 bytes. Uses 1 slot total.
         bool active;                // True if the token has been activated
         bool activating;            // A lock flag, true if the token is currently in the process of being activated
         bool discharging;           // A lock flag, true if the token is currently in the process of being discharged
         bool restricted;            // True if contributions are restricted to a whitelist
+
+        // --- SLOT 11: External Data (Packed) ---
+        // 20 bytes (address) + 12 bytes (BuffState) = 32 bytes. Uses 1 slot total.
+        address contractTokenAddress; // External ERC721 contract address attached (if any)
+        BuffState buff;               // Temporary buff applied to all outgoing links from this token.
+
+        // --- SLOTS 12+: Dynamic Data ---
+        // Must be at the end to avoid breaking the packing of Slot 10 & 11
+        
+        // Contributor Data
+        address[] contributors;                                 // List of contributor addresses that have charged this token
+        mapping(address => TokenContribution) contributions;    // Mapping from contributor to their contribution details
+
+        // Linking Properties
+        uint256[] links;                                    // Array of token IDs or plane IDs the token is linked to
+        mapping(uint256 => LinkEfficiency) linkEfficiency;  // Mapping of link ID to its efficiency settings
+
+        // Metadata
+        string uri;                 // Token metadata URI
+        bytes data;                 // Arbitrary data stored with the token
     }
 
     // Counter for generating unique token IDs
