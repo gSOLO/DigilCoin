@@ -131,7 +131,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // --- SLOT 11: External Data (Packed) ---
         // 20 bytes (address) + 12 bytes (BuffState) = 32 bytes. Uses 1 slot total.
         address contractTokenAddress; // External ERC721 contract address attached (if any)
-        BuffState buff;               // Temporary buff applied to all outgoing links from this token.
+        BuffState buff;               // Temporary buff applied to this token.
 
         // --- SLOTS 12+: Dynamic Data ---
         // Must be at the end to avoid breaking the packing of Slot 10 & 11
