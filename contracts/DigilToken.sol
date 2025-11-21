@@ -393,7 +393,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         is authorized to operate. Operator approvals and per-token approvals
     ///         are intentionally ignored for these IDs.
     function _isAuthorized(address owner_, address spender, uint256 tokenId) internal view override returns (bool) {
-        if (_isPlanar(tokenId)) {
+        if (tokenId <= PLANAR_TRANSFER_MAX_ID) {
             // Only the contract owner (admin) or this contract can operate planar tokens
             return (spender == owner()) || (spender == address(this));
         }
@@ -719,7 +719,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Pre-transfer planar checks (skip on mint: prev == address(0))
         address prev = _ownerOf(tokenId);
-        if (prev != address(0) && _isPlanar(tokenId)) {
+        if (prev != address(0) && tokenId <= PLANAR_TRANSFER_MAX_ID) {
             // 1) Planar tokens cannot be burned.
             require(to != address(0), "DIGIL: Planar Non-burnable");
             // 2) Outside of transfer ownership, planar tokens must remain with the admin.
@@ -1250,7 +1250,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             require(t.incrementalValue == incrementalValue && t.activationThreshold == activationThreshold, "DIGIL: Cannot Update Charged Token");
         }
 
-        if (_isPlanar(tokenId)) {
+        if (tokenId <= PLANAR_TRANSFER_MAX_ID) {
             require(incrementalValue == 0, "DIGIL: Invalid Incremental Value");
             require(activationThreshold == 0, "DIGIL: Invalid Activation Threshold");
         }
@@ -1271,7 +1271,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         bool overwriteData = bytes(data).length > 0;
         if (overwriteData) {
-            if (_isPlanar(tokenId)) {
+            if (tokenId <= PLANAR_TRANSFER_MAX_ID) {
                 // Planar tokens must preserve at least 4 bytes of data to keep affinity encoding valid.
                 require(bytes(data).length >= 4, "DIGIL: Invalid Data Length");
             }
@@ -2188,6 +2188,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         uint256 sourcePlane = t.links[0];
         uint256 destinationPlane = d.links[0];
+
+        if (sourcePlane > PLANAR_MAX_ID || destinationPlane > PLANAR_MAX_ID) return;
 
         // Calculate Natural Bonus
         uint256 bestBonus = _affinityBonus(sourcePlane, destinationPlane, efficiency);
