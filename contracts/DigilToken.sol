@@ -443,7 +443,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///                     Number of Coins required to Link a Token.
     ///                     Number of Coins required to Opt-Out.
     /// @param  incrementalValue The minimum value (in wei) used to Charge, Activate a Token, update a Token URI
-    /// @param  transferValue The value (in wei) to be distributed when a Token is Activated as a percentage of the minimum value
+    /// @param  transferValue The value (in wei) to be distributed when a Token is Activated per incrementalValue
     /// @param  batchSize The multiplier used for batch size for distribute and discharge calls that can be made per transaction 
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external onlyOwner {
         // Validate configuration parameters.
@@ -631,10 +631,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         It correctly calculates fees based on the entire value provided, preventing precision loss from integer division.
     ///         Adds a percentage of the value to be distributed to the contract, and the rest to the address specified.
     ///         Adds a number of bonus coins based on the value to be distributed to "reward" the contributor for contributing value to the contract.
-    ///         An example 1 eth distribution with a incremental value of 100 and a transfer value of 95 would:
-    ///             Add 0.05 eth to the contract.
-    ///             Add 0.95 eth to the address specified.
-    ///             Add 10000 Coins to the address specified.
+    ////         Example:
+    ///             If `_incrementalValue = 0.0001 ETH`, `_transferValue = 0.000095 ETH`,
+    ///             `_coinRate = 100 * _coinMultiplier`, and `value = 1 ETH`, then:
+    ///             - 5% (0.05 ETH) is added to the contract's distribution.
+    ///             - 95% (0.95 ETH) is added to `addr`'s distribution.
+    ///             - `value / _incrementalValue = 10,000` full increments are counted,
+    ///               so `10,000 * (_coinRate / BONUS_RATE_DIVISOR)` coin units are
+    ///               credited to `addr`.
     /// @param  addr The address to credit the distribution.
     /// @param  value The amount of native value (in wei) to add.
     function _addDistributedValue(address addr, uint256 value) internal {
@@ -735,9 +739,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return from;
     }
 
-    /// @dev    Modifier that ensures the caller is approved to operate on the token.
+    /// @dev    Internal function that ensures the caller is approved to operate on the token.
     /// @param  tokenId The token ID for which approval is required.
-    function _checkApproved(uint256 tokenId) private view {
+    function _checkApproved(uint256 tokenId) internal view {
         address account = _msgSender();
         _notOnBlacklist(account);
         require(_isAuthorized(ownerOf(tokenId), account, tokenId), "DIGIL: Not Approved");
@@ -785,7 +789,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to rescue.
     /// @param  to The address to which the token is transferred.
     function rescueToken(uint256 tokenId, address to) external onlyOwner {
-        _checktokenExists(tokenId);
+        _checkTokenExists(tokenId);
 
         require(to != address(0), "DIGIL: Invalid Rescue Address");
 
@@ -872,8 +876,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Recalls an external contract token attached to a Digil token.
-    ///         The token the contract token is attached to must have been activated.
-    ///         The token's activeCharge is reduced by half. 
+    /// @dev    The external token becomes recallable only after the Digil token has
+    ///         passed through an activation/discharge distribution cycle, which sets
+    ///         `contractToken.recallable = true`. This function:
+    ///         - Requires that `account` matches the attached ERC721 contract.
+    ///         - Requires that the attached token is currently marked as recallable.
+    ///         - Applies {_applyActiveChargeBleed} to the Digil's `activeCharge`:
+    ///             * If STABILIZED, the stabilization is consumed and no bleed occurs.
+    ///             * Otherwise, roughly 50% of `activeCharge` is burned.
+    ///         - Clears the attachment state and safely transfers the external
+    ///           ERC721 back to the current Digil owner, forwarding `t.data` as
+    ///           the transfer `data`.
     /// @param  account The address of the external ERC721 contract.
     /// @param  tokenId The internal Digil token ID whose attached contract token is to be recalled.
     function recallToken(address account, uint256 tokenId) external nonReentrant {
@@ -907,9 +920,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Token Information
 
-    /// @dev    Modifier to ensure a token exists (i.e. has a non-zero owner).
+    /// @dev    Internal function to ensure a token exists (i.e. has a non-zero owner).
     /// @param  tokenId The token ID to check.
-    function _checktokenExists(uint256 tokenId) private view {
+    function _checkTokenExists(uint256 tokenId) internal view {
         require(_ownerOf(tokenId) != address(0), "DIGIL: Token Does Not Exist");
     }
 
@@ -926,7 +939,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to retrieve the URI for.
     /// @return The token URI string.
     function tokenURI(uint256 tokenId) public view virtual override returns (string memory) {
-        _checktokenExists(tokenId);
+        _checkTokenExists(tokenId);
 
         string storage uri = _tokens[tokenId].uri;
 
@@ -947,7 +960,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return incrementalValue The incremental value for charging.
     /// @return activationThreshold The threshold required to activate the token.
     function tokenCharge(uint256 tokenId) external view returns(uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold) {
-        _checktokenExists(tokenId);
+        _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId]; 
         return (t.charge, t.activeCharge, t.value, t.incrementalValue, t.activationThreshold);
@@ -968,7 +981,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return distributionIndex The current distribution index.
     /// @return data Arbitrary data stored with the token.
     function tokenData(uint256 tokenId) external view returns(bool active, bool activating, bool discharging, bool restricted, bool stabilized, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data) {
-        _checktokenExists(tokenId);
+        _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
         bool isStabilized = (t.buff.flags & STABILIZED) != 0;
@@ -992,7 +1005,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return whitelisted True if this contributor is whitelisted for this token (relevant when the token is restricted).
     /// @return epoch The logical contribution epoch this record belongs to.
     function tokenContribution(uint256 tokenId, address contributor) external view returns (uint256 charge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch) {
-        _checktokenExists(tokenId);
+        _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
         TokenContribution storage c = t.contributions[contributor];
@@ -1008,11 +1021,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return efficiencyBonus The temporary efficiency bonus applied to all outgoing links (0–100).
     /// @return attunement The current attunement Planar ID (0 if none).
     /// @return amplification The current charge amplification percentage (0 if none).
-    /// @return flags The flags for the buffs that are on (4 Anchored, 16 Primed).
-    /// @return expiresAt The unix timestamp when the buff expires (0 if none).
+    /// @return flags      The current buff flag bitmask (only non-zero while a buff is active):
+    ///                        1 = Stabilized, 2 = Anchored, 4 = Primed.
+    /// @return expiresAt  The unix timestamp when the current buff expires
+    ///                    (0 if no buff has ever been set).
     /// @return effectiveBase The effective base efficiency including any active buff
     function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 base, uint256 affinityBonus, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint64 expiresAt, uint256 effectiveBase) {
-        _checktokenExists(tokenId);
+        _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
 
@@ -1047,7 +1062,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return externalTokenId      The external ERC721 tokenId attached to this Digil (zero if none).
     /// @return recallable           True if the attached token can currently be recalled via {recallToken}.
     function tokenAttachment(uint256 tokenId) external view returns (address contractTokenAddress, uint256 externalTokenId, bool recallable) {
-        _checktokenExists(tokenId);
+        _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
         contractTokenAddress = t.contractTokenAddress;
@@ -1523,7 +1538,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return True if the token was successfully charged.
     function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable nonReentrant returns(bool) {
         _notOnBlacklist(contributor);
-        _checktokenExists(tokenId);
+        _checkTokenExists(tokenId);
         
         require(contributor != address(0), "DIGIL: Invalid Contributor");
         require(coins >= _coinMultiplier, "DIGIL: Insufficient Charge");
@@ -1654,18 +1669,25 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
-    /// @notice Discharges an existing token, processing its contributions and value based on its active state.
-    ///         The token's remaining activeCharge redistributed is into its links.
-    /// @dev    This is a multi-step batch operation that may need to be called multiple times to complete.
-    ///         The behavior depends on whether the token is active or inactive at the time of discharge.
-    ///         - If the token is INACTIVE: Contributions are refunded. The ETH value and coins from each contribution are
-    ///           returned directly to the original contributors. Any remaining intrinsic value (`token.value`) in the
-    ///           token is sent to the token's owner, less any fees.
-    ///         - If the token is ACTIVE: Value is redistributed based on the activation logic. Contributors receive a
-    ///           share of the token's intrinsic value proportional to their charge contribution, while the token's owner
-    ///           receives the value that was directly contributed to satisfy the charge requirements.
-    ///         Requires a value sent greater than or equal to the larger of the token's incremental value or the
-    ///         minimum incremental value, scaled by the number of links.
+    /// @notice Discharges an existing token, processing its contributions and value
+    ///         based on its active state. Any remaining `activeCharge` is redistributed
+    ///         into its links, with optional retention if the ANCHORED buff is active.
+    /// @dev    This is a multi-step batch operation that may need to be called
+    ///         multiple times to complete:
+    ///         - On the first call of a discharge cycle (`t.discharging == false`),
+    ///           the caller must send ETH at least equal to
+    ///             max(_incrementalValue, t.incrementalValue) * max(1, links.length).
+    ///         - Subsequent calls in the same cycle (`t.discharging == true`) do not
+    ///           require additional ETH.
+    ///         - If the token is INACTIVE: contributed value/charge are returned to
+    ///           contributors; remaining intrinsic value is sent to the owner.
+    ///         - If the token is ACTIVE: contributors receive value proportional to
+    ///           their charge; owner receives the remainder as per {_distribute}.
+    ///         - After distribution, remaining `activeCharge` is redistributed into
+    ///           linked tokens:
+    ///             * If ANCHORED is active, 25% is retained and 75% redistributed.
+    ///             * Otherwise, 100% is redistributed based on base link efficiencies.
+
     /// @param  tokenId The token ID to discharge.
     /// @return True if discharge is complete.
     function dischargeToken(uint256 tokenId) external payable nonReentrant returns (bool) {
@@ -1781,9 +1803,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Activates a token if its charge meets the activation threshold.
-    /// @dev    This is a multi-step batch operation.
-    ///         Requires the token have a charge greater than or equal to the token's activation threshold or its distribution charge exceeds the threshold.
-    /// @param  tokenId The token ID to activate.
+    /// @dev    This is a multi-step batch operation:
+    ///         - If the token has the PRIMED buff active, the effective activation
+    ///           threshold is halved.
+    ///         - On the first call, the token must be inactive and have
+    ///           `t.charge >= effectiveThreshold`.
+    ///         - Subsequent calls in the same activation cycle are allowed while
+    ///           `t.activating == true`, without re-checking the charge.
+    ///         Activation uses {_distribute} with `discharge = false` and may require
+    ///         multiple transactions to complete for large contributor sets.
     /// @return True if the token activation is complete.
     function activateToken(uint256 tokenId) external nonReentrant returns(bool) {
         _checkApproved(tokenId);
@@ -1819,13 +1847,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @dev    Applies thematic "bleed" to a token's active charge:
-    ///         - Computes a loss of 1 / AFFINITY_REDUCTION of the current `activeCharge`.
-    ///         - Subtracts the lost portion from `activeCharge`.
-    ///         - The lost units remain in the contract's ERC20 balance as untracked power
-    ///         and are no longer attributed to any token.
-    ///
-    ///         With the current configuration (AFFINITY_REDUCTION = 2), each call burns
-    ///         approximately 50% of the token's activeCharge.
+    ///         - If the token is STABILIZED (bit 1 set in `buff.flags`), consume that
+    ///           protection and skip the bleed for this call.
+    ///         - Otherwise, compute a loss of 1 / AFFINITY_REDUCTION of the current
+    ///           `activeCharge`, subtract it, and leave the lost units as untracked
+    ///           power in the contract’s ERC20 balance.
+    ///         With the current configuration (AFFINITY_REDUCTION = 2), an unprotected
+    ///         call burns ~50% of the token's activeCharge.
     /// @param  t The token whose activeCharge will be reduced.
     function _applyActiveChargeBleed(Token storage t) internal {
         uint256 ac = t.activeCharge;
@@ -1843,19 +1871,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Deactivates an active token.
     /// @dev    Deactivation is a purely stateful operation:
-    ///         - No ETH is required or charged by this function.
-    ///         - The token must have zero `charge` (its staged pre-activation charge),
-    ///           but may still hold non-zero `activeCharge`.
-    ///         - On every deactivation, the token suffers "power bleed": a portion of
-    ///           its current `activeCharge` is permanently burned via
-    ///           {_applyActiveChargeBleed}. With the current configuration
-    ///           (AFFINITY_REDUCTION = 2), this burns ~50% of activeCharge.
+    ///         - No ETH is required.
+    ///         - The token must have zero `charge` but may hold non-zero `activeCharge`.
+    ///         - On deactivation, {_applyActiveChargeBleed} is invoked:
+    ///               * If the token is STABILIZED, the stabilization is consumed and
+    ///                 no bleed occurs.
+    ///               * Otherwise, roughly 50% of `activeCharge` is burned
+    ///                 (AFFINITY_REDUCTION = 2).
     ///         - The token cannot be in the middle of a batch activation/discharge
     ///           operation (`distributionIndex` must be zero).
-    ///
-    ///         This design allows owners to toggle a sigil off without paying ETH,
-    ///         while still making frequent toggling economically meaningful through
-    ///         the activeCharge loss.
     /// @param  tokenId The ID of the token to deactivate.
     function deactivateToken(uint256 tokenId) external {
         _checkApproved(tokenId);
@@ -1888,8 +1912,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  efficiency  The link efficiency (percentage).
     /// @param  linkCount   The total number of links on the token *after* this call.
     /// @param  isNewLink   True if this is the first time linking to `linkId`.
-    /// @return cost        The number of coin units to charge (in `_coinRate` units).
     /// @param  buffBonus   The current active buff bonus (0 if inactive).
+    /// @return cost The ERC20 coin amount to charge (in full token units, scaled by
+    ///              the underlying ERC20 decimals), after applying early-link
+    ///              discounts and any active buff discount.
     function _linkCoinCost(uint8 efficiency, uint256 linkCount, bool isNewLink, uint8 buffBonus) internal view returns (uint256 cost) {
         // Existing scaling logic: efficiency plus triangular escalation.
         uint256 linkScale = 200 / linkCount;
@@ -1942,9 +1968,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  linkId     The destination token ID to link to.
     /// @param  efficiency The efficiency of the link (percentage based).
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) external payable nonReentrant {
-        _checktokenExists(tokenId);
+        _checkTokenExists(tokenId);
         _checkApproved(tokenId);
-        _checktokenExists(linkId);
+        _checkTokenExists(linkId);
 
         Token storage t = _tokens[tokenId];
 
@@ -2162,7 +2188,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The source token ID initiating the unlink.
     /// @param  linkId The destination token ID to unlink. 
     function unlinkToken(uint256 tokenId, uint256 linkId) external {
-        _checktokenExists(linkId);
+        _checkTokenExists(linkId);
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
@@ -2209,16 +2235,27 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         on top of each link's base efficiency, and offers discounts on linking and stabilization costs.
     /// @dev    The buff:
     ///         - Consumes `activeCharge` from the token as a cost.
-    ///         - Applies the same `bonus` to all outgoing links.
-    ///         - Lasts for `duration`, capped at 24 hours.
-    ///         Cost is approximately:
-    ///             cost ≈ magnitude * hours * linkCount * LINK_BUFF_COST_FACTOR
-    ///         where `hours = duration / 60`.
+    ///         - Applies the same `efficiencyBonus` to all outgoing links.
+    ///         - Lasts for `duration` minutes (capped at 24 hours).
+    ///         The cost is computed via {_buffCost} using:
+    ///             cost ≈ magnitude * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR
+    ///         where:
+    ///             magnitude = efficiencyBonus + amplification
+    ///                 + BUFF_COST for attunement (if any)
+    ///                 + BUFF_COST for ANCHORED (if set)
+    ///                 + BUFF_COST for PRIMED (if set),
+    ///             duration is in minutes, and linkCount is the number of outgoing links
+    ///             (or 1 if there are none).
+    ///         A non-zero buff always costs at least `_coinRate` units of activeCharge.
     /// @param  tokenId The ID of the token whose links are to be buffed.
     /// @param  efficiencyBonus The temporary bonus (0–100) added to each link's base efficiency.
     /// @param  attunement      Planar ID to mimic for affinity (1-18, or 0 for none).
     /// @param  amplification   Percentage multiplier applied to incoming charge (0-100, or 0 for none).
-    /// @param  flags           The flags for the buffs to turn on (4 Anchored, 16 Primed).
+    /// @param  flags           Bitmask of buff flags to enable:
+    ///                         - 2 = ANCHORED (retain portion of activeCharge on discharge)
+    ///                         - 4 = PRIMED (temporary reduced activation threshold)
+    ///                         The STABILIZED bit (1) cannot be set here and is preserved
+    ///                         from previous calls to {stabilizeToken}.
     /// @param  duration        The buff duration in minutes (1–1440).
     function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint256 duration) external nonReentrant {
         _checkApproved(tokenId);
@@ -2234,9 +2271,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Calculate Magnitude
         {
             uint256 magnitude = uint256(efficiencyBonus) + uint256(amplification);
-            if (attunement > 0) magnitude += BUFF_COST;
-            if ((flags & ANCHORED) != 0)   magnitude += BUFF_COST;
-            if ((flags & PRIMED) != 0)     magnitude += BUFF_COST;
+            if (attunement > 0)             magnitude += BUFF_COST;
+            if ((flags & ANCHORED) != 0)    magnitude += BUFF_COST;
+            if ((flags & PRIMED) != 0)      magnitude += BUFF_COST;
 
             // Calculate link count (min 1)
             uint256 linkCount = t.links.length;
@@ -2251,6 +2288,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 expiry = block.timestamp + (duration * 1 minutes);
         t.buff.expiresAt = uint64(expiry);
         t.buff.efficiencyBonus = efficiencyBonus;
+        t.buff.amplification = amplification;
         t.buff.attunement = attunement;
 
         // Preserve Stabilized (Bit 0)
@@ -2300,7 +2338,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Overcharges an active token by converting ETH directly into activeCharge.
-    /// @dev    Only the token owner may call this function.
+    /// @dev    Only an approved operator for the token may call this function.
+    ///         This includes the token owner, an address approved for this token,
+    ///         or an operator approved via {setApprovalForAll}. 
     ///         - No ERC20 Coins are moved.
     ///         - No contribution records are created.
     ///         - All ETH sent is treated as system value and assigned to the
