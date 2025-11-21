@@ -332,7 +332,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // 4:   delimiter
         // 5-9: simplified name
         bytes[21] memory data;
-        data[0] =  bytes("----|");      // null
+        data[0] =  bytes("|||||");      // null
         data[1] =  bytes("xrot|X");     // void
         data[2] =  bytes("roxy|K.N ");  // karma
         data[3] =  bytes("orxy|K.S");   // kaos
