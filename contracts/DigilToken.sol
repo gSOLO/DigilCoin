@@ -824,8 +824,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         require(canRescueByBlacklist || canRescueByAbandonment, "DIGIL: Token Cannot Be Rescued");
 
-        // Remove approvals before transfer (escrow via this contract).
-        _approve(address(this), tokenId, address(0), false);
+        // Give the admin ephemeral approval so _isAuthorized passes for non-planars
+        _approve(_msgSender(), tokenId, address(0), false);
         // Transfer the token from the blacklisted or inactive address
         _transfer(currentOwner, to, tokenId);
         // Clear approvals post-transfer to avoid stray approvals on the new owner.
