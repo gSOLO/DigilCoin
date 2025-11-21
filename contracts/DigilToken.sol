@@ -696,6 +696,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _distributions[address(this)].value -= value;
 
         _createValue(tokenId, value);
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
     }
 
     // ERC721 Updates
