@@ -6,7 +6,6 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts/utils/Counters.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
@@ -155,8 +154,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     // Counter for generating unique token IDs
-    using Counters for Counters.Counter;
-    Counters.Counter private _tokenIdCounter;
+    uint256 private _nextTokenId;
 
     // Events and Errors
 
@@ -359,11 +357,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Mint the initial 21 "Plane" tokens (IDs 0-20)
         // Unchecked block used to mint the initial tokens without overflow checks (safe here due to known bounds)
         unchecked {
-            uint256 tokenId;
-            // Loop until 21 tokens are minted.
-            while (tokenId < PLANAR_TRANSFER_MAX_ID) {
-                tokenId = _tokenIdCounter.current();
-                _tokenIdCounter.increment();
+            // Loop until tokens 0 through 20 are minted
+            while (_nextTokenId <= PLANAR_TRANSFER_MAX_ID) {
+                // Get current ID and increment for next time
+                uint256 tokenId = _nextTokenId++;
 
                 _mint(initialOwner, tokenId);
 
@@ -1093,8 +1090,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  data Optional data to store with the token.
     /// @return tokenId The newly created token ID.
     function _createToken(address creator, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data) internal returns(uint256) {      
-        uint256 tokenId = _tokenIdCounter.current();
-        _tokenIdCounter.increment();
+        // Get current ID and increment
+        uint256 tokenId = _nextTokenId++;
         
         // Mint the token to the creator.
         _mint(creator, tokenId);
