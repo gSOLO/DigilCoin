@@ -797,35 +797,23 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  to The address to which the token is transferred.
     function rescueToken(uint256 tokenId, address to) external onlyOwner {
         _checkTokenExists(tokenId);
-
         require(to != address(0), "DIGIL: Invalid Rescue Address");
 
         Token storage t = _tokens[tokenId];
         address currentOwner = ownerOf(tokenId);
 
+        // Is the token stuck mid activation / discharge (batch op)?
         bool isStalled = t.distributionIndex > 0;
-        bool canBeRescued;
 
-        if (isStalled) {
-            // If the token is stalled in a batch operation, allow a quick rescue after STALLED_TIMEOUT
-            canBeRescued = block.timestamp >= t.lastActivity + STALLED_TIMEOUT;
-        } else {
-            // If the token is not stalled, use the long INACTIVITY_PERIOD for true abandonment
-            canBeRescued = block.timestamp >= t.lastActivity + INACTIVITY_PERIOD;
-        }
+        // Path 1: Rescue Stalled Operations
+        // If a batch process (discharge/activate) got stuck, allow rescue after short timeout.
+        bool canRescueStalled = isStalled && (block.timestamp >= t.lastActivity + STALLED_TIMEOUT);
 
-        // Conditions for rescue:
-        // - Owner is blacklisted AND the inactivity timer has elapsed, OR
-        // - Token is inactive/abandoned AND it still has "economic weight" (value or charge).
-        bool canRescueByBlacklist = _blacklisted[currentOwner] && canBeRescued;
-        bool canRescueByAbandonment =
-            canBeRescued &&
-            (
-                t.value > 0 ||
-                (t.active == false && t.contributors.length > 0 && t.charge > 0 && t.incrementalValue > 0)
-            );
+        // Path 2: Rescue Blacklisted Owners
+        // If the owner explicitly opted out, allow rescue only after the long inactivity period.
+        bool canRescueBlacklisted = _blacklisted[currentOwner] && (block.timestamp >= t.lastActivity + INACTIVITY_PERIOD);
 
-        require(canRescueByBlacklist || canRescueByAbandonment, "DIGIL: Token Cannot Be Rescued");
+        require(canRescueStalled || canRescueBlacklisted, "DIGIL: Token Cannot Be Rescued");
 
         // Give the admin ephemeral approval so _isAuthorized passes for non-planars
         _approve(_msgSender(), tokenId, address(0), false);
