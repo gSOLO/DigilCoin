@@ -23,7 +23,7 @@ A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrin
   - [Discharge](#discharge)
 - [Read-Only Views](#read-only-views)
 - [Linking & Affinity](#linking--affinity)
-  - [Temporary Buffs (Efficiency, Attunement, Amplification)](#temporary-buffs-efficiency-attunement-amplification)
+  - [Temporary Buffs (Efficiency, Attunement, Amplification, Flags)](#temporary-buffs-efficiency-attunement-amplification-flags)
   - [Stabilization (Anti-Bleed)](#stabilization-anti-bleed)
 - [Vaulting External ERC-721s](#vaulting-external-erc-721s)
 - [Distributions, Withdrawals & Bonuses](#distributions-withdrawals--bonuses)
@@ -104,6 +104,7 @@ with checks:
 - `MAX_BUFF_BONUS = 100` — cap on temporary bonus applied to outgoing links (percentage points).
 - `MAX_BUFF_DURATION_MIN = 24 × 60` — maximum buff duration (24 hours, in minutes).
 - `LINK_BUFF_COST_FACTOR = 24 × 60` — calibration constant for buff pricing in terms of `activeCharge`.
+- `BUFF_COST = 50` — Magnitude cost added for special flags (Attunement, Anchored, Primed).
 
 These dials collectively shape costs (fees), minimum ETH coupling per coin, payout fairness, throughput of batch operations, the economics of **buffs**, and the **first-withdraw windfall** for new participants.
 
@@ -127,7 +128,7 @@ These dials collectively shape costs (fees), minimum ETH coupling per coin, payo
 
 **Links & contributors**
 - `links[]` (≤ 10) • `linkEfficiency[linkId].base` and `.affinityBonus` (percent-like integers).
-- `buff { efficiencyBonus, attunement, amplification, expiresAt }` — optional **temporary buffs** applied to the token.
+- `buff { efficiencyBonus, attunement, amplification, flags, expiresAt }` — optional **temporary buffs** applied to the token. `flags` is a bitmask for special states: `STABILIZED (1)`, `ANCHORED (2)`, `PRIMED (4)`.
 - `contributors[]` plus per-address  
   `TokenContribution { charge, value, epoch, exists, distributed, whitelisted }`.
 
@@ -198,7 +199,8 @@ activateToken(tokenId)
 
 (multi-tx)
 
-- Requires `active == false` and either `charge ≥ activationThreshold` or the token is already in `activating` mode.
+- Requires `active == false`.
+- **Primed Buff**: If the token has an active `PRIMED` (flag 4) buff, the required `activationThreshold` is temporarily halved. Otherwise, requires `charge ≥ activationThreshold` (or already in `activating` mode).
 - Also requires `!discharging`.
 - Internally calls `_distribute(tokenId, discharge=false)` in batches:
   - For each contributor:
@@ -321,11 +323,12 @@ Two main modes:
 After `_distribute` completes in either mode:
 
 - Any remaining `activeCharge` is **redistributed into the token’s links**:
+  - **Anchored Buff**: If the token has an active `ANCHORED` (flag 2) buff, ~25% of the `activeCharge` is **retained** on the token before redistribution begins.
   - Sum base efficiencies across links: `sum = Σ base`.
   - Each link receives: `share = ac × base / sum`, added to its `activeCharge`.
   - `ActiveCharge` events are emitted for each link.
   - Any rounding remainder from integer division is effectively **lost** as dust.
-- The original token’s `activeCharge` is set to **0**.
+- The original token’s `activeCharge` is set to **0** (or the retained amount if Anchored).
 - `contributors[]` is cleared and `contributionEpoch` is incremented.
 - If a contract token is attached and still present, it becomes **non-recallable** and its address is reinserted as a placeholder contributor for future epochs.
 - Any active **link buffs** are cleared.
@@ -416,6 +419,7 @@ Returns link data for a given source token and index in its `links[]` array:
   uint8   buffBonus,
   uint8   buffAttunement,
   uint8   buffAmplification,
+  uint8   flags,
   uint64  buffExpiresAt,
   uint256 effectiveBase
 )
@@ -427,6 +431,7 @@ Returns link data for a given source token and index in its `links[]` array:
   - `buffBonus` is the temporary bonus added to each link’s base (0–100).
   - `buffAttunement` is the Planar ID the token is temporarily mimicking for affinity calculations (0 if none).
   - `buffAmplification` is the charge multiplier percentage (0-100).
+  - `flags` is a bitmask: 1 = Stabilized, 2 = Anchored, 4 = Primed.
   - `buffExpiresAt` is a Unix timestamp in seconds; `0` if no buff active.
 - `effectiveBase` is the **actual efficiency** used right now for that link:
   - When a buff is active: `effectiveBase ≈ min(base + buffBonus, 255)`.
@@ -523,19 +528,21 @@ linkToken(tokenId, linkId, efficiency)
 - Cannot remove foundational planar links (`linkId ≤ PLANAR_MAX_ID` will revert).
 - Emits `Unlink(tokenId, linkId)`.
 
-### Temporary Buffs (Efficiency, Attunement, Amplification)
+### Temporary Buffs (Efficiency, Attunement, Amplification, Flags)
 
 ```solidity
-buffToken(tokenId, efficiency, attunement, amplification, duration)
+buffToken(tokenId, efficiency, attunement, amplification, flags, duration)
 ```
 
 (`nonReentrant`)
 
-This function lets the owner **temporarily boost** an active token by spending `activeCharge`. There are three types of buffs that can be applied simultaneously:
+This function lets the owner **temporarily boost** an active token by spending `activeCharge`. There are multiple types of buffs that can be applied simultaneously:
 
 1.  **Efficiency Buff**: Adds a bonus to the base efficiency of all outgoing links.
 2.  **Attunement**: Temporarily mimics a specific Planar ID (1-18) for affinity calculations. Used to gain better bonuses when linking to specific neighbors.
 3.  **Amplification**: Applies a multiplier to all incoming charge (coins) that stays on the token.
+4.  **Anchored** (Flag 2): If set, the token retains ~25% of its `activeCharge` when discharged, instead of distributing 100%.
+5.  **Primed** (Flag 4): If set, the token's `activationThreshold` is temporarily halved, making it easier to activate.
 
 **Inputs**
 
@@ -543,6 +550,7 @@ This function lets the owner **temporarily boost** an active token by spending `
 - `efficiency` — additional effectiveness added to each link’s base (0–100).
 - `attunement` — the Planar ID to mimic (1-18), or 0 for none.
 - `amplification` — the percentage charge multiplier (0-100), or 0 for none.
+- `flags` — bitmask for special states: `2` (Anchored), `4` (Primed). Bit `1` (Stabilized) is preserved but cannot be set here.
 - `duration` — buff duration in **minutes**, up to 1440 (24 hours).
 
 **Preconditions**
@@ -556,10 +564,15 @@ This function lets the owner **temporarily boost** an active token by spending `
 The buff cost is computed in **coin units** and paid entirely from `activeCharge`. The cost is determined by the **Magnitude** of the combined buffs:
 
 ```text
-magnitude = efficiency + amplification + (attunement > 0 ? 50 : 0)
+magnitude = efficiency + amplification + 
+            (attunement > 0 ? BUFF_COST : 0) + 
+            (Anchored ? BUFF_COST : 0) + 
+            (Primed ? BUFF_COST : 0)
+
 cost = magnitude × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
 ```
 
+- `BUFF_COST = 50`.
 - `linkCount` is the number of outgoing links on the source token (minimum 1).
 - `LINK_BUFF_COST_FACTOR = 24 × 60`.
 - Any **non-zero buff** is clamped to a minimum cost of `_coinRate`.
@@ -829,9 +842,9 @@ This provides a bounded way for the admin to clean up truly abandoned or stuck s
 ```solidity
 overchargeToken(tokenId, coins)
 ```
-(Owner-only, payable)
+(Token Owner/Operator only, payable)
 
-Allows the owner to convert ETH directly into `activeCharge` for a token.
+Allows the token owner or an approved operator to convert ETH directly into `activeCharge` for a token.
 - No contribution records are created.
 - ETH is treated as system fuel (added to contract value).
 - Cost is premium (2x): `(incrementalValue * coins * AFFINITY_BOOST) / _coinMultiplier`.
@@ -913,6 +926,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
   - Coins:
     - Contributor coins may be returned (inactive discharge) or used to compute value shares (active discharge).
     - Remaining `activeCharge` is pushed into linked tokens; any rounding remainder is lost as dust.
+    - If the token has an **Anchored Buff**, 25% of the activeCharge is retained on the token.
 
 **Metadata updates**
 
@@ -961,11 +975,16 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
     - Consumes `activeCharge` via:
 
       ```text
-      magnitude = efficiency + amplification + (attunement > 0 ? 50 : 0)
+      magnitude = efficiency + amplification 
+                + (attunement > 0 ? BUFF_COST : 0)
+                + (Anchored ? BUFF_COST : 0)
+                + (Primed ? BUFF_COST : 0)
+
       cost = magnitude × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
       ```
 
     - Any non-zero buff is clamped to a minimum cost of `_coinRate`.
+    - `BUFF_COST = 50`.
 - Adding a **new link during an active buff** triggers an **extra cost**:
   - Uses the same formula but with `linkCount = 1` and only the **remaining** buff duration.
   - If `activeCharge < cost`, linking reverts with `InsufficientActiveCharge`.
@@ -980,7 +999,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
 
 **Overcharging**
 
-- `overchargeToken` (Owner only)
+- `overchargeToken` (Token Owner/Operator only)
   - ETH:
     - Payable. Cost is `(incrementalValue * coins * 2) / _coinMultiplier`.
 
@@ -1323,7 +1342,9 @@ Assume:
 
 - `tokenA` is active with `activeCharge = 1000 * _coinRate`.
 - `tokenA.links.length = 4`.
-- You want a moderate efficiency buff: `efficiency = 30` (+30 percentage points), no attunement, no amplification, for `duration = 60` minutes.
+- You want a moderate efficiency buff: `efficiency = 30` (+30 percentage points), no attunement, no amplification.
+- You also want to set the `PRIMED` flag (value 4) to make future activation cheaper.
+- Duration = 60 minutes.
 
 Calling:
 
@@ -1333,6 +1354,7 @@ buffToken(
   efficiency     = 30,
   attunement     = 0,
   amplification  = 0,
+  flags          = 4,        // Primed
   duration       = 60        // minutes
 );
 ```
@@ -1340,25 +1362,42 @@ buffToken(
 Cost is:
 
 ```text
-magnitude = efficiency + amplification + (attunement > 0 ? 50 : 0)
-          = 30 + 0 + 0 = 30
+magnitude = efficiency + amplification 
+          + (attunement > 0 ? BUFF_COST : 0)
+          + (Anchored ? BUFF_COST : 0)
+          + (Primed ? BUFF_COST : 0)
+
+magnitude = 30 + 0 + 0 + 0 + 50 = 80
 
 cost = magnitude × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
-     = 30 × 60 × 4 × _coinRate / (24 × 60)
-     = (30 × 4 / 24) × _coinRate
-     = 5 × _coinRate
+     = 80 × 60 × 4 × _coinRate / (24 × 60)
+     = (320 / 24) × _coinRate
+     ≈ 13.33 × _coinRate
 ```
 
 So:
 
-- `tokenA.activeCharge` is reduced by `5 × _coinRate`.
-- All outgoing links temporarily use `effectiveBase = min(base + 30, 255)` when routing coins.
-- `tokenLinkAt(tokenA, i)` will show:
-  - `buffBonus = 30`
-  - `buffExpiresAt ≈ now + 3600 seconds`
-  - `effectiveBase` reflecting the buff.
+- `tokenA.activeCharge` is reduced by `13.33 × _coinRate`.
+- All outgoing links temporarily use `effectiveBase = min(base + 30, 255)`.
+- `tokenA` is now Primed (halved activation threshold) for 1 hour.
 
-Subsequent `chargeToken(tokenA, ...)` calls during this hour will route **more coins into linked tokens** than they would without the buff, at the cost of having burned some of `tokenA`’s active power up front.
+### 13) Overcharging (Token Owner/Operator)
+
+Assume `tokenA` is active and you are the owner. You want to add 50 coin units of `activeCharge` directly by paying ETH.
+
+```solidity
+overchargeToken(tokenA, coins = 50 * 10**18);
+```
+
+Cost calculation (assuming `_incrementalValue` is used):
+
+```text
+cost = (incrementalValue * coins * AFFINITY_BOOST) / _coinMultiplier
+cost = (incrementalValue * 50 * 10**18 * 2) / 10**18
+cost = 100 * incrementalValue
+```
+
+You must send `msg.value >= 100 * incrementalValue`.
 
 ---
 
