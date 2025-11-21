@@ -2061,8 +2061,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - linkCount: number of affected links
     ///         Uses the calibrated cost model:
     ///             cost ≈ bonus * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR
-    ///         and enforces a minimum cost of `_coinRate` whenever the raw cost
-    ///         is non-zero, so tiny buffs are never effectively free.
+    ///         and enforces a minimum cost of `_coinRate`, so tiny buffs are never effectively free.
     /// @param  bonus The temporary buff bonus (0–100).
     /// @param  duration The duration in minutes.
     /// @param  linkCount The number of outgoing links affected.
@@ -2074,8 +2073,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         cost = bonus * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR;
 
-        // Enforce "minimum cost = _coinRate" rule for any non-zero buff.
-        if (cost > 0 && cost < _coinRate) {
+        // Enforce "minimum cost = _coinRate" rule for any buff.
+        if (cost < _coinRate) {
             cost = _coinRate;
         }
     }
