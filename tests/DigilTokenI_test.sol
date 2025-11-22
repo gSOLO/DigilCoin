@@ -129,7 +129,7 @@ contract IndiaTestSuite {
     }
 
     /// #sender: account-8
-    /// #value: 5100000000000000
+    /// #value: 6100000000000000
     function testBuffToken() external payable {
         uint256 coinMultiplier = 10 ** 18;
 
@@ -158,7 +158,7 @@ contract IndiaTestSuite {
         Assert.equal(charge, 0, "Invalid new Source charge");
         Assert.equal(activeCharge, coinMultiplier * 512, "Invalid new Source active charge");
 
-        digil.buffToken(activeTokenId, 30, 0, 0, 0, 24);
+        digil.buffToken(activeTokenId, 30, 0, 0, false, 24);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post buff Source charge");
@@ -182,25 +182,46 @@ contract IndiaTestSuite {
         digil.overchargeToken{value: 100000000000000 * 306 * 2}(activeTokenId, 306 * coinMultiplier);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
-        Assert.equal(charge, 0, "Invalid post overcharge Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid post overcharge Source active charge");
+        Assert.equal(charge, 0, "Invalid post overcharge 1 Source charge");
+        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid post overcharge 1 Source active charge");
+
+        digil.overchargeToken{value: 100000000000000 * 813 * 2}(activeTokenId, 813 * coinMultiplier);
+
+        (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
+        Assert.equal(charge, 0, "Invalid post overcharge 2 Source charge");
+        Assert.equal(activeCharge, coinMultiplier * 1325, "Invalid post overcharge 2 Source active charge");
 
         digil.stabilizeToken(activeTokenId);
         digil.deactivateToken(activeTokenId);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post stabilize and deactivate Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid post stabilize and deactivate Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 1325, "Invalid post stabilize and deactivate Source active charge");
 
         activationComplete = digil.activateToken(activeTokenId);
         while(!activationComplete) {
             activationComplete = digil.activateToken(activeTokenId);
         }
 
+        digil.buffToken(activeTokenId, 0, 0, 0, true, 36);
+
+        (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
+        Assert.equal(charge, 0, "Invalid final buff Source charge");
+        Assert.equal(activeCharge, coinMultiplier * 1200, "Invalid final buff Source active charge");
+
         digil.deactivateToken(activeTokenId);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid final deactivate Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 256, "Invalid final deactivate Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 600, "Invalid final deactivate Source active charge");
+
+        bool dischargeComplete = digil.dischargeToken{value: 100000000000000}(activeTokenId);
+        while (!dischargeComplete) {
+            dischargeComplete = digil.dischargeToken(activeTokenId);
+        }
+
+        (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
+        Assert.equal(charge, 0, "Invalid final discharge Source charge");
+        Assert.equal(activeCharge, coinMultiplier * 150, "Invalid final discharge Source active charge");
     }
 }
