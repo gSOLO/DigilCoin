@@ -1417,14 +1417,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _chargeToken(address contributor, uint256 tokenId, uint256 coins, uint256 activeCoins, uint256 value, bool link) internal returns(bool) {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        bool batchOperationInProgress = t.distributionIndex > 0;
-        if (link && batchOperationInProgress) {
-            // Linked charges quietly fail while a batch op is in progress,
-            // so upstream links can skip this target without reverting the whole call chain.
-            return false;
-        } else {
+        if (t.distributionIndex > 0) {
+            if (link) {
+                // Linked charges quietly fail while a batch op is in progress,
+                // so upstream links can skip this target without reverting the whole call chain.
+                return false;
+            }
             // Direct charges are not allowed during batch operations.
-            require(!batchOperationInProgress, "DIGIL: Batch Operation In Progress");
+            require(false, "DIGIL: Batch Operation In Progress");
         }
 
         // Proxy contributions require a value contribution
@@ -1823,8 +1823,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Activates a token if its charge meets the activation threshold.
     /// @dev    This is a multi-step batch operation:
-    ///         - If the token has the PRIMED buff active, the effective activation
-    ///           threshold is halved.
+    ///         - If the token has the PRIMED flag set, the effective activation
+    ///           threshold is halved for this activation only.
     ///         - On the first call, the token must be inactive and have
     ///           `t.charge >= effectiveThreshold`.
     ///         - Subsequent calls in the same activation cycle are allowed while
@@ -1838,8 +1838,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
 
         uint256 threshold = t.activationThreshold;
-        // Check flag AND ensure buff hasn't expired
-        if ((t.buff.flags & PRIMED) != 0 && block.timestamp < t.buff.expiresAt) {
+        bool primed = (t.buff.flags & PRIMED) != 0;
+        if (primed) {
             // Temporarily halve the required activation threshold when PRIMED.
             threshold /= AFFINITY_REDUCTION;
         }
@@ -1862,6 +1862,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.active = true;
         // Clear flag on completion
         t.activating = false;
+
+        // Consume PRIMED after a successful activation, if present.
+        if (primed) {
+            t.buff.flags &= ~PRIMED;
+        }
+
         emit Activate(tokenId, true);
         return true;
     }
@@ -2096,14 +2102,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // Attunement acts like an extra BUFF_COST chunk of magnitude.
             magnitude += BUFF_COST;
         }
-        // Check flags from storage
+        // Check flags from storage (only ANCHORED affects buff cost here).
         uint8 flags = buff.flags;
         if ((flags & ANCHORED) != 0) {
             // Anchoring acts like an extra BUFF_COST chunk of magnitude.
-            magnitude += BUFF_COST;
-        }
-        if ((flags & PRIMED) != 0) {
-            // Priming acts like an extra BUFF_COST chunk of magnitude.
             magnitude += BUFF_COST;
         }
 
@@ -2267,32 +2269,32 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Temporarily buffs all outgoing links from a token by adding a bonus
-    ///         on top of each link's base efficiency, and offers discounts on linking and stabilization costs.
+    ///         on top of each link's base efficiency, and offers discounts on
+    ///         linking and stabilization costs.
     /// @dev    The buff:
     ///         - Consumes `activeCharge` from the token as a cost.
     ///         - Applies the same `efficiencyBonus` to all outgoing links.
+    ///         - Optionally enables ANCHORED, causing a portion of `activeCharge`
+    ///           to be retained on discharge.
     ///         - Lasts for `duration` minutes (capped at 24 hours).
     ///         The cost is computed via {_buffCost} using:
     ///             cost ≈ magnitude * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR
     ///         where:
     ///             magnitude = efficiencyBonus + amplification
     ///                 + BUFF_COST for attunement (if any)
-    ///                 + BUFF_COST for ANCHORED (if set)
-    ///                 + BUFF_COST for PRIMED (if set),
+    ///                 + BUFF_COST for ANCHORED (if enabled),
     ///             duration is in minutes, and linkCount is the number of outgoing links
     ///             (or 1 if there are none).
     ///         A non-zero buff always costs at least `_coinRate` units of activeCharge.
-    /// @param  tokenId The ID of the token whose links are to be buffed.
-    /// @param  efficiencyBonus The temporary bonus (0–100) added to each link's base efficiency.
-    /// @param  attunement      Planar ID to mimic for affinity (1-18, or 0 for none).
-    /// @param  amplification   Percentage multiplier applied to incoming charge (0-100, or 0 for none).
-    /// @param  flags           Bitmask of buff flags to enable:
-    ///                         - 2 = ANCHORED (retain portion of activeCharge on discharge)
-    ///                         - 4 = PRIMED (temporary reduced activation threshold)
-    ///                         The STABILIZED bit (1) cannot be set here and is preserved
-    ///                         from previous calls to {stabilizeToken}.
-    /// @param  duration        The buff duration in minutes (1–1440).
-    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint256 duration) external nonReentrant {
+    ///         The STABILIZED and PRIMED bits (if set) are preserved and managed by
+    ///         {stabilizeToken} and {primeToken} respectively.
+    /// @param  tokenId          The ID of the token whose links are to be buffed.
+    /// @param  efficiencyBonus  The temporary bonus (0–100) added to each link's base efficiency.
+    /// @param  attunement       Planar ID to mimic for affinity (1-18, or 0 for none).
+    /// @param  amplification    Percentage multiplier applied to incoming charge (0-100, or 0 for none).
+    /// @param  anchored         Whether to enable ANCHORED behavior during discharge.
+    /// @param  duration         The buff duration in minutes (1–1440).
+    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, bool anchored, uint256 duration) external {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
@@ -2306,9 +2308,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Calculate Magnitude
         {
             uint256 magnitude = uint256(efficiencyBonus) + uint256(amplification);
-            if (attunement > 0)             magnitude += BUFF_COST;
-            if ((flags & ANCHORED) != 0)    magnitude += BUFF_COST;
-            if ((flags & PRIMED) != 0)      magnitude += BUFF_COST;
+            if (attunement > 0) magnitude += BUFF_COST;
+            if (anchored)       magnitude += BUFF_COST;
 
             // Calculate link count (min 1)
             uint256 linkCount = t.links.length;
@@ -2327,10 +2328,44 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.buff.amplification = amplification;
         t.buff.attunement = attunement;
 
-        // Preserve any existing STABILIZED protection; caller cannot toggle bit 0 via buffToken.
-        t.buff.flags = flags | (t.buff.flags & STABILIZED);
+        // Start from existing flags and preserve STABILIZED + PRIMED bits.
+        uint8 flags = t.buff.flags & (STABILIZED | PRIMED);
+
+        // Apply ANCHORED based on the boolean parameter.
+        if (anchored) {
+            flags |= ANCHORED;
+        }
+
+        t.buff.flags = flags;
 
         emit Buff(tokenId, efficiencyBonus, attunement, amplification, flags, duration);
+    }
+
+    /// @notice Primes an inactive token to temporarily reduce its activation threshold
+    ///         for the next successful activation.
+    /// @dev    - Token must be inactive and not in an activation/discharge batch.
+    ///         - Caller must be approved for the token.
+    ///         - Costs 10 × `_coinRate` in ERC20 coins.
+    ///         - Sets the PRIMED flag in the token's BuffState.
+    ///         - PRIMED is consumed (cleared) after the token is successfully activated once.
+    /// @param  tokenId The ID of the token to prime.
+    function primeToken(uint256 tokenId) external {
+        _checkApproved(tokenId);
+
+        Token storage t = _tokens[tokenId];
+
+        // Single compact guard: inactive, not mid-batch, not already primed, has threshold.
+        require(!t.active && t.distributionIndex == 0 && (t.buff.flags & PRIMED) == 0 && t.activationThreshold > 0, "DIGIL: Token Cannot Be Primed");
+
+        // Charge a coin fee for priming.
+        uint256 cost = t.activationThreshold / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
+        _coinsFromSender(cost);
+
+        // Mark token as primed.
+        t.buff.flags |= PRIMED;
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
     }
 
     /// @notice Pays ERC20 Coins to protect the token from "bleed" during the next
@@ -2340,7 +2375,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         If a buff is active, cost is further reduced by: cost * 100 / (100 + bonus).
     ///         Sets the `stabilized` flag to true.
     /// @param  tokenId The token ID to stabilize.
-    function stabilizeToken(uint256 tokenId) external nonReentrant {
+    function stabilizeToken(uint256 tokenId) external {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
@@ -2390,7 +2425,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     /// @param  tokenId The ID of the token to overcharge.
     /// @param  coins   The amount of activeCharge to add, in coin units (scaled by `_coinMultiplier`).
-    function overchargeToken(uint256 tokenId, uint256 coins) external payable nonReentrant {
+    function overchargeToken(uint256 tokenId, uint256 coins) external payable {
         _checkApproved(tokenId);
 
         require(coins >= _coinMultiplier, "DIGIL: Insufficient Charge");
