@@ -1316,10 +1316,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint8 base = t.linkEfficiency[linkId].base;
 
         uint8 bonus = _activeBuffBonus(t);
-        if (bonus == 0) {
-            // No active buff
-            return base;
-        }
 
         uint256 boosted = uint256(base) + uint256(bonus);
         if (boosted > type(uint8).max) {
@@ -2142,11 +2138,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             _bonus = uint256(efficiency) / AFFINITY_REDUCTION;
         }
 
-        // No Bonus
-        if (_bonus == 0) {
-            return _bonus;
-        }
-
         // Base Bonus Multipliers
         if (sourceId > 16) {
             // If the source is from an ethereal plane, increase the bonus by 4x.
@@ -2302,7 +2293,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         require(t.active, "DIGIL: Token Not Active");
 
-        require((efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) || (attunement > 0 && attunement <= PLANAR_MAX_ID) || (amplification > 0 && amplification <= MAX_BUFF_BONUS), "DIGIL: Invalid Buff");
+        require((efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) || (attunement > 0 && attunement <= PLANAR_MAX_ID) || (amplification > 0 && amplification <= MAX_BUFF_BONUS) || anchored, "DIGIL: Invalid Buff");
         
         require(duration > 0 && duration <= MAX_BUFF_DURATION_MIN, "DIGIL: Invalid Buff Duration");
 
