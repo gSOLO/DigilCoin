@@ -97,7 +97,9 @@ with checks:
 - `VALUE_MULTIPLIER = 1000 gwei` (used for default minimums).
 - `PLANAR_MAX_ID = 18`, `PLANAR_TRANSFER_MAX_ID = 20`
 - `MAX_LINKS = 10`
-- Rescue windows: `STALLED_TIMEOUT = 30 days`, `INACTIVITY_PERIOD = 365 days`
+- Rescue & inactivity windows:
+  - `STALLED_TIMEOUT = 30 days` → rescue window for truly stuck batch operations.
+  - `INACTIVITY_PERIOD = 365 days` → long inactivity window for reclaim/rescue of abandoned positions.
 - Affinity helpers: `AFFINITY_BOOST = 2`, `AFFINITY_REDUCTION = 2`
 
 **Link buff configuration**
@@ -124,7 +126,7 @@ These dials collectively shape costs (fees), minimum ETH coupling per coin, payo
 - `activating` / `discharging` — multi-tx operation flags.
 - `distributionIndex` — cursor into `contributors[]` for paging.
 - `contributionEpoch` — logical epoch; incrementing this treats all prior `TokenContribution` entries as reset without clearing the mapping.
-- `lastActivity` — updated on meaningful operations; used by rescue logic. It is only bumped when an operation actually succeeds (charges, lifecycle transitions, link updates, buffing, etc.), so failed calls—including failed linked charges—do not keep a sigil "fresh" for rescue purposes.
+- `lastActivity` — updated on meaningful operations; used by **rescue** and **contributor reclaim** logic. It is only bumped when an operation actually succeeds (charges, lifecycle transitions, link updates, buffing, reclaiming, etc.), so failed calls—including failed linked charges—do not keep a sigil "fresh" for inactivity windows.
 
 **Links & contributors**
 - `links[]` (≤ 10) • `linkEfficiency[linkId].base` and `.affinityBonus` (percent-like integers).
@@ -453,28 +455,6 @@ Returns information about vaulted external ERC721 tokens:
 - If `contractTokenAddress` is non-zero, this Digil is wrapping an external NFT.
 - `recallable` indicates if `recallToken` can currently be called.
 
-### `previewWithdraw()` / `previewWithdrawOf(address)`
-
-Convenience views around the withdraw logic:
-
-```solidity
-(
-  uint256 totalCoins,
-  uint256 baseCoins,
-  uint256 bonusCoins,
-  uint256 value
-)
-```
-
-- `previewWithdraw()` runs for `_msgSender()`.
-- `previewWithdrawOf(addr)` runs for an arbitrary address (must not be blacklisted).
-- Both:
-  - Return **pending** ETH (`value`) and pending **distribution coins** (`baseCoins`).
-  - Simulate the **time-based bonus** coins that would be granted **if `withdraw()` were called now**, respecting the same cap logic (including the first-withdraw multiplier).
-  - Do **not** modify state or transfer anything.
-
-Use these to show “what you would get if you withdrew right now” without forcing the user to actually withdraw.
-
 ---
 
 ## Linking & Affinity
@@ -725,12 +705,29 @@ If the address holds **any Digil** (`balanceOf(addr) > 0`) or any **coin balance
 
 - On successful `withdraw`, `distribution.time` is updated to the current timestamp and the user receives `bonus` in addition to any base `coins` in their distribution bucket.
 
-You can see what a withdraw would yield (including time-based bonus) **without** actually withdrawing by using the read-only helpers:
+### Contributor reclaim (inactive tokens)
 
-- `previewWithdraw()` — for the caller.
-- `previewWithdrawOf(addr)` — for an arbitrary address.
+```solidity
+reclaimContribution(tokenId)
+```
 
-Both return `(totalCoins, baseCoins, bonusCoins, value)`.
+Allows an individual contributor to **pull back** their ETH contribution from a long-inactive token without requiring a full discharge by the owner.
+
+High-level behavior:
+
+- **Preconditions**:
+  - Caller must have a non-zero contribution on `tokenId` in the current `contributionEpoch`.
+  - The token must be **inactive** (`active == false`) and not mid-batch (`distributionIndex == 0`).
+  - The token must have been idle for at least the global inactivity window used for rescue:  
+    `block.timestamp ≥ lastActivity + INACTIVITY_PERIOD`.
+
+- **Effects** (conceptual):
+  - The contributor’s recorded **value** for that token is moved into the global distribution bucket for the contributor, to be actually received via a later call to `withdraw()`.
+  - A **penalty fee**, denominated in ETH, is charged from the recovered value and passed through `_addDistributedValue` to the token owner (and, indirectly, the contract via its normal fee cut). The exact fee rate is defined in the contract but is intended to be small relative to the contribution.
+  - The contributor’s recorded `charge` on that token is cleared and they are removed from the token’s contributor flow for future activations/discharges.
+  - By design, the contributor’s **coins are not refunded** on reclaim; only their ETH value is recoverable. The coins remain part of the token/system economics.
+
+This path is intentionally conservative: reclaiming is only possible after a long period of inactivity, sacrifices any coin upside, and pays a small fee back into the system. The goal is to give contributors a safety hatch for stuck ETH **without** undermining the incentives around active participation.
 
 ### Admin value creation
 
@@ -763,8 +760,9 @@ Blacklisted addresses:
 
 - Cannot send or receive Digils (`_update` enforces `_notOnBlacklist`).
 - Cannot participate in charges or as `operator` in ERC-721 receptions.
-- Cannot call `withdraw()` or `previewWithdrawOf()` until they opt back in.
+- Cannot call `withdraw()` until they opt back in.
 - Still retain their existing distribution balances internally, which can be withdrawn if they later opt in again.
+- Are subject to the **blacklisted + abandoned** rescue path (see below) after the long `INACTIVITY_PERIOD`.
 
 ---
 
@@ -776,21 +774,33 @@ Owner-only:
 rescueToken(tokenId, to)
 ```
 
-supports recovering stuck or abandoned Digils.
+supports recovering **stuck or abandoned** Digils in narrowly defined cases. Rescue is gated by **time** and **state**, and is no longer a general “admin seize” path.
 
-Rescue is gated by **time** plus **state**, not by blacklist alone:
+The contract distinguishes two scenarios:
 
-1. First, the token must have crossed its rescue delay:
-   - If it is **stalled** mid-batch (`distributionIndex > 0`), require  
-     `now ≥ lastActivity + STALLED_TIMEOUT`.
-   - Otherwise, require  
-     `now ≥ lastActivity + INACTIVITY_PERIOD`.
+1. **Stalled batch operations (safety valve)**
 
-2. Once the appropriate delay has passed, a rescue is allowed if **either**:
-   - The current owner is **blacklisted** (opted-out), or
-   - The token has meaningful state:
-     - `value > 0`, or
-     - It has non-trivial contributor/charge history (contributors exist, `charge > 0`, and `incrementalValue > 0`).
+   - If a token is stuck mid-activation or mid-discharge (`distributionIndex > 0`) and has not progressed for at least:
+
+     ```text
+     block.timestamp ≥ lastActivity + STALLED_TIMEOUT
+     ```
+
+     the owner may call `rescueToken` to move the token to `to` and clear approvals.
+
+   - This case is about **system safety**: breaking genuinely stuck batch flows.  
+     It does **not** depend on blacklist status; any stalled token can be rescued once the stall window has elapsed.
+
+2. **Blacklisted + abandoned owners**
+
+   - If the current owner has explicitly opted out (is blacklisted), and the token is **not** in the middle of a batch (`distributionIndex == 0`), then rescue is allowed only after a long inactivity window:
+
+     ```text
+     block.timestamp ≥ lastActivity + INACTIVITY_PERIOD
+     ```
+
+   - This path is typically only relevant for tokens that still have meaningful state—non-zero `value` and/or non-trivial contribution/charge history—where the owner has effectively walked away from the system.
+   - Non-blacklisted owners are **never** rescued purely for inactivity; contributors instead rely on [`reclaimContribution`](#contributor-reclaim-inactive-tokens) to recover value from abandoned, inactive tokens.
 
 Additional rules:
 
@@ -798,7 +808,7 @@ Additional rules:
 - Approvals are cleared before and after the transfer.
 - Planar tokens are still constrained by planar policy: effectively, they must stay aligned with admin control.
 
-This provides a bounded way for the admin to clean up truly abandoned or stuck sigils while respecting user opt-out status. Being blacklisted **does not** allow immediate seizure: opted-out owners still benefit from the same inactivity/stall window and have time to opt back in before a rescue becomes possible. Because `lastActivity` only advances on successful state changes, repeated failing calls (for example, link-charge attempts that do not meet requirements and revert) cannot be used as a cheap "keep-alive"; only real usage moves the rescue window forward.
+Because `lastActivity` only advances on successful state changes, repeated failing calls (for example, link-charge attempts that do not meet requirements and revert) cannot be used as a cheap "keep-alive"; only real usage moves both the **rescue** and **reclaim** windows forward.
 
 ---
 
@@ -834,8 +844,11 @@ This provides a bounded way for the admin to clean up truly abandoned or stuck s
   - Buff state is global per source token (applies to all outgoing links), visible via `tokenLinkAt`.
   - Buffs are time-limited, cost scales with **bonus**, **duration**, and **linkCount**, and they are cleared on full discharge.
 - **First-withdraw bonus**:
-  - `_pendingBonus` centralizes bonus math and is reused by `withdraw` and `previewWithdraw*`.
+  - `_pendingBonus` centralizes bonus math and is reused by `withdraw`.
   - The first qualifying withdraw for an address can grant up to `FIRST_WITHDRAW_MULTIPLIER × _coinRate` in time-based bonus coins, after which future withdraws are capped at `_coinRate` per call.
+- **Contributor reclaim vs. rescue**:
+  - Contributors have a dedicated, inactivity-gated `reclaimContribution` path to recover ETH from long-inactive tokens, without needing admin intervention.
+  - Admin rescue is limited to stalled batches and blacklisted + abandoned owners, keeping the system contributor-protective while still maintainable.
 
 ### Overcharging
 
@@ -1015,7 +1028,15 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
 
     - Added to the contract’s distribution bucket.
   - Coins:
-    - No coin cost, but blacklisting affects the ability to participate in future coin-generating flows.
+    - No coin cost, but blacklisting affects the ability to participate in future coin-generating flows and eventually enables the blacklist + abandoned rescue path.
+
+**Contributor reclaim**
+
+- `reclaimContribution`
+  - ETH:
+    - Returns the contributor’s recorded ETH value (subject to a reclaim fee credited via `_addDistributedValue`).
+  - Coins:
+    - Does **not** refund coins; reclaim is value-only and coin-sacrificing by design.
 
 **Vault recall**
 
@@ -1198,7 +1219,7 @@ From a gameplay perspective, **half the sigil’s power is sacrificed** into the
 
 ```solidity
 dischargeToken(tokenB);
-// with msg.value >= max(globalMin, tokenB.incrementalValue) × max(1, tokenB.links.length)
+// with msg.value ≥ max(globalMin, tokenB.incrementalValue) × max(1, tokenB.links.length)
 ```
 
 - Contributors get **all** of their contributed ETH and coins back.
@@ -1210,7 +1231,7 @@ dischargeToken(tokenB);
 
 ```solidity
 dischargeToken(tokenA);
-// with msg.value >= max(globalMin, tokenA.incrementalValue) × max(1, tokenA.links.length)
+// with msg.value ≥ max(globalMin, tokenA.incrementalValue) × max(1, tokenA.links.length)
 ```
 
 - `_distribute(..., discharge=false)`:
@@ -1234,15 +1255,6 @@ withdraw();
   - For each 15-minute interval since her last bonus time, she accrues `+coinMultiplier` coins.
   - On her **first qualifying withdraw**, this bonus is capped at `FIRST_WITHDRAW_MULTIPLIER × _coinRate` (up to **50×** the normal cap).
   - On subsequent withdraws, the cap is `_coinRate`.
-
-She can inspect the numbers beforehand by calling:
-
-```solidity
-previewWithdraw();
-// or previewWithdrawOf(0xAlice)
-```
-
-and reading `totalCoins`, `baseCoins`, `bonusCoins`, and `value`.
 
 ### 9) Updating metadata (URI/data) and economic parameters
 
@@ -1285,7 +1297,7 @@ setOptStatus(true);
 // with msg.value ≥ (_incrementalValue × _coinRate / coinMultiplier)
 ```
 
-- Address becomes blacklisted; many operations are blocked.
+- Address becomes blacklisted; many operations are blocked and, after `INACTIVITY_PERIOD` of real inactivity, tokens owned by this address may be eligible for **blacklisted + abandoned** rescue.
 
 **Opt-in**
 
@@ -1294,20 +1306,18 @@ setOptStatus(false);
 // with msg.value ≥ (_incrementalValue × _coinRate / coinMultiplier)
 ```
 
-**Rescue an abandoned token (owner-only)**
+**Rescue a stalled or blacklisted + abandoned token (owner-only)**
 
 ```solidity
 rescueToken(tokenId, to = 0xReceiver);
 ```
 
-- Allowed **only after** the token has crossed its rescue delay:
-  - Stalled mid-batch: `now ≥ lastActivity + STALLED_TIMEOUT`.
-  - Otherwise: `now ≥ lastActivity + INACTIVITY_PERIOD`.
-- And then only if either:
-  - The current owner is blacklisted, or
-  - The token has value or non-trivial contributor/charge history.
+- **Stalled batch case**:
+  - If `distributionIndex > 0` and `now ≥ lastActivity + STALLED_TIMEOUT`, the owner may rescue regardless of blacklist status to break a stuck activation/discharge.
+- **Blacklisted + abandoned case**:
+  - If the owner is blacklisted, `distributionIndex == 0`, and `now ≥ lastActivity + INACTIVITY_PERIOD`, the owner may rescue as a cleanup of an abandoned position.
 
-Approvals are cleared before/after, and planar tokens remain subject to planar policy.
+Non-blacklisted, non-stalled tokens are **not** rescued purely for inactivity; contributors instead rely on `reclaimContribution` to pull their value out of long-idle tokens.
 
 ### 11) Linked discharge with activeCharge redistribution (numerical sketch)
 
@@ -1398,6 +1408,25 @@ cost = 100 * incrementalValue
 ```
 
 You must send `msg.value >= 100 * incrementalValue`.
+
+### 14) Reclaiming contributions from an abandoned token
+
+Assume `tokenB` is inactive, has not seen any successful activity for at least `INACTIVITY_PERIOD`, and you previously contributed value to it.
+
+```solidity
+reclaimContribution(tokenB);
+// then later...
+withdraw();
+```
+
+- `reclaimContribution`:
+  - Checks inactivity (`now ≥ lastActivity + INACTIVITY_PERIOD`), inactivity status, and your contributor record.
+  - Moves your contributed ETH (minus a reclaim fee) into your distribution bucket.
+  - Clears your contribution on `tokenB` and forfeits any associated coins.
+- `withdraw`:
+  - Actually transfers the reclaimed ETH (plus any other pending value and bonuses) to your address.
+
+From a user perspective, this is “opt out of a dead sigil I helped fund, and get my ETH back (less a fee) once it’s obviously abandoned,” without needing the owner or admin to actively discharge or rescue it.
 
 ---
 
