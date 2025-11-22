@@ -385,13 +385,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _tokens[0].restricted = true;
     }
 
-    /// @dev    Returns true if `tokenId` is a planar token.
-    /// @param  tokenId The token to check.
-    /// @return True for planar IDs 0..20, false otherwise.
-    function _isPlanar(uint256 tokenId) internal pure returns (bool) {
-        return tokenId <= PLANAR_TRANSFER_MAX_ID;
-    }
-
     /// @inheritdoc ERC721
     /// @dev    For planar tokens, only the contract owner or this contract itself
     ///         is authorized to operate. Operator approvals and per-token approvals
