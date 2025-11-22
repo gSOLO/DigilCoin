@@ -1783,8 +1783,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 }
             }
 
-            // Clear the original token's active charge.
-            t.activeCharge = 0;
+            // Update the original token's active charge.
+            t.activeCharge = retained;
         }
 
         // At this point, all contributions for the current epoch have been fully processed.
