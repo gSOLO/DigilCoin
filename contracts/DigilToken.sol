@@ -778,19 +778,22 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _approve(address(0), tokenId, address(0), false);
     }
 
-    /// @notice Allows a contributor to reclaim their contribution from an
-    /// inactive token after a period of inactivity, for a fee.
-    /// @param tokenId The token ID to reclaim value from.
+    /// @notice Allows a contributor to reclaim their unprocessed contribution from
+    ///         an inactive token after a period of inactivity, in exchange for a penalty.
+    /// @dev    This function is intended as a safety / “ragequit” escape hatch for
+    ///         contributors whose value is locked in a token that is no longer
+    ///         progressing toward activation or discharge.
+    /// @param  tokenId The token ID from which the caller is reclaiming their contribution.
     function reclaimContribution(uint256 tokenId) external payable {
         address addr = _msgSender();
         Token storage t = _tokens[tokenId];
 
         // Token must be inactive and not mid-batch.
-        require(!t.active, "DIGIL: Active");
-        require(t.distributionIndex == 0, "DIGIL: Batch");
+        require(!t.active, "DIGIL: Cannot Reclaim On Active Token");
+        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
         // Enforce inactivity window before contributors can ragequit.
-        require(block.timestamp >= t.lastActivity + STALLED_TIMEOUT, "DIGIL: Recent");
+        require(block.timestamp >= t.lastActivity + STALLED_TIMEOUT, "DIGIL: Token Cannot Be Reclaimed");
 
         // Penalty: require at least one incremental unit of ETH.
         // Use the greater of the token's incrementalValue or the global minimum
