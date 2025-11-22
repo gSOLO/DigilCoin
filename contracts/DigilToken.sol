@@ -239,11 +239,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token being stabilized.
     event Stabilize(uint256 indexed tokenId);
 
-    /// @notice Emitted when value is generated for the contract.
-    /// @dev    Value can be assigned to a token by using the admin function createValue
-    /// @param  value The value added to the pending distributions for this contract
-    event ContractDistribution(uint256 value);
-
     /// @notice Emitted when pending coin and value distributions are created for an address.
     /// @param  addr The address this pending distribution is for
     /// @param  coins The coins added to the pending distributions for this address  
@@ -258,6 +253,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token whose value increased
     /// @param  value The value that was contributed
     event Contribute(address indexed addr, uint256 indexed tokenId, uint256 value);
+
+    /// @notice Emitted when value is reclaimed from a token.
+    /// @dev    This event is specifically tied to the reclaiming of a contribution after a period of inactivity. 
+    ///         It records the portion of value contributed by a user that was used to "charge" the token—
+    ///         think of this as satisfying a minimum requirement for charging the token.
+    /// @param  addr The address this event is attributed to
+    /// @param  tokenId The ID of the token whose value decreased
+    /// @param  value The value that was added to pending distribution
+    event Reclaim(address indexed addr, uint256 indexed tokenId, uint256 value);
 
     /// @notice Emitted when contributed value is added directly to a token's value.
     /// @dev    This event logs excess value contributed during the charging process that goes beyond the minimum required for charging.
@@ -527,40 +531,41 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         up to FIRST_WITHDRAW_MULTIPLIER times the normal coin-rate cap in bonus coins.
     /// @return coins The number of coin units transferred to the sender.
     /// @return value The native Ether value transferred to the sender.
-    function withdraw() external nonReentrant returns(uint256 coins, uint256 value) {
+    function withdraw() external nonReentrant returns (uint256 coins, uint256 value) {
         address addr = _msgSender();
-        // Ensure the sender is not blacklisted.
-        _notOnBlacklist(addr);
+        bool optedOut = _blacklisted[addr];
 
         Distribution storage distribution = _distributions[addr];
 
-        // Retrieve and reset the pending value and coin distributions.
+        // Always let them pull their pending value, even if blacklisted.
         value = distribution.value;
         distribution.value = 0;
-        coins = distribution.coins;
-        distribution.coins = 0;
-
-        // Compute time-based bonus coins using the shared helper.
-        uint256 nowTs = block.timestamp;
-        uint256 bonus = _pendingBonus(addr, distribution, nowTs);
-        if (bonus > 0) {
-            // Record the new "lastBonusTime" only in the real withdrawal path.
-            // This ensures preview calls never mutate state.
-            distribution.time = nowTs;
-            coins += bonus;
-        }
 
         // Transfer any pending native value to the sender.
-        if (value > 0) {            
+        if (value > 0) {
             Address.sendValue(payable(addr), value);
         }
 
-        // Attempt to transfer coins from this contract to the sender; if it fails, reassign the pending coins.
-        if (coins > 0 && !_transferCoinsFrom(address(this), addr, coins)) {
-            // If the ERC20 transfer fails for any reason (e.g., allowance issues),
-            // re-credit the coins back to the user's distribution so they can retry later.
-            distribution.coins = coins;
-            coins = 0;
+        // Only non-blacklisted users can withdraw coins and earn bonus coins.
+        if (!optedOut) {
+            // Retrieve and reset pending coins.
+            coins = distribution.coins;
+            distribution.coins = 0;
+
+            // Compute time-based bonus coins.
+            uint256 nowTs = block.timestamp;
+            uint256 bonus = _pendingBonus(addr, distribution, nowTs);
+            if (bonus > 0) {
+                // Record new lastBonusTime only in the real withdrawal path.
+                distribution.time = nowTs;
+                coins += bonus;
+            }
+
+            // Attempt to transfer coins; if it fails, recredit them.
+            if (coins > 0 && !_transferCoinsFrom(address(this), addr, coins)) {
+                distribution.coins = coins;
+                coins = 0;
+            }
         }
 
         return (coins, value);
@@ -583,11 +588,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             Distribution storage distribution = _distributions[addr];
             distribution.value += value;
             distribution.coins += coins;
-            if (addr == address(this)) {
-                emit ContractDistribution(value);
-            } else {
-                emit PendingDistribution(addr, coins, value);
-            }
+            
+            emit PendingDistribution(addr, coins, value);
         }
     }
 
@@ -814,7 +816,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(value > 0 || charge > 0, "DIGIL: No Contribution");
 
         if (charge > 0) {
-            t.charge -= charge;
+            if (t.charge >= charge) {
+                t.charge -= charge;
+            } else {
+                t.charge = 0;
+            }
         }
 
         // Update last activity
@@ -825,6 +831,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         c.charge = 0;
         c.exists = false;
         c.distributed = true;
+
+        emit Reclaim(addr, tokenId, value);
 
         // Refund their recorded contribution through the normal distribution pipeline.
         _addValue(addr, value, 0);
@@ -1035,8 +1043,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
-
-        require(index < t.links.length, "DIGIL: Link Index Out Of Bounds");
 
         linkId = t.links[index];
         LinkEfficiency storage efficiency = t.linkEfficiency[linkId];

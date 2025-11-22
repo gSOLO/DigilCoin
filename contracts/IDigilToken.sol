@@ -20,12 +20,13 @@ interface IDigilToken is IERC721, IERC721Receiver {
     event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, address sender);
     event ActiveCharge(uint256 indexed tokenId, uint256 coins);
     event Discharge(uint256 indexed tokenId, bool complete);
-    event Link(uint256 indexed tokenId, uint256 indexed linkId);
     event Link(uint256 indexed tokenId, uint256 indexed linkId, uint8 efficiency, uint256 affinityBonus);
     event Unlink(uint256 indexed tokenId, uint256 indexed linkId);
-    event ContractDistribution(uint256 value);
+    event Buff(uint256 indexed tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint256 duration);
+    event Stabilize(uint256 indexed tokenId);
     event PendingDistribution(address indexed addr, uint256 coins, uint256 value);
     event Contribute(address indexed addr, uint256 indexed tokenId, uint256 value);
+    event Reclaim(address indexed addr, uint256 indexed tokenId, uint256 value);
     event ContributeValue(address indexed addr, uint256 indexed tokenId, uint256 value);
     event ContributeValue(uint256 indexed tokenId, uint256 value);
 
