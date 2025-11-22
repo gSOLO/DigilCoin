@@ -566,46 +566,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return (coins, value);
     }
 
-    /// @notice Returns a preview of the caller's pending withdrawal, including
-    ///         queued distributions and the time-based bonus coins they would
-    ///         receive if they called {withdraw} in the current block.
-    /// @dev    This is a convenience wrapper around {previewWithdrawOf}, using
-    ///         `_msgSender()` as the address. It does not modify state and
-    ///         performs no transfers.
-    /// @return totalCoins The total coins that would be transferred (base + bonus).
-    /// @return baseCoins  The pending distribution coins currently stored.
-    /// @return bonusCoins The additional time-based bonus coins that would be granted.
-    /// @return value      The pending Ether value that would be transferred.
-    function previewWithdraw() external view returns (uint256 totalCoins, uint256 baseCoins, uint256 bonusCoins, uint256 value) {
-        return previewWithdrawOf(_msgSender());
-    }
-
-    /// @notice Returns a preview of an address's pending withdrawal, including
-    ///         queued distributions and the time-based bonus coins they would
-    ///         receive if they called {withdraw} in the current block.
-    /// @dev    This function:
-    ///         - Reuses the shared bonus calculation logic via {_pendingBonus}
-    ///           to stay in sync with {withdraw}.
-    ///         - Does not modify state and performs no transfers.
-    ///         - Reverts if `addr` has opted out via the blacklist.
-    /// @param  addr The address whose pending withdrawal is being queried.
-    /// @return totalCoins The total coins that would be transferred (base + bonus).
-    /// @return baseCoins  The pending distribution coins currently stored for `addr`.
-    /// @return bonusCoins The additional time-based bonus coins that would be granted.
-    /// @return value      The pending Ether value that would be transferred.
-    function previewWithdrawOf(address addr) public view returns (uint256 totalCoins, uint256 baseCoins, uint256 bonusCoins, uint256 value) {
-        _notOnBlacklist(addr);
-        Distribution storage distribution = _distributions[addr];
-
-        baseCoins = distribution.coins;
-        value = distribution.value;
-
-        uint256 nowTs = block.timestamp;
-        bonusCoins = _pendingBonus(addr, distribution, nowTs);
-
-        totalCoins = baseCoins + bonusCoins;
-    }
-
     // Add Value and Distributions
 
     /// @dev    Internal helper that adds native value to the contract’s balance.
@@ -821,6 +781,53 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _transfer(currentOwner, to, tokenId);
         // Clear approvals post-transfer to avoid stray approvals on the new owner.
         _approve(address(0), tokenId, address(0), false);
+    }
+
+    /// @notice Allows a contributor to reclaim their contribution from an
+    /// inactive token after a period of inactivity, for a fee.
+    /// @param tokenId The token ID to reclaim value from.
+    function reclaimContribution(uint256 tokenId) external payable {
+        address addr = _msgSender();
+        Token storage t = _tokens[tokenId];
+
+        // Token must be inactive and not mid-batch.
+        require(!t.active, "DIGIL: Active");
+        require(t.distributionIndex == 0, "DIGIL: Batch");
+
+        // Enforce inactivity window before contributors can ragequit.
+        require(block.timestamp >= t.lastActivity + STALLED_TIMEOUT, "DIGIL: Recent");
+
+        // Penalty: require at least one incremental unit of ETH.
+        // Use the greater of the token's incrementalValue or the global minimum
+        // (same pattern you use elsewhere).
+        uint256 required = t.incrementalValue > _incrementalValue ? t.incrementalValue : _incrementalValue;
+        if (msg.value < required) revert InsufficientFunds(required);
+
+        // Route the penalty into the system’s value pool.
+        _addValue(msg.value);
+
+        TokenContribution storage c = t.contributions[addr];
+        _touchContribution(t, c);
+
+        uint256 value = c.value;
+        uint256 charge = c.charge;
+        require(value > 0 || charge > 0, "DIGIL: No Contribution");
+
+        if (charge > 0) {
+            t.charge -= charge;
+        }
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
+
+        // Clear this epoch’s contribution record
+        c.value = 0;
+        c.charge = 0;
+        c.exists = false;
+        c.distributed = true;
+
+        // Refund their recorded contribution through the normal distribution pipeline.
+        _addValue(addr, value, 0);
     }
 
     // ERC721 Receiver
