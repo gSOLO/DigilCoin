@@ -239,6 +239,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token being stabilized.
     event Stabilize(uint256 indexed tokenId);
 
+    /// @notice Emitted when a token is primed to reduce activation threshold.
+    /// @param  tokenId The ID of the token being primed.
+    event Prime(uint256 indexed tokenId);
+
     /// @notice Emitted when pending coin and value distributions are created for an address.
     /// @param  addr The address this pending distribution is for
     /// @param  coins The coins added to the pending distributions for this address  
@@ -415,7 +419,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Move only the planar tokens the caller actually holds (0..20 inclusive).
         // This respects ERC-721 authorization and avoids reverting if some tokens
         // have been purposefully sent elsewhere (which shouldn't happen under policy).
-        for (uint256 tokenId = 0; tokenId <= PLANAR_TRANSFER_MAX_ID; ) {
+        for (uint256 tokenId; tokenId <= PLANAR_TRANSFER_MAX_ID; ) {
             if (_ownerOf(tokenId) == caller) {
                 _transfer(caller, newOwner, tokenId);
             }
@@ -1217,9 +1221,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         
         // Loop through the provided addresses and whitelist them.
         mapping(address => TokenContribution) storage contributions = t.contributions;
-        uint256 accountIndex;
         uint256 accountsLength = whitelisted.length;
-        for (accountIndex; accountIndex < accountsLength; accountIndex++) {
+        for (uint256 accountIndex; accountIndex < accountsLength; accountIndex++) {
             address account = whitelisted[accountIndex];
             // Whitelisting is a one-way operation: once set, it is never cleared.
             contributions[account].whitelisted = true;
@@ -1358,8 +1361,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         } else {    
             // Distribute the value and coins among all linked tokens.
             uint256 linkedValue = value / linksLength; // Distribute ETH evenly  
-            uint256 linkIndex;
-            for (linkIndex; linkIndex < linksLength; linkIndex++) {                
+            for (uint256 linkIndex; linkIndex < linksLength; linkIndex++) {                
                 uint256 linkId = links[linkIndex];
 
                 // Calculate linkedCoins based on base efficiency applied to the coins split evenly amongst the links
@@ -1844,7 +1846,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             threshold /= AFFINITY_REDUCTION;
         }
 
-        require(t.active == false && (t.charge >= threshold || t.activating), "DIGIL: Token Cannot Be Activated");
+        require(!t.active && (t.charge >= threshold || t.activating), "DIGIL: Token Cannot Be Activated");
         require(!t.discharging, "DIGIL: Discharge In Progress");
 
         // Update last activity
@@ -1911,7 +1913,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
-        require(t.active == true && t.charge == 0, "DIGIL: Token Cannot Be Deactivated");
+        require(t.active && t.charge == 0, "DIGIL: Token Cannot Be Deactivated");
         // Make sure the token isn't currently being discharged or activated
         require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
@@ -2241,10 +2243,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.linkEfficiency[linkId] = LinkEfficiency(0, 0);
 
         uint256[] storage links = t.links;
-        uint256 linkIndex;
         uint256 linksLength = links.length;
         // Loop through links to remove the specified link.
-        for (linkIndex; linkIndex < linksLength; linkIndex++) {
+        for (uint256 linkIndex; linkIndex < linksLength; linkIndex++) {
             uint256 lId = links[linkIndex];
             if (lId == linkId) {
                 // To remove an element from an array without leaving a gap,
@@ -2353,9 +2354,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
+        require((t.buff.flags & PRIMED) == 0, "DIGIL: Already Primed");
 
-        // Single compact guard: inactive, not mid-batch, not already primed, has threshold.
-        require(!t.active && t.distributionIndex == 0 && (t.buff.flags & PRIMED) == 0 && t.activationThreshold > 0, "DIGIL: Token Cannot Be Primed");
+        // Compact guard: inactive, not mid-batch, not already primed, has threshold.
+        require(!t.active && t.distributionIndex == 0 && t.activationThreshold > 0, "DIGIL: Token Cannot Be Primed");
 
         // Charge a coin fee for priming.
         uint256 cost = t.activationThreshold / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
@@ -2366,6 +2368,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Update last activity
         t.lastActivity = block.timestamp;
+
+        emit Prime(tokenId);
     }
 
     /// @notice Pays ERC20 Coins to protect the token from "bleed" during the next
@@ -2382,7 +2386,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require((t.buff.flags & STABILIZED) == 0, "DIGIL: Already Stabilized");
         
         uint256 ac = t.activeCharge;
-        require(ac > 0, "DIGIL: No Charge to Stabilize");
+        require(ac > 0, "DIGIL: Token Cannot Be Stabalized");
 
         // Calculate Insurance Cost.
         // Bleed is 50% (ac / 2). We set insurance cost to 25% (ac / 4).
@@ -2405,6 +2409,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Set protection
         t.buff.flags |= STABILIZED;
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
         
         emit Stabilize(tokenId);
     }
