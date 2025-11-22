@@ -1525,14 +1525,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 emit ContributeValueAs(contributor, tokenId, value - minimumValue);
             }
 
-            // If excess coins were provided, add the surplus to active charge.
-            if (coins > minimumCoins) {
-                t.activeCharge += coins - minimumCoins;
-                emit ActiveCharge(tokenId, coins - minimumCoins);
-                // Only `minimumCoins` count toward this token's charge for distribution.
-                coins = minimumCoins;
-            }
-
             c.charge += coins;
             t.charge += coins;
             emit Charge(contributor, tokenId, coins, _msgSender());
