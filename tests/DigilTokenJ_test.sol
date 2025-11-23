@@ -36,101 +36,46 @@ contract JuiletTestSuite {
         uint256 balanceCoins = coins.balanceOf(address(this));
         Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
 
-        uint256 tokenId = digil.createToken(
-            1000000000000000,
-            1000000000000000000,
-            false,
-            4,
-            "Test Withdraw"
-        );
+        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
-        Assert.equal(
-            withdrawlCoins,
-            5000 * 10 ** 18,
-            "First withdrawl should be 5000 coins"
-        );
+        Assert.equal(withdrawlCoins, 5000 * 10 ** 18, "First withdrawl should be 5000 coins");
         Assert.equal(withdrawlValue, 0, "First withdrawl should be 0 value");
 
         // Approve the Digil Token contract to spend the specified coinAmount.
         bool approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
 
-        digil.chargeToken{value: 1000000000000000}(
-            tokenId,
-            1000000000000000000
-        );
+        digil.chargeToken{value: 1000000000000000}(tokenId, 1000000000000000000);
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(
-            withdrawlCoins,
-            10 * 10 ** 18,
-            "Coins from distribution should be 10 bonus for value"
-        );
-        Assert.equal(
-            withdrawlValue,
-            950000000000000,
-            "Distributed value shopuld be 95% of 1000000000000000"
-        );
+        Assert.equal(withdrawlCoins, 10 * 10 ** 18, "Coins from distribution should be 10 bonus for value");
+        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
 
-        tokenId = digil.createToken(
-            10000000000000000,
-            1000000000000000000,
-            false,
-            4,
-            "Test Withdraw"
-        );
+        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
 
-        digil.chargeToken{value: 10000000000000000}(
-            tokenId,
-            1000000000000000000
-        );
+        digil.chargeToken{value: 10000000000000000}(tokenId, 1000000000000000000);
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(
-            withdrawlCoins,
-            100 * 10 ** 18,
-            "Coins from distribution should be 100 bonus for value"
-        );
-        Assert.equal(
-            withdrawlValue,
-            9500000000000000,
-            "Distributed value should be 95% of 10000000000000000"
-        );
+        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "Coins from distribution should be 100 bonus for value");
+        Assert.equal(withdrawlValue, 9500000000000000, "Distributed value should be 95% of 10000000000000000");
 
-        tokenId = digil.createToken(
-            10000000000000000,
-            1000000000000000000,
-            false,
-            4,
-            "Test Withdraw"
-        );
+        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
 
-        digil.chargeToken{value: 1000000000000000000}(
-            tokenId,
-            1000000000000000000
-        );
+        digil.chargeToken{value: 1000000000000000000}(tokenId, 1000000000000000000);
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(
-            withdrawlCoins,
-            10000 * 10 ** 18,
-            "Coins from distribution should be 10000 bonus for value"
-        );
-        Assert.equal(
-            withdrawlValue,
-            950000000000000000,
-            "Distributed value should be 95% of 1000000000000000000"
-        );
+        Assert.equal(withdrawlCoins, 10000 * 10 ** 18, "Coins from distribution should be 10000 bonus for value");
+        Assert.equal(withdrawlValue, 950000000000000000, "Distributed value should be 95% of 1000000000000000000");
     }
 
     /// #sender: account-9
@@ -143,22 +88,12 @@ contract JuiletTestSuite {
         bool approved = coins.approve(address(digil), 515 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        activeTokenId = digil.createToken(
-            incrementalValue,
-            10 * coinMultiplier,
-            false,
-            4,
-            "Source Plane"
-        );
+        activeTokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Source Plane");
 
         digil.primeToken(activeTokenId);
 
         for (uint256 accountIndex; accountIndex < 5; accountIndex++) {
-            digil.chargeTokenAs{value: incrementalValue}(
-                TestsAccounts.getAccount(accountIndex),
-                activeTokenId,
-                coinMultiplier
-            );
+            digil.chargeTokenAs{value: incrementalValue}(TestsAccounts.getAccount(accountIndex), activeTokenId, coinMultiplier);
         }
 
         (uint256 charge, , , , ) = digil.tokenCharge(activeTokenId);
@@ -167,23 +102,12 @@ contract JuiletTestSuite {
         digil.activateToken(activeTokenId);
 
         (, uint256 activeCharge, , , ) = digil.tokenCharge(activeTokenId);
-        Assert.equal(
-            activeCharge,
-            coinMultiplier * 5,
-            "Invalid Source active charge"
-        );
+        Assert.equal(activeCharge, coinMultiplier * 5,"Invalid Source active charge");
 
-        digil.overchargeToken{value: 2043 * 2 * incrementalValue}(
-            activeTokenId,
-            2043 * coinMultiplier
-        );
+        digil.overchargeToken{value: 2043 * 2 * incrementalValue}(activeTokenId, 2043 * coinMultiplier);
 
         (, activeCharge, , , ) = digil.tokenCharge(activeTokenId);
-        Assert.equal(
-            activeCharge,
-            coinMultiplier * 2048,
-            "Invalid Source final active charge"
-        );
+        Assert.equal(activeCharge, coinMultiplier * 2048, "Invalid Source final active charge");
     }
 
     /// #sender: account-9
@@ -196,13 +120,7 @@ contract JuiletTestSuite {
         bool approved = coins.approve(address(digil), 9694 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        linkTokenId = digil.createToken(
-            incrementalValue,
-            10 * coinMultiplier,
-            false,
-            4,
-            "Fire Destination Plane"
-        );
+        linkTokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Fire Destination Plane");
 
         digil.linkToken{value: 200000000000000}(activeTokenId, linkTokenId, 25);
 
@@ -230,9 +148,9 @@ contract JuiletTestSuite {
         digil.buffToken(activeTokenId, 25, 0, 0, false, 24);
     }
 
-    /// @dev Ensure amplification buff increases activeCharge gained by a direct charge.
-    /// #sender: account-8
-    function testAmplificationBuff() public {
+    /// #sender: account-9
+    /// #value: 55000000000000000
+    function testAmplification() public {
         uint256 coinMultiplier = 10 ** 18;
 
         // 1. Create a simple token (no plane, no threshold, unrestricted).
@@ -240,24 +158,14 @@ contract JuiletTestSuite {
 
         // Activate so that subsequent charges go into activeCharge.
         bool activated = digil.activateToken(tokenId);
-        Assert.ok(
-            activated,
-            "Token should activate with 0 activation threshold"
-        );
+        Assert.ok(activated, "Token should activate with 0 activation threshold");
 
         // 2. Overcharge to 512 Coins of activeCharge.
         uint256 initialAC = 512 * coinMultiplier;
-        digil.overchargeToken{value: 100000000000000 * 512 * 2}(
-            tokenId,
-            initialAC
-        );
+        digil.overchargeToken{value: 100000000000000 * 512 * 2}(tokenId, initialAC);
 
         (, uint256 acBeforeBuff, , , ) = digil.tokenCharge(tokenId);
-        Assert.equal(
-            acBeforeBuff,
-            initialAC,
-            "Unexpected initial activeCharge before buff"
-        );
+        Assert.equal(acBeforeBuff, initialAC, "Unexpected initial activeCharge before buff");
 
         // 3. Apply a pure amplification buff: +50% for 30 minutes, no attunement/anchor.
         uint8 amplification = 50;
@@ -277,11 +185,7 @@ contract JuiletTestSuite {
         (, uint256 acAfterBuff, , , ) = digil.tokenCharge(tokenId);
         uint256 expectedAfterBuff = initialAC - expectedCost;
 
-        Assert.equal(
-            acAfterBuff,
-            expectedAfterBuff,
-            "Buff cost did not reduce activeCharge by the expected amount"
-        );
+        Assert.equal(acAfterBuff, expectedAfterBuff,"Buff cost did not reduce activeCharge by the expected amount");
 
         // 4. Charge the token once while the amplification buff is active.
         uint256 chargeCoins = 100 * coinMultiplier;
@@ -299,13 +203,9 @@ contract JuiletTestSuite {
         // totalIncoming = coins
         // boost         = coins * amplification / 100
         // gain          = coins + boost
-        uint256 expectedGain = chargeCoins +
-            (chargeCoins * amplification) / 100;
+        uint256 expectedGain = chargeCoins + (chargeCoins * amplification) / 100;
 
-        Assert.equal(
-            gained,
-            expectedGain,
-            "Amplification buff did not increase activeCharge by the expected amount"
-        );
+        Assert.equal(gained, expectedGain, "Amplification buff did not increase activeCharge by the expected amount");
     }
+
 }
