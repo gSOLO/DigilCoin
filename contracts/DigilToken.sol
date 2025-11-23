@@ -227,13 +227,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     event Unlink(uint256 indexed tokenId, uint256 indexed linkId);
 
     /// @notice Emitted when a temporary buff is applied to a token.
-    /// @param  tokenId The token whose outgoing links were buffed.
-    /// @param  efficiencyBonus The temporary bonus applied on top of each link's base efficiency.
-    /// @param  attunement The temporary plane this token is attuned with.
-    /// @param  amplification The percentage multiplier applied to incoming charge.
-    /// @param  flags The flagged buffs.
-    /// @param  duration The buff duration, in minutes.
-    event Buff(uint256 indexed tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint256 duration);
+    /// @param  tokenId The ID of the token that was buffed.
+    event Buff(uint256 indexed tokenId);
 
     /// @notice Emitted when a token is stabilized to prevent active charge bleed.
     /// @param  tokenId The ID of the token being stabilized.
@@ -2300,8 +2295,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Calculate Magnitude
         {
             uint256 magnitude = uint256(efficiencyBonus) + uint256(amplification);
-            if (attunement > 0) magnitude += BUFF_COST;
-            if (anchored)       magnitude += BUFF_COST;
+            if (attunement > 0) {
+                uint256 tier;
+                if (attunement < 4) tier = 4;         // void/karma/kaos
+                else if (attunement < 8) tier = 1;    // elements
+                else if (attunement < 12) tier = 2;   // para
+                else if (attunement < 17) tier = 8;   // energy
+                else tier = 16;                       // aether/world
+
+                magnitude += tier * BUFF_COST;
+            }
+            if (anchored) magnitude += BUFF_COST;
 
             // Calculate link count (min 1)
             uint256 linkCount = t.links.length;
@@ -2330,7 +2334,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         t.buff.flags = flags;
 
-        emit Buff(tokenId, efficiencyBonus, attunement, amplification, flags, duration);
+        emit Buff(tokenId);
     }
 
     /// @notice Primes an inactive token to temporarily reduce its activation threshold
@@ -2395,11 +2399,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             cost = cost * 100 / (100 + uint256(bonus));
         }
 
-        // Transfer Coins from the user to the contract
-        _coinsFromSender(cost);
-
         // Set protection
         t.buff.flags |= STABILIZED;
+
+        // Transfer Coins from the user to the contract
+        _coinsFromSender(cost);
 
         // Update last activity
         t.lastActivity = block.timestamp;
