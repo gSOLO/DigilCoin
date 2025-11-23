@@ -6,20 +6,16 @@ import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "contracts/IMintableERC20.sol";
 
 /// @title Digil Token (NFT)
 /// @author gSOLO
 /// @notice NFT contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
 /// @custom:security-contact security@digil.co.in
 contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
-    // String utils
-    using Strings for uint256;  // Allow uint256 values to be converted to strings
-
     // Immutable contract-level variables set during construction
-    IERC20 private immutable _coins;            // The ERC20 token used for coin transfers within the contract
+    IMintableERC20 private immutable _coins;    // The ERC20 token used for coin transfers within the contract
     uint256 private immutable _coinMultiplier;  // Multiplier based on the ERC20 token's decimals to handle calculations correctly
     
     // Coin rate and bonus rate
@@ -187,8 +183,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     event Update(uint256 indexed tokenId);
 
     /// @notice Emitted when a token is activated or is in the process of being activated.
+    /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being activated
-    event Activate(uint256 indexed tokenId);
+    /// @param  complete Indicates whether the process was completed
+    event Activate(uint256 indexed tokenId, bool complete);
 
     /// @notice Emitted when a token is deactivated.
     /// @param  tokenId The ID of the token that was deactivated
@@ -206,9 +204,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The number of coins the token was charged with
     event ActiveCharge(uint256 indexed tokenId, uint256 coins);
 
-    /// @notice Emitted when a token is discharged.
-    /// @param  tokenId The ID of the token that was discharged
-    event Discharge(uint256 indexed tokenId);
+    /// @notice Emitted when a token is discharged or is in the process of being discharged.
+    /// @dev    Check with tokenData to get an idea of its completion progress
+    /// @param  tokenId The ID of the token that was or is being discharged
+    /// @param  complete Indicates whether the process was completed
+    event Discharge(uint256 indexed tokenId, bool complete);
 
     /// @notice Emitted when a token is linked with efficiency details.
     /// @param  tokenId The ID of the token that was linked
@@ -291,7 +291,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The address of the ERC20 token used as the system's currency
     /// @param  coinDecimals The number of decimals for the coin token
     constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digil Token", "DDIGIL") Ownable(initialOwner) {
-        _coins = IERC20(coins);
+        _coins = IMintableERC20(coins);
         _coinMultiplier = 10 ** coinDecimals;
         _coinRate = 100 * _coinMultiplier;
         _coins.approve(address(this), type(uint256).max); // Approve this contract to spend its own coins for distributions.
@@ -549,6 +549,22 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 coins += bonus;
             }
 
+            if (coins > 0) {
+                // Check if the contract has enough coins to fulfill the withdrawal
+                uint256 contractBalance = _coins.balanceOf(address(this));
+                if (contractBalance < coins) {
+                    uint256 needed = coins - contractBalance;
+                    // Attempt to mint the required difference to the contract.
+                    // This assumes DigilToken has MINTER role on the ERC20 contract.
+                    // Using try/catch to prevent a total revert if minting is not authorized.
+                    try _coins.mint(address(this), needed) {
+                        // Minting successful, proceed to transfer
+                    } catch {
+                        // Minting failed (likely due to permissions), will attempt transfer with existing funds
+                    }
+                }
+            }
+
             // Attempt to transfer coins; if it fails, recredit them.
             if (coins > 0 && !_transferCoinsFrom(address(this), addr, coins)) {
                 distribution.coins = coins;
@@ -576,7 +592,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             Distribution storage distribution = _distributions[addr];
             distribution.value += value;
             distribution.coins += coins;
-            
+
             emit PendingDistribution(addr, coins, value);
         }
     }
@@ -861,15 +877,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         Token storage t = _tokens[internalId];
         // Append the ERC721 contract address and tokenId as query parameters to the token URI.
-        t.uri = string(
-            abi.encodePacked(
-                tokenURI(internalId),
-                "?account=",
-                Strings.toHexString(uint160(account), 20),
-                "&tokenId=",
-                tokenId.toString()
-            )
-        );
+        t.uri = string(abi.encodePacked(tokenURI(internalId), "?ct=1"));
 
         // Track the attached contract token address and add it as a contributor.
         // The contract itself becomes the first "contributor" for distribution logic.
@@ -907,10 +915,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 contractTokenId = contractToken.tokenId;
 
         // --- Effects: clear all "attached contract" state first ---
-        contractToken.tokenId = 0;
         contractToken.recallable = false;
         _contractTokenExists[account][contractTokenId] = false;
-        t.contractTokenAddress = address(0);
+        // DO NOT clear contractToken.tokenId or t.contractTokenAddress.
+        // They serve as immutable provenance metadata for this Digil.
+        //contractToken.tokenId = 0;
+        //t.contractTokenAddress = address(0);
 
         address owner = ownerOf(tokenId);
 
@@ -1725,6 +1735,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Run the distribution phase based on mode (may require multiple calls).
         bool distributionComplete = _distribute(tokenId, !t.active);
         if (!distributionComplete) {
+            emit Discharge(tokenId, false);
             return false;
         }
 
@@ -1805,7 +1816,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Clear flag on completion
         t.discharging = false;
-        emit Discharge(tokenId);
+        emit Discharge(tokenId, true);
         return true;
     }
 
@@ -1843,6 +1854,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         bool distributionComplete = _distribute(tokenId, false);
         
         if (!distributionComplete) {
+            emit Activate(tokenId, false);
             return false;
         }
         
@@ -1855,7 +1867,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             t.buff.flags &= ~PRIMED;
         }
 
-        emit Activate(tokenId);
+        emit Activate(tokenId, true);
         return true;
     }
 
@@ -2381,7 +2393,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require((t.buff.flags & STABILIZED) == 0, "DIGIL: Already Stabilized");
         
         uint256 ac = t.activeCharge;
-        require(ac > 0, "DIGIL: Token Cannot Be Stabalized");
+        require(ac > 0, "DIGIL: Token Cannot Be Stabilized");
 
         // Calculate Insurance Cost.
         // Bleed is 50% (ac / 2). We set insurance cost to 25% (ac / 4).
