@@ -187,10 +187,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     event Update(uint256 indexed tokenId);
 
     /// @notice Emitted when a token is activated or is in the process of being activated.
-    /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being activated
-    /// @param  complete Indicates whether the process was completed
-    event Activate(uint256 indexed tokenId, bool complete);
+    event Activate(uint256 indexed tokenId);
 
     /// @notice Emitted when a token is deactivated.
     /// @param  tokenId The ID of the token that was deactivated
@@ -208,11 +206,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The number of coins the token was charged with
     event ActiveCharge(uint256 indexed tokenId, uint256 coins);
 
-    /// @notice Emitted when a token is discharged or is in the process of being discharged.
-    /// @dev    Check with tokenData to get an idea of its completion progress
-    /// @param  tokenId The ID of the token that was or is being discharged
-    /// @param  complete Indicates whether the process was completed
-    event Discharge(uint256 indexed tokenId, bool complete);
+    /// @notice Emitted when a token is discharged.
+    /// @param  tokenId The ID of the token that was discharged
+    event Discharge(uint256 indexed tokenId);
 
     /// @notice Emitted when a token is linked with efficiency details.
     /// @param  tokenId The ID of the token that was linked
@@ -1729,7 +1725,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Run the distribution phase based on mode (may require multiple calls).
         bool distributionComplete = _distribute(tokenId, !t.active);
         if (!distributionComplete) {
-            emit Discharge(tokenId, false);
             return false;
         }
 
@@ -1810,7 +1805,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Clear flag on completion
         t.discharging = false;
-        emit Discharge(tokenId, true);
+        emit Discharge(tokenId);
         return true;
     }
 
@@ -1848,7 +1843,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         bool distributionComplete = _distribute(tokenId, false);
         
         if (!distributionComplete) {
-            emit Activate(tokenId, false);
             return false;
         }
         
@@ -1861,7 +1855,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             t.buff.flags &= ~PRIMED;
         }
 
-        emit Activate(tokenId, true);
+        emit Activate(tokenId);
         return true;
     }
 
@@ -1938,40 +1932,35 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _linkCoinCost(uint8 efficiency, uint256 linkCount, bool isNewLink, uint8 buffBonus) internal view returns (uint256 cost) {
         // Existing scaling logic: efficiency plus triangular escalation.
         uint256 linkScale = 200 / linkCount;
-        uint256 eAdj = efficiency > linkScale ? efficiency - linkScale : 0;
-        uint256 baseCost = (efficiency + (eAdj * (eAdj + 1) / 2)) * _coinRate;
+        uint256 e = efficiency > linkScale ? efficiency - linkScale : 0;
+        uint256 baseCost = (uint256(efficiency) + (e * (e + 1) / 2)) * _coinRate;
 
-        // If a buff is active, discount the base cost.
-        // Formula: cost = cost * 100 / (100 + bonus)
+        // Apply buff discount first
         if (buffBonus > 0) {
             baseCost = baseCost * 100 / (100 + uint256(buffBonus));
         }
-        
+
         cost = baseCost;
 
         if (isNewLink) {
-            // `linkCount` includes the newly added link, so:
-            //  - existingCount == 0 => this is the 1st link
-            //  - existingCount == 1 => this is the 2nd link
+            // How many links already existed *before* adding this one?
             uint256 existingCount = linkCount - 1;
-            if (existingCount == 0) {
-                // First link: 25% of base cost
-                cost = baseCost / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
-            } else if (existingCount == 1) {
-                // Second link: 50% of base cost
-                cost = baseCost / AFFINITY_REDUCTION;
+
+            // First and second user-defined links are 50% off, regardless of planar status.
+            if (existingCount <= 1) {
+                cost = baseCost /  AFFINITY_REDUCTION;
             }
         }
     }
 
-        /// @notice Links two tokens together to facilitate coin generation or transfers.
+    /// @notice Links two tokens together to facilitate coin generation or transfers.
     ///         A token can have no more than 10 links.
     ///         Requires a value greater than or equal to the sum of the source and
     ///         destination token's incremental value. Any value contributed is split
     ///         between and added to the source and destination token.
     ///         The coin cost for linking scales with efficiency and number of links,
     ///         with early-link discounts:
-    ///             - First new link on a token: 25% of base cost.
+    ///             - First new link on a token: 50% of base cost.
     ///             - Second new link on a token: 50% of base cost.
     ///             - Subsequent links: full base cost.
     ///         An efficiency of 1 indicates ~1% transfer; 100 indicates 100%; 200
@@ -2040,8 +2029,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Determine if a buff is currently active for the a discount.
         uint8 buffBonus = _activeBuffBonus(t);
 
-        // Compute and charge coin cost, including early-link and active buff discounts.
+        // Compute and charge incremental coin cost, including early-link and active buff discounts.
         uint256 coinCost = _linkCoinCost(efficiency, t.links.length, isNewLink, buffBonus);
+
+        if (!isNewLink && baseEfficiency > 0) {
+            // Compute cost for the old configuration (same linkCount, no early-link discount).
+            uint256 oldCost = _linkCoinCost(baseEfficiency, t.links.length, false, buffBonus);
+
+            if (coinCost > oldCost) {
+                coinCost -= oldCost;
+            } else {
+                coinCost = 0; // If rounding makes newCost <= oldCost, treat the upgrade as free.
+            }
+        }
 
         _coinsFromSender(coinCost);
     }
