@@ -15,11 +15,12 @@ interface IDigilToken is IERC721, IERC721Receiver {
     event Whitelist(address indexed account, uint256 indexed tokenId);
     event Restrict(uint256 indexed tokenId);
     event Update(uint256 indexed tokenId);
-    event Activate(uint256 indexed tokenId, bool complete);
+    event Activate(uint256 indexed tokenId);
+    event Batch(uint256 indexed tokenId);
     event Deactivate(uint256 indexed tokenId);
     event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, address sender);
     event ActiveCharge(uint256 indexed tokenId, uint256 coins);
-    event Discharge(uint256 indexed tokenId, bool complete);
+    event Discharge(uint256 indexed tokenId);
     event Link(uint256 indexed tokenId, uint256 indexed linkId, uint8 efficiency, uint256 affinityBonus);
     event Unlink(uint256 indexed tokenId, uint256 indexed linkId);
     event Buff(uint256 indexed tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint256 duration);
@@ -85,9 +86,10 @@ interface IDigilToken is IERC721, IERC721Receiver {
     // Token Information
     function tokenURI(uint256 tokenId) external view returns (string memory);
     function tokenCharge(uint256 tokenId) external view returns (uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold);
-    function tokenData(uint256 tokenId) external view returns (bool active, bool activating, bool discharging, bool restricted, bool stabilized, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data);
+    function tokenData(uint256 tokenId) external view returns (bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data);
+    function tokenBuff(uint256 tokenId) external view returns (uint64 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags);
     function tokenContribution(uint256 tokenId, address contributor) external view returns (uint256 charge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch);
-    function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 base, uint256 affinityBonus, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint64 expiresAt, uint256 effectiveBase);
+    function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 baseEfficiency, uint256 affinityBonus);
     function tokenAttachment(uint256 tokenId) external view returns (address contractTokenAddress, uint256 externalTokenId, bool recallable); 
 
     // Token Creation

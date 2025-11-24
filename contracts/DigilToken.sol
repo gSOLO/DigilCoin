@@ -2300,7 +2300,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         {stabilizeToken} and {primeToken} respectively.
     /// @param  tokenId          The ID of the token whose links are to be buffed.
     /// @param  efficiencyBonus  The temporary bonus (0–100) added to each link's base efficiency.
-    /// @param  attunement       Planar ID to mimic for affinity (1-18, or 0 for none).
+    /// @param  attunement       Planar ID to mimic for affinity (1-17, or 0 for none; world (18) cannot be used).
     /// @param  amplification    Percentage multiplier applied to incoming charge (0-100, or 0 for none).
     /// @param  anchored         Whether to enable ANCHORED behavior during discharge.
     /// @param  duration         The buff duration in minutes (1–1440).
@@ -2324,7 +2324,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 else if (attunement < 8) tier = 1;    // elements
                 else if (attunement < 12) tier = 2;   // para
                 else if (attunement < 17) tier = 8;   // energy
-                else tier = 16;                       // aether/world
+                else tier = 16;                       // aether
+
+                if (duration <= 15) {
+                    tier *= AFFINITY_BOOST;
+                }
 
                 magnitude += tier * BUFF_COST;
             }
