@@ -182,11 +182,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token that was updated
     event Update(uint256 indexed tokenId);
 
-    /// @notice Emitted when a token is activated or is in the process of being activated.
+    /// @notice Emitted when a token is is in the process of being activated or discharged.
     /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being activated
-    /// @param  complete Indicates whether the process was completed
-    event Activate(uint256 indexed tokenId, bool complete);
+    event Batch(uint256 indexed tokenId);
+
+    /// @notice Emitted when a token is activatedd.
+    /// @dev    Check with tokenData to get an idea of its completion progress
+    /// @param  tokenId The ID of the token that was or is being activated
+    event Activate(uint256 indexed tokenId);
 
     /// @notice Emitted when a token is deactivated.
     /// @param  tokenId The ID of the token that was deactivated
@@ -204,11 +208,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The number of coins the token was charged with
     event ActiveCharge(uint256 indexed tokenId, uint256 coins);
 
-    /// @notice Emitted when a token is discharged or is in the process of being discharged.
+    /// @notice Emitted when a token is discharged.
     /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being discharged
-    /// @param  complete Indicates whether the process was completed
-    event Discharge(uint256 indexed tokenId, bool complete);
+    event Discharge(uint256 indexed tokenId);
 
     /// @notice Emitted when a token is linked with efficiency details.
     /// @param  tokenId The ID of the token that was linked
@@ -1052,8 +1055,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///                        1 = Stabilized, 2 = Anchored, 4 = Primed.
     /// @return expiresAt  The unix timestamp when the current buff expires
     ///                    (0 if no buff has ever been set).
-    /// @return effectiveBase The effective base efficiency including any active buff
-    function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 base, uint256 affinityBonus, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint64 expiresAt, uint256 effectiveBase) {
+    function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 base, uint256 affinityBonus, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint64 expiresAt) {
         _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
@@ -1074,9 +1076,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             flags = buff.flags; // Return the raw mask
         }
 
-        effectiveBase = _effectiveBaseEfficiency(linkId, t);
-
-        return (linkId, base, affinityBonus, efficiencyBonus, attunement, amplification, flags, expiresAt, effectiveBase);
+        return (linkId, base, affinityBonus, efficiencyBonus, attunement, amplification, flags, expiresAt);
     }
 
     /// @notice Returns information about an external ERC721 token attached to this Digil.
@@ -1748,7 +1748,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Run the distribution phase based on mode (may require multiple calls).
         bool distributionComplete = _distribute(tokenId, !t.active);
         if (!distributionComplete) {
-            emit Discharge(tokenId, false);
+            emit Batch(tokenId);
             return false;
         }
 
@@ -1829,7 +1829,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Clear flag on completion
         t.discharging = false;
-        emit Discharge(tokenId, true);
+        emit Discharge(tokenId);
         return true;
     }
 
@@ -1867,7 +1867,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         bool distributionComplete = _distribute(tokenId, false);
         
         if (!distributionComplete) {
-            emit Activate(tokenId, false);
+            emit Batch(tokenId);
             return false;
         }
         
@@ -1880,7 +1880,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             t.buff.flags &= ~PRIMED;
         }
 
-        emit Activate(tokenId, true);
+        emit Activate(tokenId);
         return true;
     }
 
@@ -1944,7 +1944,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - Base cost is still derived from efficiency and link count
     ///           (using the existing triangular scale logic).
     ///         - If this is a brand new link:
-    ///             * First link on the token: 25% of base cost.
+    ///             * First link on the token: 50% of base cost.
     ///             * Second link on the token: 50% of base cost.
     ///           All subsequent new links pay full base cost.
     /// @param  efficiency  The link efficiency (percentage).
@@ -2145,15 +2145,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         bytes storage s = _tokens[sourceId].data;
         bytes storage d = _tokens[destinationId].data;
 
+        // Cache the destination byte to avoid repeated storage reads
+        bytes1 target = d[0];
+
         // Base Bonus Calculation
-        if (s[1] == d[0] || s[2] == d[0]) {
+        if (s[1] == target || s[2] == target) {
             // If the source has strong affinity with the destination, provide a bonus of 2x the efficiency.
             _bonus = uint256(efficiency) * AFFINITY_BOOST;
         } else if (sourceId == destinationId || sourceId > 16) {
             // If the source is the same as the destination,
             // or the source is an ethereal plane (aether, world), provide a bonus of 1x the efficiency.
             _bonus = uint256(efficiency);
-        } else if (s[3] == d[0]) {
+        } else if (s[3] == target) {
             // If the source has weak affinity with the destination, provide a bonus of .5x the efficiency.
             _bonus = uint256(efficiency) / AFFINITY_REDUCTION;
         }
@@ -2178,47 +2181,49 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return _bonus;
     }
 
-    /// @dev    Updates the affinity bonus for a link between two tokens based on
-    ///         their foundational Planes. If either token has no foundational
-    ///         plane, or the planes are out of the planar range, this is a no-op.
-    ///         The computed bonus is only applied if it exceeds the existing
-    ///         stored `affinityBonus` for this link.
-    /// @param  t          The source token storage reference.
-    /// @param  d          The destination token storage reference.
-    /// @param  linkId     The destination token ID (same as `d`'s ID).
-    /// @param  efficiency The current link efficiency (percentage).
-    function _updateLinkAffinity( Token storage t, Token storage d, uint256 linkId, uint8 efficiency) internal {
-        // Both tokens must have a foundational plane as their first link.
-        if (t.links.length == 0 || d.links.length == 0) {
-            return;
+    function _updateLinkAffinity(Token storage t, Token storage d, uint256 linkId, uint8 efficiency) internal {
+        // Create fixed-size arrays to hold candidate IDs (0 = empty)
+        uint256[2] memory sIds; // Source Candidates
+        uint256[2] memory dIds; // Destination Candidates
+
+        // 1. Populate Source Candidates
+        if (t.links.length > 0 && t.links[0] <= PLANAR_MAX_ID) {
+            sIds[0] = t.links[0];
+        }
+        if (t.buff.attunement > 0 && block.timestamp < t.buff.expiresAt) {
+            sIds[1] = t.buff.attunement;
         }
 
-        uint256 sourcePlane = t.links[0];
-        uint256 destinationPlane = d.links[0];
+        // 2. Populate Destination Candidates
+        if (d.links.length > 0 && d.links[0] <= PLANAR_MAX_ID) {
+            dIds[0] = d.links[0];
+        }
+        if (d.buff.attunement > 0 && block.timestamp < d.buff.expiresAt) {
+            dIds[1] = d.buff.attunement;
+        }
 
-        if (sourcePlane > PLANAR_MAX_ID || destinationPlane > PLANAR_MAX_ID) return;
+        uint256 bestBonus;
 
-        // Calculate Natural Bonus
-        uint256 bestBonus = _affinityBonus(sourcePlane, destinationPlane, efficiency);
+        // 3. Compact Matrix Comparison
+        // Using a loop reduces bytecode size compared to writing 4 separate if-blocks
+        for (uint256 i = 0; i < 2; i++) {
+            uint256 s = sIds[i];
+            if (s == 0) continue;
 
-        // Check if buff is active and attunement is valid
-        if (t.buff.attunement > 0 && block.timestamp < t.buff.expiresAt) {
-            uint256 attunementBonus = _affinityBonus(t.buff.attunement, destinationPlane, efficiency);
-            
-            // Keep the larger of the two
-            if (attunementBonus > bestBonus) {
-                bestBonus = attunementBonus;
+            for (uint256 j = 0; j < 2; j++) {
+                uint256 target = dIds[j];
+                if (target == 0) continue;
+
+                uint256 b = _affinityBonus(s, target, efficiency);
+                if (b > bestBonus) {
+                    bestBonus = b;
+                }
             }
         }
 
-        if (bestBonus == 0) {
-            return;
-        }
-
-        LinkEfficiency storage eff = t.linkEfficiency[linkId];
-        if (bestBonus > eff.affinityBonus) {
-            // Only ever increase stored affinityBonus; never reduce an existing one.
-            eff.affinityBonus = bestBonus;
+        // 4. Apply Result
+        if (bestBonus > t.linkEfficiency[linkId].affinityBonus) {
+            t.linkEfficiency[linkId].affinityBonus = bestBonus;
         }
     }
 
