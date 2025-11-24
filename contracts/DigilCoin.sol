@@ -15,10 +15,10 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
-    constructor(address defaultAdmin, address pauser, address minter) ERC20("Digil Coin", "DIGIL") ERC20Permit("Digil Coin") {
-        _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
-        _grantRole(PAUSER_ROLE, pauser);
-        _grantRole(MINTER_ROLE, minter);
+    constructor(address initialOwner) ERC20("Digil Coin", "DIGIL") ERC20Permit("Digil Coin") {
+        _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
+        _grantRole(PAUSER_ROLE, initialOwner);
+        _grantRole(MINTER_ROLE, initialOwner);
     }
 
     function pause() public onlyRole(PAUSER_ROLE) {
