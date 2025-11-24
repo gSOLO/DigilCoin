@@ -96,7 +96,7 @@ contract EchoTestSuite {
         digil.linkToken{value: incrementalValue}(sourceTokenId, restrictedTokenId, 10);
 
         // Verify link exists
-        ( , , , , , uint256 links, , , , ) = digil.tokenData(sourceTokenId);
+        ( , , , , uint256 links, , , , ) = digil.tokenData(sourceTokenId);
         Assert.equal(links, 2, "Link not added"); // Plane link + new link
         
         // Activate both tokens
@@ -119,7 +119,7 @@ contract EchoTestSuite {
         digil.unlinkToken(sourceTokenId, restrictedTokenId);
         
         // Verify link removed
-        ( , , , , , links, , , , ) = digil.tokenData(sourceTokenId);
+        ( , , , , links, , , , ) = digil.tokenData(sourceTokenId);
         Assert.equal(links, 1, "Link not removed"); // Only plane link remains
     }
 
@@ -184,7 +184,7 @@ contract EchoTestSuite {
         digil.deactivateToken(tokenId);
         
         // Verify deactivation
-        (bool isActive, , , , , , , , , ) = digil.tokenData(tokenId);
+        (bool isActive, , , , , , , , ) = digil.tokenData(tokenId);
         Assert.ok(!isActive, "Token should be deactivated");
 
         // Charge the token

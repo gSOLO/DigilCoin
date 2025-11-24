@@ -107,18 +107,18 @@ contract IndiaTestSuite {
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
         Assert.ok(newValue == 0, "Token value should not increase");
 
-        (bool isActive, bool isActivating, bool isDischarging, , , , , , , ) = digil.tokenData(activeTokenId);
+        (bool isActive, bool isActivating, bool isDischarging, , , , , , ) = digil.tokenData(activeTokenId);
         Assert.ok(!isActive, "Token activation in invalid state (active)");
         Assert.ok(!isActivating, "Token activation in invalid state (activating)");
         Assert.ok(!isDischarging, "Token distribution in invalid state (discharging)");
 
         bool activationComplete = digil.activateToken(activeTokenId);
         while(!activationComplete) {
-            (, isActivating, , , , , , , , ) = digil.tokenData(activeTokenId);
+            (, isActivating, , , , , , , ) = digil.tokenData(activeTokenId);
             Assert.ok(isActivating, "Token activation in invalid state (not activating)");
             activationComplete = digil.activateToken(activeTokenId);
         }
-        (isActive, isActivating, , , , , , , , ) = digil.tokenData(activeTokenId);
+        (isActive, isActivating, , , , , , , ) = digil.tokenData(activeTokenId);
         Assert.ok(isActive, "Token activation in invalid state (active == false)");
         Assert.ok(!isActivating, "Token activation in invalid state (activating)");
 
@@ -137,7 +137,7 @@ contract IndiaTestSuite {
         bool approved = coins.approve(address(digil), 9694 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        (, , , , , uint256 links, , , , ) = digil.tokenData(activeTokenId);
+        (, , , , uint256 links, , , , ) = digil.tokenData(activeTokenId);
         Assert.equal(links, 0, "Invalid Link Count (!=0)");
         (uint256 charge, uint256 activeCharge, uint256 value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid initial Source charge");
@@ -147,7 +147,7 @@ contract IndiaTestSuite {
         uint256 fireTokenId = digil.createToken(0, 0, false, 4, "Fire Destination Plane");
 
         digil.linkToken{value: 100000000000000}(activeTokenId, fireTokenId, 10);
-        (, , , , , links, , , , ) = digil.tokenData(activeTokenId);
+        (, , , , links, , , , ) = digil.tokenData(activeTokenId);
         Assert.equal(links, 1, "Invalid Link Count (!=1)");
         (charge, activeCharge, value, , ) = digil.tokenCharge(fireTokenId);
         Assert.equal(charge, 0, "Invalid initial Fire Destination charge");

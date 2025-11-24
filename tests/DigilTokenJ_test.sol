@@ -120,45 +120,36 @@ contract JuiletTestSuite {
         bool approved = coins.approve(address(digil), 9694 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        linkTokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Fire Destination Plane");
+        linkTokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 9, "Lightning Destination Plane");
 
-        digil.linkToken{value: 200000000000000}(activeTokenId, linkTokenId, 5);
+        digil.linkToken{value: 200000000000000}(activeTokenId, linkTokenId, 10);
 
-        (
-            uint256 linkId,
-            uint8 base,
-            uint256 affinityBonus,
-            uint8 efficiencyBonus,
-            uint8 attunement,
-            uint8 amplification,
-            uint8 flags,
-            uint64 expiresAt,
-            uint256 effectiveBase
-        ) = digil.tokenLinkAt(activeTokenId, 1);
+        (uint256 linkId, uint8 baseEfficiency, uint256 affinityBonus) = digil.tokenLinkAt(activeTokenId, 1);
+        (uint64 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags) = digil.tokenBuff(activeTokenId);
 
         Assert.equal(linkId, linkTokenId, "Invalid Link ID");
-        Assert.equal(base, 5, "Invalid Link Base Efficiency");
-        Assert.equal(affinityBonus, 5, "Invalid Link Base Affinity Bonus");
+        Assert.equal(baseEfficiency, 10, "Invalid Link Base Efficiency");
+        Assert.equal(affinityBonus, 20, "Invalid Link Base Affinity Bonus");
         Assert.equal(efficiencyBonus, 0, "Invalid Link Base Efficiency Bonus");
         Assert.equal(attunement, 0, "Invalid Attunement");
         Assert.equal(amplification, 0, "Invalid Amplification");
         Assert.equal(flags, 0, "Invalid Flags");
         Assert.equal(expiresAt, 0, "Invalid Buff Expires");
-        Assert.equal(effectiveBase, 5, "Invalid Link Effective Base Efficiency" );
 
         digil.buffToken(activeTokenId, 5, 5, 5, true, 24);
 
         digil.linkToken{value: 200000000000000}(activeTokenId, linkTokenId, 20);
 
-        (, base, affinityBonus, efficiencyBonus, attunement, amplification, flags, expiresAt, effectiveBase) = digil.tokenLinkAt(activeTokenId, 1);
-        Assert.equal(base, 20, "Invalid Link Base Efficiency");
-        Assert.equal(affinityBonus, 40, "Invalid Link Base Affinity Bonus");
-        Assert.equal(efficiencyBonus, 5, "Invalid Link Base Efficiency Bonus");
-        Assert.equal(attunement, 5, "Invalid Attunement");
-        Assert.equal(amplification, 5, "Invalid Amplification");
-        Assert.equal(flags, 2, "Invalid Flags");
-        Assert.equal(expiresAt, block.timestamp + (24 * 1 minutes), "Invalid Buff Expires");
-        Assert.equal(effectiveBase, 25, "Invalid Link Effective Base Efficiency" );
+        (, baseEfficiency, affinityBonus) = digil.tokenLinkAt(activeTokenId, 1);
+        (expiresAt, efficiencyBonus, attunement, amplification, flags) = digil.tokenBuff(activeTokenId);
+
+        Assert.equal(baseEfficiency, 20, "Invalid Buffed Link Base Efficiency");
+        Assert.equal(affinityBonus, 40, "Invalid Buffed Link Base Affinity Bonus");
+        Assert.equal(efficiencyBonus, 5, "Invalid Buffed Link Base Efficiency Bonus");
+        Assert.equal(attunement, 5, "Invalid Buffed Attunement");
+        Assert.equal(amplification, 5, "Invalid Buffed Amplification");
+        Assert.equal(flags, 2, "Invalid Buffed Flags");
+        Assert.equal(expiresAt, block.timestamp + (24 * 1 minutes), "Invalid Buffed Buff Expires");
     }
 
     /// #sender: account-9
