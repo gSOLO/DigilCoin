@@ -63,9 +63,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     mapping(address => mapping(uint256 => bool)) private _contractTokenExists;      // Tracks if an external ERC721 token has already been vaulted
     mapping(address => mapping(uint256 => ContractToken)) private _contractTokens;  // Stores data for vaulted external ERC721 tokens
 
-    /// @dev Structure to hold pending coin and value distributions for a user, and the time of the last distribution
+    /// @dev Structure to hold pending coin and value distributions for a user, and
+    ///      the timestamp of the last bonus accrual checkpoint (used by {withdraw}).
     struct Distribution {
-        uint256 time;   // Timestamp of the last withdrawal, used for bonus calculations
+        uint256 time;   // Timestamp of the last successful bonus accrual (not every withdrawal)
         uint256 coins;  // Pending ERC20 coins to be withdrawn
         uint256 value;  // Pending Ether value to be withdrawn
     }
@@ -475,7 +476,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Receive and Withdraw
 
     /// @notice Accepts native Ether payments.
-    /// @dev    When Ether is sent to this contract, it is added to the contract’s value balance.
+    /// @dev    When Ether is sent directly to this contract, it is credited to the
+    ///         contract’s own pending distribution bucket (`_distributions[address(this)]`).
     receive() external payable {
         _addValue(msg.value);
     }
@@ -592,7 +594,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Add Value and Distributions
 
-    /// @dev    Internal helper that adds native value to the contract’s balance.
+    /// @dev    Internal helper that adds native value to the contract’s own pending distribution bucket.
     /// @param  value The amount of Ether (in wei) to add.
     function _addValue(uint256 value) internal {
         _addValue(address(this), value, 0);
@@ -863,11 +865,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // ERC721 Receiver
 
-    /// @notice Handles the receipt of an external ERC721 token.
-    /// @dev    When an ERC721 token is sent to this contract, creates a new Digil Token representing the token received.
-    ///         The incremental value of the token is set to the minimum non-zero incremental value, with an activation threshold of 0.
-    ///         The account (ERC721 contract address), and external token ID are appended to the Token URI as a query string.
-    ///         Any data sent is stored with the Token and forwarded during Safe Transfer when {recallToken} is called.
+    //// @notice Handles the receipt of an external ERC721 token.
+    /// @dev    When an ERC721 token is sent to this contract, creates a new Digil Token
+    ///         representing the token received.
+    ///         - The new Digil's incremental value is set to the global minimum
+    ///           `_incrementalValue`, with an activation threshold of 0.
+    ///         - The token's URI is tagged with a simple query marker (`?ct=1`) to
+    ///           indicate that it represents a vaulted contract token; detailed
+    ///           provenance (contract address and tokenId) is stored on-chain in
+    ///           `contractTokenAddress` and `_contractTokens`.
+    ///         - Any `data` sent is stored with the Digil and forwarded during
+    ///           `safeTransferFrom` when {recallToken} is called.
     /// @param  operator The address which initiated the transfer.
     /// @param  from The previous owner of the ERC721 token.
     /// @param  tokenId The token ID of the external ERC721.
@@ -892,7 +900,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _contractTokens[account][internalId].tokenId = tokenId;
 
         Token storage t = _tokens[internalId];
-        // Append the ERC721 contract address and tokenId as query parameters to the token URI.
+        // Append a simple marker (`?ct=1`) to indicate that this Digil wraps a contract token.
         t.uri = string(abi.encodePacked(tokenURI(internalId), "?ct=1"));
 
         // Track the attached contract token address and add it as a contributor.
