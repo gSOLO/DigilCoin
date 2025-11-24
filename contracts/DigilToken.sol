@@ -525,55 +525,67 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         Distribution storage distribution = _distributions[addr];
 
-        // Always let them pull their pending value, even if blacklisted.
+        // --- ETH path: always withdrawable, even if blacklisted ---
         value = distribution.value;
         distribution.value = 0;
 
-        // Transfer any pending native value to the sender.
         if (value > 0) {
             Address.sendValue(payable(addr), value);
         }
 
-        // Only non-blacklisted users can withdraw coins and earn bonus coins.
-        if (!optedOut) {
-            // Retrieve and reset pending coins.
-            coins = distribution.coins;
-            distribution.coins = 0;
+        // Blacklisted accounts cannot withdraw coins or earn bonus coins.
+        if (optedOut) {
+            return (0, value);
+        }
 
-            // Compute time-based bonus coins.
-            uint256 nowTs = block.timestamp;
-            uint256 bonus = _pendingBonus(addr, distribution, nowTs);
+        // --- Coin + bonus path ---
+        uint256 nowTs = block.timestamp;
+        uint256 oldTime = distribution.time;
+
+        // Base pending coins (from prior distributions)
+        uint256 baseCoins = distribution.coins;
+        distribution.coins = 0;
+
+        // Compute time-based bonus *without* mutating state.
+        uint256 bonus = _pendingBonus(addr, distribution, nowTs);
+        uint256 total = baseCoins + bonus;
+
+        if (total == 0) {
+            // Nothing to pay in coins; ETH may still have been withdrawn above.
+            return (0, value);
+        }
+
+        // Ensure the contract has enough coins; try to mint the shortfall.
+        uint256 contractBalance = _coins.balanceOf(address(this));
+        if (contractBalance < total) {
+            uint256 needed = total - contractBalance;
+            // Best-effort mint; failure is tolerated.
+            try _coins.mint(address(this), needed) {
+                // ok
+            } catch { }   // mint failed; we'll still attempt transfer with whatever balance exists
+        }
+
+        // Attempt to transfer the coins (base + bonus)
+        if (_transferCoinsFrom(address(this), addr, total)) {
+            // Success: commit the bonus + time
+            coins = total;
+
             if (bonus > 0) {
-                // Record new lastBonusTime only in the real withdrawal path.
                 distribution.time = nowTs;
-                coins += bonus;
+            } else {
+                // No bonus this time; keep prior timestamp
+                distribution.time = oldTime;
             }
-
-            if (coins > 0) {
-                // Check if the contract has enough coins to fulfill the withdrawal
-                uint256 contractBalance = _coins.balanceOf(address(this));
-                if (contractBalance < coins) {
-                    uint256 needed = coins - contractBalance;
-                    // Attempt to mint the required difference to the contract.
-                    // This assumes DigilToken has MINTER role on the ERC20 contract.
-                    // Using try/catch to prevent a total revert if minting is not authorized.
-                    try _coins.mint(address(this), needed) {
-                        // Minting successful, proceed to transfer
-                    } catch {
-                        // Minting failed (likely due to permissions), will attempt transfer with existing funds
-                    }
-                }
-            }
-
-            // Attempt to transfer coins; if it fails, recredit them.
-            if (coins > 0 && !_transferCoinsFrom(address(this), addr, coins)) {
-                distribution.coins = coins;
-                coins = 0;
-            }
+        } else {
+            // Failure: restore original state (no bonus consumed).
+            distribution.coins = baseCoins;
+            distribution.time = oldTime;
+            coins = 0;
         }
 
         return (coins, value);
     }
+
 
     // Add Value and Distributions
 
@@ -734,6 +746,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function setOptStatus(bool optOut) external payable {
         address account = _msgSender();
         require(_blacklisted[account] != optOut, "DIGIL: No Change");
+        require(account != owner(), "DIGIL: Owner Cannot Opt Out");
 
         // Calculate required minimum funds for opting in/out.
         // This ties the opt decision to the current economic scale of the system.
@@ -2353,7 +2366,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         for the next successful activation.
     /// @dev    - Token must be inactive and not in an activation/discharge batch.
     ///         - Caller must be approved for the token.
-    ///         - Costs 10 × `_coinRate` in ERC20 coins.
+    ///         - Cost scales with activationThreshold.
     ///         - Sets the PRIMED flag in the token's BuffState.
     ///         - PRIMED is consumed (cleared) after the token is successfully activated once.
     /// @param  tokenId The ID of the token to prime.
