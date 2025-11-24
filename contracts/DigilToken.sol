@@ -2311,7 +2311,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         require(t.active, "DIGIL: Token Not Active");
 
-        require((efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) || (attunement > 0 && attunement <= PLANAR_MAX_ID) || (amplification > 0 && amplification <= MAX_BUFF_BONUS) || anchored, "DIGIL: Invalid Buff");
+        require((efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) || (attunement > 0 && attunement < PLANAR_MAX_ID) || (amplification > 0 && amplification <= MAX_BUFF_BONUS) || anchored, "DIGIL: Invalid Buff");
         
         require(duration > 0 && duration <= MAX_BUFF_DURATION_MIN, "DIGIL: Invalid Buff Duration");
 
