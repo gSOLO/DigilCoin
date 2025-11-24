@@ -103,7 +103,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint8 efficiencyBonus;  // Temporary bonus on top of base efficiency (0–100)
         uint8 attunement;       // ID of the plane to mimic (1-18)
         uint8 amplification;    // Bonus multiplier percentage for incoming charge (e.g. 20 = 1.2x)
-        uint8 flags;            // Bitmask: Stabilized, Anchored, Primed
+        uint8 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed
     }
 
     struct Token {
@@ -182,7 +182,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token that was updated
     event Update(uint256 indexed tokenId);
 
-    /// @notice Emitted when a token is is in the process of being activated or discharged.
+    /// @notice Emitted when a token is in the process of being activated or discharged.
     /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being activated
     event Batch(uint256 indexed tokenId);
@@ -1004,19 +1004,29 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return activating Whether the token is being activated.
     /// @return discharging Whether the token is being discharged.
     /// @return restricted Whether the token is restricted.
-    /// @return stabilized Whether the token is stabilized.
     /// @return links The number of links associated with the token.
     /// @return contributors The number of contributor addresses.
     /// @return contributionEpoch The logical epoch for contributions on this token.
     /// @return distributionIndex The current distribution index.
     /// @return data Arbitrary data stored with the token.
-    function tokenData(uint256 tokenId) external view returns(bool active, bool activating, bool discharging, bool restricted, bool stabilized, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data) {
+    function tokenData(uint256 tokenId) external view returns(bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data) {
         _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
-        bool isStabilized = (t.buff.flags & STABILIZED) != 0;
 
-        return (t.active, t.activating, t.discharging, t.restricted, isStabilized, t.links.length, t.contributors.length, t.contributionEpoch, t.distributionIndex, t.data);
+        return (t.active, t.activating, t.discharging, t.restricted, t.links.length, t.contributors.length, t.contributionEpoch, t.distributionIndex, t.data);
+    }
+
+    /// @notice Retrieves buff information for a token.
+    /// @return expiresAt The unix timestamp when the current buff expires (0 if no buff has ever been set).
+    /// @return efficiencyBonus The temporary efficiency bonus applied to all outgoing links (0–100).
+    /// @return attunement Planar ID to mimic for affinity (1-18, or 0 for none).
+    /// @return amplification Percentage multiplier applied to incoming charge (0-100, or 0 for none).
+    /// @return flags Bitmask: 1 Stabilized, 2 Anchored, 4 Primed.
+    function tokenBuff(uint256 tokenId) external view returns (uint64 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags) {
+        _checkTokenExists(tokenId);
+        BuffState storage b = _tokens[tokenId].buff;
+        return (b.expiresAt, b.efficiencyBonus, b.attunement, b.amplification, b.flags);
     }
 
     /// @notice Retrieves contribution details for a specific address on a given token.
@@ -1046,16 +1056,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the source token whose link is being queried.
     /// @param  index The zero-based index into the token's `links` array.
     /// @return linkId The ID of the linked token (or plane) at the given index.
-    /// @return base The stored base efficiency percentage for this link.
+    /// @return baseEfficiency The stored base efficiency percentage for this link.
     /// @return affinityBonus The additional affinity-based efficiency for this link.
-    /// @return efficiencyBonus The temporary efficiency bonus applied to all outgoing links (0–100).
-    /// @return attunement The current attunement Planar ID (0 if none).
-    /// @return amplification The current charge amplification percentage (0 if none).
-    /// @return flags      The current buff flag bitmask (only non-zero while a buff is active):
-    ///                        1 = Stabilized, 2 = Anchored, 4 = Primed.
-    /// @return expiresAt  The unix timestamp when the current buff expires
-    ///                    (0 if no buff has ever been set).
-    function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 base, uint256 affinityBonus, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint64 expiresAt) {
+    function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 baseEfficiency, uint256 affinityBonus) {
         _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
@@ -1063,20 +1066,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         linkId = t.links[index];
         LinkEfficiency storage efficiency = t.linkEfficiency[linkId];
 
-        base = efficiency.base;
+        baseEfficiency = efficiency.base;
         affinityBonus = efficiency.affinityBonus;
 
-        BuffState storage buff = t.buff;
-        efficiencyBonus = buff.efficiencyBonus;
-        expiresAt = buff.expiresAt;
-        
-        if (block.timestamp < expiresAt) {
-            attunement = buff.attunement;
-            amplification = buff.amplification;
-            flags = buff.flags; // Return the raw mask
-        }
-
-        return (linkId, base, affinityBonus, efficiencyBonus, attunement, amplification, flags, expiresAt);
+        return (linkId, baseEfficiency, affinityBonus);
     }
 
     /// @notice Returns information about an external ERC721 token attached to this Digil.
