@@ -27,7 +27,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Constants for bonus interval and multiplier
     uint256 private constant BONUS_INTERVAL = 15 minutes;       // Time interval for bonus coin accrual upon withdrawal. Allows 100% of bonus coins to be retrieved every 25 hours 
     uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
-    uint256 private constant FIRST_WITHDRAW_MULTIPLIER = 50;    // First withdraw can grant up to 50x the normal coin-rate cap
+    uint256 private constant FIRST_WITHDRAW_MULTIPLIER = 10;    // First withdraw can grant up to 10x the normal coin-rate cap
 
     // Configuration values for incremental and transfer values
     uint256 private _incrementalValue = 100 * VALUE_MULTIPLIER; // Minimum incremental ETH value required for charging
@@ -2016,7 +2016,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _checkTokenExists(linkId);
 
         Token storage t = _tokens[tokenId];
-
+        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
         require(t.links.length < MAX_LINKS, "DIGIL: Too Many Links");
 
         // Existing link state
@@ -2257,6 +2257,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
+        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
         // Disallow unlinking foundational planes (IDs 0..PLANAR_MAX_ID)
         // so the token's elemental identity cannot be removed.
