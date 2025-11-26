@@ -21,6 +21,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Coin rate and bonus rate
     uint256 private _coinRate;                                  // Mutable coin rate for various operations, set by the owner
     uint256 private constant BONUS_RATE_DIVISOR = 100;          // Divisor for calculating bonus coins when value is added
+    uint256 private constant MIN_COIN_RATE = 10;                // The minimum coin rate for operations
     uint256 private constant MAX_COIN_RATE = 1000000000;        // The maximum coin rate for operations
 
     // Constants for bonus interval and multiplier
@@ -40,6 +41,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Batch operations limiter
     uint16 private constant DEFAULT_BATCH_SIZE = 256;           // Default number of items to process in a single batch operation
     uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Configurable batch size for distribution or discharge operations
+    uint16 private constant MIN_BATCH_SIZE = 32;                // Minimum number of items to process in a single batch operation
 
     // Define the inactivity period for rescuing tokens
     uint256 private constant STALLED_TIMEOUT = 30 days;         // A short timeout to rescue tokens stuck in a batch operation (e.g., activate/discharge)
@@ -440,9 +442,16 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  batchSize The multiplier used for batch size for distribute and discharge calls that can be made per transaction 
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external onlyOwner {
         // Validate configuration parameters.
-        require(coins > 0 && coins <= MAX_COIN_RATE && incrementalValue > 0 && transferValue <= incrementalValue && transferValue >= (incrementalValue * 9 / 10) && batchSize > 0, "DIGIL: Invalid Configuration");
-
-        _coins.approve(address(this), type(uint256).max); // Re-approve coins to allow maximum transfers.
+        require(
+            coins > MIN_COIN_RATE &&
+            coins <= MAX_COIN_RATE &&
+            incrementalValue > VALUE_MULTIPLIER &&
+            transferValue >= (incrementalValue * 9 / 10) &&          // ≥ 90% to user (≤ 10% fee)
+            transferValue <= (incrementalValue * 99 / 100) &&        // ≤ 99% to user (≥ 1% fee)
+            batchSize >= MIN_BATCH_SIZE,
+            "DIGIL: Invalid Configuration"
+        );
+        
         _coinRate = coins * _coinMultiplier;
 
         _incrementalValue = incrementalValue;
