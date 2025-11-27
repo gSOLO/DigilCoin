@@ -27,7 +27,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Constants for bonus interval and multiplier
     uint256 private constant BONUS_INTERVAL = 15 minutes;       // Time interval for bonus coin accrual upon withdrawal. Allows 100% of bonus coins to be retrieved every 25 hours 
     uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
-    uint256 private constant FIRST_WITHDRAW_MULTIPLIER = 10;    // First withdraw can grant up to 10x the normal coin-rate cap
 
     // Configuration values for incremental and transfer values
     uint256 private _incrementalValue = 100 * VALUE_MULTIPLIER; // Minimum incremental ETH value required for charging
@@ -494,8 +493,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    Computes the time-based bonus coins that would be awarded to `addr`
     ///         at `nowTs`, without mutating state. Mirrors the logic used in {withdraw}.
     ///         - Requires the user to hold at least one Digil token or some Coins.
-    ///         - On the first qualifying withdrawal (distribution.time == 0), the cap
-    ///           is FIRST_WITHDRAW_MULTIPLIER * _coinRate; afterwards it is _coinRate.
     /// @param  addr The address whose bonus is being computed.
     /// @param  distribution The Distribution storage slot for this address.
     /// @param  nowTs The timestamp to use for the calculation (typically block.timestamp).
@@ -509,13 +506,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         uint256 lastBonusTime = distribution.time;
 
-        // If this is the first time (time == 0), allow a larger cap.
-        uint256 cap = _coinRate;
-        if (lastBonusTime == 0) {
-            // First withdrawal can pull a one-time larger bonus up to FIRST_WITHDRAW_MULTIPLIER × coinRate.
-            cap = _coinRate * FIRST_WITHDRAW_MULTIPLIER;
-        }
-
         // If lastBonusTime > nowTs (weird but possible in some edge cases), clamp.
         if (nowTs <= lastBonusTime) {
             // No time elapsed since the last bonus, so nothing to accrue.
@@ -523,14 +513,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Each full BONUS_INTERVAL grants _coinMultiplier units, up to the cap.
+        uint256 cap = _coinRate;
         uint256 rawBonus = (nowTs - lastBonusTime) / BONUS_INTERVAL * _coinMultiplier;
         bonus = rawBonus < cap ? rawBonus : cap;
     }
 
     /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
     /// @dev    Bonus coins are calculated based on the time since the last distribution.
-    ///         On the first qualifying withdrawal (when distribution.time == 0), the user can receive
-    ///         up to FIRST_WITHDRAW_MULTIPLIER times the normal coin-rate cap in bonus coins.
     /// @return coins The number of coin units transferred to the sender.
     /// @return value The native Ether value transferred to the sender.
     function withdraw() external nonReentrant returns (uint256 coins, uint256 value) {
