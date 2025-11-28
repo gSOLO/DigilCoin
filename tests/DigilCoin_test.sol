@@ -13,7 +13,7 @@ contract DigilCoinTest is DigilCoin {
     address acc3;
     address acc4;
 
-    constructor() DigilCoin() {
+    constructor() DigilCoin(acc0) {
         
     }
 

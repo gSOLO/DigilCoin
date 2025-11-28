@@ -39,11 +39,11 @@ contract AlphaTestSuite {
         digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 5000 * 10 ** 18, "First withdrawl should be 5000 coins");
+        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "First withdrawl should be 100 coins");
         Assert.equal(withdrawlValue, 0, "First withdrawl should be 0 value");
 
         balanceCoins = coins.balanceOf(address(this));
-        Assert.equal(balanceCoins, 5000 * 10 ** 18, "Coin balance should be 5000 coins");
+        Assert.equal(balanceCoins, 100 * 10 ** 18, "Coin balance should be 100 coins");
     }
 
     /// #sender: account-0
