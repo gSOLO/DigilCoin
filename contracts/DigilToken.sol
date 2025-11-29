@@ -1338,7 +1338,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @dev Computes the REVERBERATED echo amount from a single link.
-    ///      - Caps the contribution from bonusCoins to at most 2× linkedCoins
+    ///      - Caps the contribution from bonusCoins to at most 4× linkedCoins
     ///        to avoid extreme affinity spikes completely dominating.
     ///      - Returns the final echo amount after dividing by AFFINITY_REDUCTION.
     ///      If both linkedCoins and bonusCoins are zero, returns 0.
@@ -1347,8 +1347,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             return 0;
         }
 
-        // Cap bonusCoins at 2× linkedCoins for controlled “planar drama”
-        uint256 maxBonus = linkedCoins * AFFINITY_BOOST;
+        // Cap bonusCoins at 4× linkedCoins for controlled “planar drama”
+        uint256 maxBonus = linkedCoins * (AFFINITY_BOOST  * AFFINITY_BOOST);
         if (bonusCoins > maxBonus) {
             bonusCoins = maxBonus;
         }
