@@ -1356,7 +1356,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             
             // Check for Amplifier Buff
             // activeCoins here includes Affinity Bonuses from upstream
-            if (t.buff.amplification > 0 && block.timestamp < t.buff.expiresAt) {
+            BuffState storage buff = t.buff;
+            if (buff.amplification > 0 && block.timestamp < buff.expiresAt) {
                 // Calculate bonus: (Total * Multiplier) / 100
                 uint256 boost = (totalIncoming * t.buff.amplification) / 100;
                 totalIncoming += boost;
@@ -1611,9 +1612,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         
         for (dIndex; dIndex < cEndIndex; dIndex++) {
             address contributor = t.contributors[dIndex];
-            if (contributor == address(0)) {
-                break;
-            }
 
             TokenContribution storage contribution = t.contributions[contributor];
             bool distributed = contribution.distributed;
