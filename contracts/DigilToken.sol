@@ -42,9 +42,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Configurable batch size for distribution or discharge operations
     uint16 private constant MIN_BATCH_SIZE = 32;                // Minimum number of items to process in a single batch operation
 
-    // Define the inactivity period for rescuing tokens
-    uint256 private constant STALLED_TIMEOUT = 30 days;         // A short timeout to rescue tokens stuck in a batch operation (e.g., activate/discharge)
-    uint256 private constant INACTIVITY_PERIOD = 365 days;      // A long timeout to rescue tokens that are truly abandoned but have value
+    // Define the inactivity period for reclaiming contributions
+    uint256 private constant STALLED_TIMEOUT = 90 days;         // A short timeout to reclaim contributions from tokens stuck in a batch operation (e.g., activate/discharge)
 
     // Max link and affinity bonus scale
     uint256 private constant MAX_LINKS = 10;                    // Maximum number of links a token can have
@@ -769,47 +768,47 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
-    /// @notice Rescues a token from an account that has opted out or that hasnt seen significant action.
-    /// @dev    Only callable by the contract owner. Transfers the token from a blacklisted/inactive address to a specified address.
-    ///         If a planar token is rescued, to must be the contract owner, otherwise the transaction will revert.
-    ///         Even when an address has opted out (blacklisted), rescue is only allowed after the
-    ///         appropriate inactivity timeout (`STALLED_TIMEOUT` for stalled batch operations,
-    ///         or `INACTIVITY_PERIOD` for normal inactivity), giving the user time to opt back in.
-    /// @param  tokenId The token ID to rescue.
-    /// @param  to The address to which the token is transferred.
-    function rescueToken(uint256 tokenId, address to) external onlyOwner {
-        _checkTokenExists(tokenId);
-        require(to != address(0), "DIGIL: Invalid Rescue Address");
-
-        Token storage t = _tokens[tokenId];
-        address currentOwner = ownerOf(tokenId);
-
-        // Is the token stuck mid activation / discharge (batch op)?
-        bool isStalled = t.distributionIndex > 0;
-
-        // Path 1: Rescue Stalled Operations
-        // If a batch process (discharge/activate) got stuck, allow rescue after short timeout.
-        bool canRescueStalled = isStalled && (block.timestamp >= t.lastActivity + STALLED_TIMEOUT);
-
-        // Path 2: Rescue Blacklisted Owners
-        // If the owner explicitly opted out, allow rescue only after the long inactivity period.
-        bool canRescueBlacklisted = _blacklisted[currentOwner] && (block.timestamp >= t.lastActivity + INACTIVITY_PERIOD);
-
-        require(canRescueStalled || canRescueBlacklisted, "DIGIL: Token Cannot Be Rescued");
-
-        // Give the admin ephemeral approval so _isAuthorized passes for non-planars
-        _approve(_msgSender(), tokenId, address(0), false);
-        // Transfer the token from the blacklisted or inactive address
-        _transfer(currentOwner, to, tokenId);
-        // Clear approvals post-transfer to avoid stray approvals on the new owner.
-        _approve(address(0), tokenId, address(0), false);
-    }
-
-    /// @notice Allows a contributor to reclaim their unprocessed contribution from
-    ///         an inactive token after a period of inactivity, in exchange for a penalty.
-    /// @dev    This function is intended as a safety / “ragequit” escape hatch for
-    ///         contributors whose value is locked in a token that is no longer
-    ///         progressing toward activation or discharge.
+    /// @notice Allows a contributor to reclaim their own unprocessed contribution
+    ///         from an inactive token after a period of inactivity, in exchange
+    ///         for paying a penalty into the system.
+    /// @dev    This is a non-custodial "ragequit" escape hatch for contributors:
+    ///
+    ///         Eligibility:
+    ///         - The token must be inactive (`active == false`) and not in the middle
+    ///           of an activation or discharge batch (`distributionIndex == 0`).
+    ///         - A minimum inactivity window must have passed since the token’s last
+    ///           meaningful activity (`block.timestamp >= lastActivity + STALLED_TIMEOUT`).
+    ///         - The caller must have a recorded contribution (`c.value > 0` or
+    ///           `c.charge > 0`) in the current contribution epoch.
+    ///
+    ///         Penalty:
+    ///         - The caller must send at least one unit of "penalty" value:
+    ///               required = max(token.incrementalValue, _incrementalValue)
+    ///           If `msg.value` is below this threshold, the call reverts with
+    ///           {InsufficientFunds}.
+    ///         - The penalty is added to the protocol’s value pool via {_addValue}
+    ///           and is not returned to the contributor.
+    ///
+    ///         Effects:
+    ///         - The contributor’s recorded `charge` (if any) is subtracted from
+    ///           the token’s `charge` (clamped at zero to avoid underflow).
+    ///         - The contributor’s recorded `value` is removed from their
+    ///           per-token contribution state and returned to them via the
+    ///           distribution system:
+    ///             * `value` is credited to `_distributions[caller].value` using
+    ///               {_addValue}, to be withdrawn later via {withdraw}.
+    ///         - The per-contributor record for the current epoch is cleared:
+    ///             * `c.value` and `c.charge` are zeroed,
+    ///             * `c.exists` is set to false,
+    ///             * `c.distributed` is set to true to prevent double reclamation.
+    ///         - The token’s `lastActivity` timestamp is updated to the current block.
+    ///
+    ///         Scope:
+    ///         - This function never moves the token itself and never touches any
+    ///           other contributor’s stake. It only allows the caller to reclaim
+    ///           their own locked contribution after prolonged inactivity of the token,
+    ///           at the cost of paying a penalty back into the system.
+    ///
     /// @param  tokenId The token ID from which the caller is reclaiming their contribution.
     function reclaimContribution(uint256 tokenId) external payable {
         address addr = _msgSender();
@@ -824,7 +823,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Penalty: require at least one incremental unit of ETH.
         // Use the greater of the token's incrementalValue or the global minimum
-        // (same pattern you use elsewhere).
         uint256 required = t.incrementalValue > _incrementalValue ? t.incrementalValue : _incrementalValue;
         if (msg.value < required) revert InsufficientFunds(required);
 
@@ -1698,31 +1696,84 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
-    /// @notice Discharges an existing token, processing its contributions and value
-    ///         based on its active state. Any remaining `activeCharge` is redistributed
-    ///         into its links, with optional retention if the ANCHORED buff is active.
-    /// @dev    This is a multi-step batch operation that may need to be called
-    ///         multiple times to complete:
-    ///         - On the first call of a discharge cycle (`t.discharging == false`),
-    ///           the caller must send ETH at least equal to
-    ///             max(_incrementalValue, t.incrementalValue) * max(1, links.length).
-    ///         - Subsequent calls in the same cycle (`t.discharging == true`) do not
-    ///           require additional ETH.
-    ///         - If the token is INACTIVE: contributed value/charge are returned to
-    ///           contributors; remaining intrinsic value is sent to the owner.
-    ///         - If the token is ACTIVE: contributors receive value proportional to
-    ///           their charge; owner receives the remainder as per {_distribute}.
-    ///         - After distribution, remaining `activeCharge` is redistributed into
-    ///           linked tokens:
-    ///             * If ANCHORED is active, 25% is retained and 75% redistributed.
-    ///             * Otherwise, 100% is redistributed based on base link efficiencies.
-
+    /// @notice Discharges a token, settling contributions and redistributing any remaining
+    ///         active charge into its link graph.
+    /// @dev    This is a multi-transaction batch operation with "owner starts, anyone can continue":
+    ///
+    ///         Call permissions:
+    ///         - On the **first** call of a discharge cycle (`discharging == false`),
+    ///           the caller must be the token owner or an approved operator. At this
+    ///           point the token must have non-zero `charge`, `value`, `activeCharge`,
+    ///           or already be in `discharging` mode.
+    ///         - Once discharge has started (`discharging == true`), **any address**
+    ///           may continue calling {dischargeToken} to advance distribution until
+    ///           completion. This ensures long-running discharges cannot become
+    ///           permanently stuck if the owner disappears.
+    ///
+    ///         Fee behavior:
+    ///         - On the first call only, the caller must provide a minimum amount of ETH
+    ///           proportional to the token’s complexity:
+    ///               required = max(_incrementalValue, token.incrementalValue)
+    ///                          × max(1, links.length)
+    ///           If `msg.value` is below this threshold, the call reverts.
+    ///         - Subsequent calls in the same discharge cycle do not require additional ETH.
+    ///         - All ETH supplied is routed into the protocol’s value pool via {_addValue}.
+    ///
+    ///         Distribution behavior:
+    ///         - Internally, discharge uses {_distribute} with:
+    ///             * `discharge = true` for inactive tokens (full unwind of contributions),
+    ///             * `discharge = false` for active tokens (activation-style settlement
+    ///               that can move charge into `activeCharge`).
+    ///         - Contributions are processed in batches up to `_batchSize` per call.
+    ///         - On partial progress, a {Batch} event is emitted and the function
+    ///           returns `false`, indicating more calls are required.
+    ///         - After the final batch:
+    ///             * For discharge mode (`discharge = true`), contributors receive back
+    ///               their recorded value/charge via the distribution system and any
+    ///               remaining token value is sent to the token owner.
+    ///             * For non-discharge mode (`discharge = false`, active token),
+    ///               contributors receive proportional value and the remaining
+    ///               `distributionCharge` is converted to `activeCharge`.
+    ///
+    ///         Active charge redistribution:
+    ///         - After all contributions and intrinsic value have been settled, any
+    ///           remaining `activeCharge` is redistributed into linked tokens:
+    ///             * If the ANCHORED flag is active and unexpired, a portion of
+    ///               `activeCharge` is retained on this token and the remainder is
+    ///               spread across links proportional to their base efficiencies.
+    ///             * If ANCHORED is not active, 100% of remaining `activeCharge` is
+    ///               redistributed to linked tokens (subject to integer rounding).
+    ///         - The token’s own `activeCharge` is updated to the retained remainder.
+    ///
+    ///         Epoch and state cleanup:
+    ///         - After a full discharge cycle:
+    ///             * `distributionIndex`, `distributionCharge`, and `distributionValue`
+    ///               are reset to zero.
+    ///             * `value` is swept into distributions as described above.
+    ///             * The contributors array is cleared and `contributionEpoch` is
+    ///               incremented, logically resetting per-contributor state on
+    ///               next touch without looping over all mappings.
+    ///             * Any temporary buff (including ANCHORED) is cleared.
+    ///             * If a contract token is attached, its recallability is reset
+    ///               and its address may be reinserted as a placeholder contributor.
+    ///
+    ///         This function never transfers ownership of the token itself; it only
+    ///         settles contributions and redistributes value/active charge according
+    ///         to the protocol rules.
+    ///
     /// @param  tokenId The token ID to discharge.
-    /// @return True if discharge is complete.
+    /// @return completed True if this call finished the discharge; false if more
+    ///                   calls are required to process remaining contributors.
     function dischargeToken(uint256 tokenId) external payable nonReentrant returns (bool) {
-        _checkApproved(tokenId);
-        
         Token storage t = _tokens[tokenId];
+
+        // First call: require ownership/approval.
+        if (!t.discharging) {
+            _checkApproved(tokenId);
+        } else {
+            _notOnBlacklist(_msgSender());
+        }
+
         require(t.charge > 0 || t.value > 0 || t.activeCharge > 0 || t.discharging, "DIGIL: Nothing to Discharge");
         require(!t.activating, "DIGIL: Activation In Progress");
         
@@ -1832,21 +1883,48 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return true;
     }
 
-    /// @notice Activates a token if its charge meets the activation threshold.
-    /// @dev    This is a multi-step batch operation:
-    ///         - If the token has the PRIMED flag set, the effective activation
-    ///           threshold is halved for this activation only.
-    ///         - On the first call, the token must be inactive and have
-    ///           `t.charge >= effectiveThreshold`.
-    ///         - Subsequent calls in the same activation cycle are allowed while
-    ///           `t.activating == true`, without re-checking the charge.
-    ///         Activation uses {_distribute} with `discharge = false` and may require
-    ///         multiple transactions to complete for large contributor sets.
-    /// @return True if the token activation is complete.
+    /// @notice Activates a token once its accumulated charge meets the activation threshold.
+    /// @dev    This is a multi-transaction batch operation:
+    ///         - On the **first** call of an activation cycle (`activating == false`), the
+    ///           caller must be the token owner or an approved operator. At this point
+    ///           the token must be inactive and `charge >= effectiveThreshold`.
+    ///         - Once activation has started (`activating == true`), **any address**
+    ///           may continue calling {activateToken} to advance distribution until
+    ///           completion. This allows the community to finish long-running activations
+    ///           even if the owner goes offline.
+    ///
+    ///         Threshold behavior:
+    ///         - The effective activation threshold is normally `activationThreshold`.
+    ///         - If the token has been primed (PRIMED flag set in `buff.flags`), the
+    ///           effective threshold is temporarily halved for this activation only.
+    ///         - After a successful activation, the PRIMED flag is consumed.
+    ///
+    ///         Distribution behavior:
+    ///         - Internally, activation uses {_distribute} with `discharge = false`.
+    ///         - Contributions are processed in batches up to `_batchSize * 2` per call.
+    ///         - On partial progress, a {Batch} event is emitted and the function
+    ///           returns `false`, indicating more calls are required.
+    ///         - Once all contributors have been processed in the current epoch:
+    ///             * The token’s `active` flag is set to true.
+    ///             * Any captured `distributionCharge` is moved into `activeCharge`.
+    ///             * Pending value is distributed to contributors and the token owner
+    ///               according to the distribution rules.
+    ///
+    ///         No Ether is required for activation itself; all ETH-related costs occur
+    ///         during charging and other value-manipulating operations.
+    ///
+    /// @param  tokenId The ID of the token to activate.
+    /// @return completed True if this call finished the activation; false if more
+    ///                   calls are required to process remaining contributors.
     function activateToken(uint256 tokenId) external nonReentrant returns(bool) {
-        _checkApproved(tokenId);
-
         Token storage t = _tokens[tokenId];
+        
+        // First call: require ownership/approval.
+        if (!t.activating) {
+            _checkApproved(tokenId);
+        } else {
+            _notOnBlacklist(_msgSender());
+        }
 
         uint256 threshold = t.activationThreshold;
         bool primed = (t.buff.flags & PRIMED) != 0;
