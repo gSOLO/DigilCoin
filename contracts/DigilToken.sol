@@ -94,9 +94,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     // Buff Bitmasks
-    uint8 private constant STABILIZED = 1;  // 00000001 (Anti-Bleed)
-    uint8 private constant ANCHORED   = 2;  // 00000010 (Retain Charge on Discharge)
-    uint8 private constant PRIMED     = 4;  // 00000100 (Half Activation Threshold)
+    uint8 private constant STABILIZED   = 1;  // 00000001 (Anti-Bleed)
+    uint8 private constant ANCHORED     = 2;  // 00000010 (Retain Charge on Discharge)
+    uint8 private constant PRIMED       = 4;  // 00000100 (Half Activation Threshold)
+    uint8 private constant REVERBERATED = 8;  // 00001000 (Retain Some Charge On Active Token)
 
     /// @dev State for a temporary buff on a token
     struct BuffState {
@@ -1336,6 +1337,28 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return boosted;
     }
 
+    /// @dev Computes the REVERBERATED echo amount from a single link.
+    ///      - Caps the contribution from bonusCoins to at most 2× linkedCoins
+    ///        to avoid extreme affinity spikes completely dominating.
+    ///      - Returns the final echo amount after dividing by AFFINITY_REDUCTION.
+    ///      If both linkedCoins and bonusCoins are zero, returns 0.
+    function _reverbEcho(uint256 linkedCoins, uint256 bonusCoins) internal pure returns (uint256) {
+        if (linkedCoins == 0 && bonusCoins == 0) {
+            return 0;
+        }
+
+        // Cap bonusCoins at 2× linkedCoins for controlled “planar drama”
+        uint256 maxBonus = linkedCoins * AFFINITY_BOOST;
+        if (bonusCoins > maxBonus) {
+            bonusCoins = maxBonus;
+        }
+
+        unchecked {
+            uint256 total = linkedCoins + bonusCoins;
+            return total / AFFINITY_REDUCTION;
+        }
+    }
+
     /// @dev    Internal function to charge an active token.
     /// @param  contributor The address making the charge.
     /// @param  tokenId The token ID to charge.
@@ -1387,6 +1410,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 bool charged = _ownerOf(linkId) != address(0) && _chargeToken(contributor, linkId, linkedCoins, bonusCoins, linkedValue, true);
                 if (charged) {
                     value -= linkedValue; // Subtract the successfully distributed value
+
+                    // If REVERBERATED buff is active, reflect a fraction of the
+                    // *successfully propagated* coins back into this token as fresh activeCharge.
+                    if ((t.buff.flags & REVERBERATED) != 0 && block.timestamp < t.buff.expiresAt) {
+                        // Treat both base and affinity bonus as outbound “signal”
+                        uint256 echo = _reverbEcho(linkedCoins, bonusCoins);
+                        if (echo > 0) {
+                            t.activeCharge += echo;
+                            emit ActiveCharge(tokenId, echo);
+                        }
+                    }
                 } else {
                     // If linked token could not be charged, add the coins to the source's active charge.
                     t.activeCharge += linkedCoins;
@@ -2195,10 +2229,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // Attunement acts like an extra BUFF_COST chunk of magnitude.
             magnitude += BUFF_COST;
         }
-        // Check flags from storage (only ANCHORED affects buff cost here).
+        // Check flags from storage (only ANCHORED/REVERBERATED affects buff cost here).
         uint8 flags = buff.flags;
         if ((flags & ANCHORED) != 0) {
             // Anchoring acts like an extra BUFF_COST chunk of magnitude.
+            magnitude += BUFF_COST;
+        }
+        if ((flags & REVERBERATED) != 0) {
             magnitude += BUFF_COST;
         }
 
@@ -2369,6 +2406,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - Applies the same `efficiencyBonus` to all outgoing links.
     ///         - Optionally enables ANCHORED, causing a portion of `activeCharge`
     ///           to be retained on discharge.
+    ///         - Optionally enables REVERBERATED, causing a fraction of outbound link charge
+    ///           to be reflected back into this token as fresh activeCharge while the
+    ///           buff is active.
     ///         - Lasts for `duration` minutes (capped at 24 hours).
     ///         The cost is computed via {_buffCost} using:
     ///             cost ≈ magnitude * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR
@@ -2385,16 +2425,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  efficiencyBonus  The temporary bonus (0–100) added to each link's base efficiency.
     /// @param  attunement       Planar ID to mimic for affinity (1-17, or 0 for none; world (18) cannot be used).
     /// @param  amplification    Percentage multiplier applied to incoming charge (0-100, or 0 for none).
-    /// @param  anchored         Whether to enable ANCHORED behavior during discharge.
+    /// @param  anchor           Whether to enable ANCHORED behavior during discharge.
+    /// @param  reverb           Whether to enable REVERBERATED behavior during discharge.
     /// @param  duration         The buff duration in minutes (1–1440).
-    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, bool anchored, uint256 duration) external {
+    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, bool anchor, bool reverb, uint256 duration) external {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
 
         require(t.active, "DIGIL: Token Not Active");
 
-        require((efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) || (attunement > 0 && attunement < PLANAR_MAX_ID) || (amplification > 0 && amplification <= MAX_BUFF_BONUS) || anchored, "DIGIL: Invalid Buff");
+        require((efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) || (attunement > 0 && attunement < PLANAR_MAX_ID) || (amplification > 0 && amplification <= MAX_BUFF_BONUS) || anchor || reverb, "DIGIL: Invalid Buff");
         
         require(duration > 0 && duration <= MAX_BUFF_DURATION_MIN, "DIGIL: Invalid Buff Duration");
 
@@ -2415,7 +2456,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
                 magnitude += tier * BUFF_COST;
             }
-            if (anchored) magnitude += BUFF_COST;
+            if (anchor) magnitude += BUFF_COST;
+            if (reverb) magnitude += BUFF_COST;
 
             // Calculate link count (min 1)
             uint256 linkCount = t.links.length;
@@ -2438,8 +2480,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint8 flags = t.buff.flags & (STABILIZED | PRIMED);
 
         // Apply ANCHORED based on the boolean parameter.
-        if (anchored) {
+        if (anchor) {
             flags |= ANCHORED;
+        }
+        if (reverb) {
+            flags |= REVERBERATED;
         }
 
         t.buff.flags = flags;

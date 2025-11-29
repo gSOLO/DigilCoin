@@ -136,7 +136,7 @@ contract JuiletTestSuite {
         Assert.equal(flags, 0, "Invalid Flags");
         Assert.equal(expiresAt, 0, "Invalid Buff Expires");
 
-        digil.buffToken(activeTokenId, 5, 5, 5, true, 24);
+        digil.buffToken(activeTokenId, 5, 5, 5, true, true, 24);
 
         digil.linkToken{value: 200000000000000}(activeTokenId, linkTokenId, 20);
 
@@ -148,7 +148,7 @@ contract JuiletTestSuite {
         Assert.equal(efficiencyBonus, 5, "Invalid Buffed Link Base Efficiency Bonus");
         Assert.equal(attunement, 5, "Invalid Buffed Attunement");
         Assert.equal(amplification, 5, "Invalid Buffed Amplification");
-        Assert.equal(flags, 2, "Invalid Buffed Flags");
+        Assert.equal(flags, 2 + 8, "Invalid Buffed Flags");
         Assert.equal(expiresAt, block.timestamp + (24 * 1 minutes), "Invalid Buffed Buff Expires");
     }
 
@@ -175,7 +175,7 @@ contract JuiletTestSuite {
         uint8 amplification = 50;
         uint256 duration = 30; // minutes
 
-        digil.buffToken(tokenId, 0, 0, amplification, false, duration);
+        digil.buffToken(tokenId, 0, 0, amplification, false, false, duration);
 
         // Expected buff cost:
         // cost = magnitude * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR

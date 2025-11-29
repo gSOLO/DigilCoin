@@ -158,7 +158,7 @@ contract IndiaTestSuite {
         Assert.equal(charge, 0, "Invalid new Source charge");
         Assert.equal(activeCharge, coinMultiplier * 512, "Invalid new Source active charge");
 
-        digil.buffToken(activeTokenId, 30, 0, 0, false, 24);
+        digil.buffToken(activeTokenId, 30, 0, 0, false, false, 24);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post buff Source charge");
@@ -203,7 +203,7 @@ contract IndiaTestSuite {
             activationComplete = digil.activateToken(activeTokenId);
         }
 
-        digil.buffToken(activeTokenId, 0, 0, 0, true, 36);
+        digil.buffToken(activeTokenId, 0, 0, 0, true, false, 36);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid final buff Source charge");
