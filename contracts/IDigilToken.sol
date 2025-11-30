@@ -90,7 +90,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     function tokenBuff(uint256 tokenId) external view returns (uint64 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags);
     function tokenContribution(uint256 tokenId, address contributor) external view returns (uint256 charge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch);
     function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 baseEfficiency, uint256 affinityBonus);
-    function tokenAttachment(uint256 tokenId) external view returns (address contractTokenAddress, uint256 externalTokenId, bool recallable); 
+    function tokenAttachment(uint256 tokenId) external view returns (address contractTokenAddress, uint256 externalTokenId, bool recallable, bool vaulted); 
 
     // Token Creation
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable returns (uint256 tokenId);

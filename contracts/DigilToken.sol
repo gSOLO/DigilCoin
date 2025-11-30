@@ -1078,23 +1078,29 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Returns information about an external ERC721 token attached to this Digil.
-    /// @dev    If no external token is attached, `contractTokenAddress` will be zero,
-    ///         and both `externalTokenId` and `recallable` will be zero/false.
+    /// @dev
+    ///  - If `contractTokenAddress` is zero, this Digil has never wrapped a contract token.
+    ///  - If `vaulted` is true, the external token is still held by this contract.
+    ///  - If `vaulted` is false but `contractTokenAddress`/`externalTokenId` are non-zero,
+    ///    the external token has been recalled and this Digil is now historical-only.
     /// @param  tokenId The internal Digil token ID being queried.
     /// @return contractTokenAddress The ERC721 contract address of the attached token (zero if none).
     /// @return externalTokenId      The external ERC721 tokenId attached to this Digil (zero if none).
     /// @return recallable           True if the attached token can currently be recalled via {recallToken}.
-    function tokenAttachment(uint256 tokenId) external view returns (address contractTokenAddress, uint256 externalTokenId, bool recallable) {
+    /// @return vaulted              True if the external token is still held in this contract’s custody.
+    function tokenAttachment(uint256 tokenId) external view	returns (address contractTokenAddress, uint256 externalTokenId,	bool recallable, bool vaulted) {
         _checkTokenExists(tokenId);
-        
+
         Token storage t = _tokens[tokenId];
         contractTokenAddress = t.contractTokenAddress;
 
-        if (contractTokenAddress != address(0)) {
-            ContractToken storage ct = _contractTokens[contractTokenAddress][tokenId];
-            externalTokenId = ct.tokenId;
-            recallable      = ct.recallable;
-        }
+        // If contractTokenAddress is zero, this is just a default/empty mapping read.
+        ContractToken storage ct = _contractTokens[contractTokenAddress][tokenId];
+        externalTokenId = ct.tokenId;
+        recallable      = ct.recallable;
+
+        // If contractTokenAddress or externalTokenId is zero, this also just reads defaults.
+        vaulted = _contractTokenExists[contractTokenAddress][externalTokenId];
     }
 
     // Token Creation
