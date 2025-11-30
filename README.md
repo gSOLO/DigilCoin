@@ -28,12 +28,12 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
   - [Temporary Buffs (Efficiency, Attunement, Amplification, Anchor, Reverb)](#temporary-buffs-efficiency-attunement-amplification-anchor-reverb)
   - [Stabilization (Anti-Bleed)](#stabilization-anti-bleed)
   - [Priming (Acceleration)](#priming-acceleration)
+  - [Overcharging](#overcharging)
 - [Vaulting External ERC-721s](#vaulting-external-erc-721s)
 - [Distributions, Withdrawals & Bonuses](#distributions-withdrawals--bonuses)
 - [Contributor Reclaim](#contributor-reclaim)
 - [Opt-Out / Blacklist](#opt-out--blacklist)
 - [Admin & Security Notes](#admin--security-notes)
-  - [Overcharging](#overcharging)
 - [Pricing and Costs](#pricing-and-costs)
 - [How it Works: End-to-End Examples](#how-it-works-end-to-end-examples)
 
@@ -613,6 +613,18 @@ Priming acts as a **catalyst**, greasing the ethereal gears to make the next fir
 - **Cost**:
   - The fee is approximately **25%** of the token's total `activationThreshold` in coins (calculated as `threshold / 4`).
   - This allows a practitioner to spend liquid coins now to lower the accumulation requirement later.
+  
+### Overcharging
+
+```solidity
+overchargeToken(tokenId, coins)
+```
+(Token Owner/Operator only, payable)
+
+Allows the token owner or an approved operator to convert ETH directly into `activeCharge` for a token.
+- No contribution records are created.
+- ETH is treated as system fuel (added to contract value).
+- Cost is premium (2x): `(incrementalValue * coins * AFFINITY_BOOST) / _coinMultiplier`.
 
 ---
 
@@ -816,18 +828,6 @@ Blacklisted addresses:
 - **Withdraw bonus**:
   - `_pendingBonus` centralizes bonus math and is reused by `withdraw`.
   - Accounts holding coins or Digils earn time-based bonuses up to `_coinRate` per withdrawal call.
-
-### Overcharging
-
-```solidity
-overchargeToken(tokenId, coins)
-```
-(Token Owner/Operator only, payable)
-
-Allows the token owner or an approved operator to convert ETH directly into `activeCharge` for a token.
-- No contribution records are created.
-- ETH is treated as system fuel (added to contract value).
-- Cost is premium (2x): `(incrementalValue * coins * AFFINITY_BOOST) / _coinMultiplier`.
 
 ---
 
