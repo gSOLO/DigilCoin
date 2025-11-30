@@ -3,7 +3,9 @@ The Web3 Layer of the [Digil Project](https://digil.app)
 **Website**: [digil.co.in](https://digil.co.in)
 
 ## What is a Digil?
-A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrinsic value (ETH)** and accumulate **energy (ERC-20 “coins”)**. Owners and contributors can **charge**, **activate**, **link**, **buff**, **deactivate**, and **discharge** Digils; the contract fairly tracks and redistributes ETH/coins using on-chain rules and events. Conceptually, a Digil behaves like a **rechargeable node** that can power neighboring nodes when linked.
+A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrinsic value (ETH)** and accumulate **energy (ERC-20 “coins”)**. Owners and contributors can **charge**, **activate**, **link**, **buff**, **deactivate**, and **discharge** Digils; the contract fairly tracks and redistributes ETH/coins using on-chain rules and events.
+
+Conceptually, a Digil behaves like a **rechargeable node** that can power neighboring nodes when linked. Metaphorically, it is a programmable servitor, a vessel for your intent. By inscribing it on the blockchain, charging it with value (gnosis), and linking it to other constructs, you create a complex circuit of will that manifests through the movement of value and energy.
 
 > A sigil is a type of symbol used in magic. In modern usage, especially in the context of chaos magic, sigil refers to a symbolic representation of the practitioner's desired outcome.<sup>[?](https://en.wikipedia.org/wiki/Sigil)</sup>
 
@@ -25,6 +27,7 @@ A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrin
 - [Linking & Affinity](#linking--affinity)
   - [Temporary Buffs (Efficiency, Attunement, Amplification, Anchor, Reverb)](#temporary-buffs-efficiency-attunement-amplification-anchor-reverb)
   - [Stabilization (Anti-Bleed)](#stabilization-anti-bleed)
+  - [Priming (Acceleration)](#priming-acceleration)
 - [Vaulting External ERC-721s](#vaulting-external-erc-721s)
 - [Distributions, Withdrawals & Bonuses](#distributions-withdrawals--bonuses)
 - [Contributor Reclaim](#contributor-reclaim)
@@ -41,25 +44,25 @@ A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrin
 ### Digil Coin | ERC-20
 **Symbol**: DIGIL • **Address**: TBD
 
-Used for **charge units**, feature fees (linking, metadata updates, opt-out), and **bonuses**. Internally the contract normalizes coin math with a **coin multiplier**: `10**decimals`. Where we say “coins,” we mean base units at this precision.
+Used for **charge units**, feature fees (linking, metadata updates, opt-out), and **bonuses**. In the context of the system, these coins represent **Gnosis** or kinetic energy. They are the fuel required to power the ritual. Internally the contract normalizes coin math with a **coin multiplier**: `10**decimals`. Where we say “coins,” we mean base units at this precision.
 
 ### Digil Token | ERC-721
 **Symbol**: DDIGIL • **Address**: TBD
 
-Implements core NFT logic plus:
-- **Economics**: per-token `charge`, `activeCharge`, and ETH `value`; per-address contribution ledgers; pending distributions.
+Implements core NFT logic plus the esoteric machinery of the system:
+- **Economics**: per-token `charge` (potential energy), `activeCharge` (kinetic energy), and ETH `value` (material sacrifice); per-address contribution ledgers; pending distributions.
 - **Batched workflows**: `activateToken`, `dischargeToken` process contributors in pages using `distributionIndex` and a configurable `_batchSize`.
-- **Link graph**: up to 10 links per token with `LinkEfficiency { base %, affinityBonus }`, optional **temporary buffs**, and plane-driven bonuses (including buff-aware costs for adding new links).
+- **Link graph**: up to 10 links per token with `LinkEfficiency`, optional **temporary buffs**, and plane-driven bonuses. This forms the "Ley Lines" connecting your intentions.
 - **Vaulting**: accepts external ERC-721s via `onERC721Received` and exposes `recallToken`.
 - **Access & safety**: blacklist gating; planar invariants; `nonReentrant` on sensitive paths; robust event surface; custom errors.
 
-In short, it’s both the **scoreboard** and the **settlement engine**.
+In short, it’s both the **scoreboard** and the **settlement engine** for your digital workings.
 
 ---
 
 ## Planar Tokens & Base URI
 
-At deployment the contract mints **21 planar tokens** (IDs `0..20`) to the admin. These embed compact **affinity metadata** (bytes) used by the link bonus algorithm:
+At deployment the contract mints **21 planar tokens** (IDs `0..20`) to the admin. These embed compact **affinity metadata** (bytes) used by the link bonus algorithm. These are the **Archetypes**—the fundamental forces of the Digil reality to which your specific intention aligns.
 
 - Core: **Void (1), Karma (2), Kaos (3)**
 - Elemental: **Fire (4), Air (5), Earth (6), Water (7)**
@@ -73,7 +76,7 @@ At deployment the contract mints **21 planar tokens** (IDs `0..20`) to the admin
 - During `transferOwnership`, a short **planar transfer window** opens so planar tokens held by the outgoing admin can be moved to the new admin. Otherwise, planar tokens are **non-transferable**.
 - Token **#0** controls the collection **base URI**; `_baseURI()` returns token #0’s URI. Updating #0 updates the effective base for default `tokenURI`s.
 
-**Practical note**: End-user Digils may **align** to a foundational plane during creation (see Create). That alignment doesn’t create a user-visible token transfer—it sets internal state used by the **affinity** algorithm.
+**Practical note**: End-user Digils may **align** to a foundational plane during creation (see Create). That alignment doesn’t create a user-visible token transfer—it sets internal state used by the **affinity** algorithm to determine how your sigil resonates with others.
 
 ---
 
@@ -106,19 +109,19 @@ with checks:
 - `LINK_BUFF_COST_FACTOR = 24 × 60` — calibration constant for buff pricing in terms of `activeCharge`.
 - `BUFF_COST = 50` — Magnitude cost added for special flags (Attunement, Anchored, Primed, Reverb).
 
-These dials collectively shape costs (fees), minimum ETH coupling per coin, payout fairness, throughput of batch operations, and the economics of **buffs**.
+These dials collectively shape the physics of the Digil universe: fees (offerings), minimum ETH coupling (material requirement), payout fairness, and the economics of **buffs** (ritual enhancements).
 
 ---
 
 ## Per-Token Properties
 
 **Economics**
-- `charge` — pre-activation coins (base units); grows via `chargeToken/As` on inactive tokens.
+- `charge` — pre-activation coins (base units); grows via `chargeToken/As` on inactive tokens. Think of this as **Potential Energy**.
 - `distributionCharge` / `distributionValue` — snapshots used when a distribution is in progress.
-- `activeCharge` — post-activation working coins; also accrues from link inflows, some overpay scenarios, and is **spent** by buffs and certain thematic effects.
-- `value` — intrinsic ETH the token holds.
+- `activeCharge` — post-activation working coins; also accrues from link inflows, some overpay scenarios, and is **spent** by buffs and certain thematic effects. This is **Kinetic Energy**.
+- `value` — intrinsic ETH the token holds. The material backing of the intent.
 - `incrementalValue` — per-coin ETH requirement for *this* token (can be 0 but must be ≥ global min if set).
-- `activationThreshold` — required coins to allow activation.
+- `activationThreshold` — required coins to allow activation. The critical mass required to fire the sigil.
 
 **Workflow state**
 - `activating` / `discharging` — multi-tx operation flags.
@@ -142,7 +145,7 @@ This is a **mini-ledger** per token: balances, connections (including temporary 
 
 ## Lifecycle
 
-High-level: **Create** → **Charge** → **Activate**. Later: **Deactivate** and/or **Discharge**.
+The existence of a Digil follows a ritual path: **Inscription (Create)** → **Gnosis (Charge)** → **Firing (Activate)**. Eventually, the energy can be grounded: **Banishment (Deactivate)** and **Release (Discharge)**.
 
 ### Create
 
@@ -158,7 +161,7 @@ createToken(
 
 - Enforces `incrementalValue == 0 || incrementalValue ≥ globalMin`.
 - If `restricted = true`, caller must send `ETH ≥ max(token.incrementalValue, globalMin)`.
-- If `plane ∈ [1..PLANAR_MAX_ID]`, charges a one-time **coin fee tier** (see [Admin & Security Notes](#admin--security-notes)) and records the alignment with base 100% link to that plane (internal only).
+- If `plane ∈ [1..PLANAR_MAX_ID]`, charges a one-time **coin fee tier** (see [Admin & Security Notes](#admin--security-notes)) and records the alignment with base 100% link to that plane (internal only). This aligns your new construct with a fundamental elemental force.
 - Any `msg.value` becomes token `value`.
 - Returns the new `tokenId` minted to the caller.
 
@@ -167,18 +170,20 @@ createToken(
 `chargeToken(tokenId, coins)` and  
 `chargeTokenAs(contributor, tokenId, coins)` (the latter is `nonReentrant`)
 
+To empower the sigil, participants must offer material value (ETH, conditional) and energetic value (Coins).
+
 - **Inputs**: `coins` (base units) and `msg.value` (ETH).  
   If `contributor ≠ caller` (proxy), call must include at least:  
   `requiredValue = max(token.incrementalValue, globalMin)`.
-- **Inactive token path**:
+- **Inactive token path (Building Potential)**:
   - Compute minimum ETH for the requested coins:  
     `minValue = token.incrementalValue × (coins / coinMultiplier)`.  
   - Record `minValue` as the contributor’s **value**; excess ETH → token `value`.
   - If provided coins exceed the minimum implied by ETH, surplus coins go to `activeCharge`.
   - Emits `Contribute`, `ContributeValueAs`, `Charge` as appropriate.
-- **Active token path** (active charging):
+- **Active token path (Active Charging)**:
   - If the token has **no links**, all coins (plus any `activeCoins` used in linked paths) credit `activeCharge`.
-  - If the token **has links**:
+  - If the token **has links** (Sympathetic Connections):
     - ETH is evenly split across the links.
     - Coins are apportioned per link by:
       - `linkedCoins = (coins × effectiveBaseEfficiency) / links.length / 100`
@@ -188,7 +193,7 @@ createToken(
       - Does **not** pull ERC-20 from the contributor.
       - Still enforces restriction/whitelist and minimum ETH/coin logic, and may also use the source’s `activeCoins` when charging via links.
     - If a target link cannot be charged (fails checks), its slice of coins falls back into the source’s `activeCharge`.
-    - **Reverb Effect**: If the source token has an active **Reverb Buff** (`REVERBERATED` flag 8), a portion of the coins *successfully propagated* to a link are reflected back to the source as an "echo" (`activeCharge`).
+    - **Reverb Effect**: If the source token has an active **Reverb Buff** (`REVERBERATED` flag 8), a portion of the coins *successfully propagated* to a link are reflected back to the source as an "echo" (`activeCharge`). The intent resonates and returns to the caster.
     - Unused ETH after linked charging becomes a pending distribution for the source **owner**.
   - **Amplification**: If the token has an active **Amplification Buff**, any coins that remain on the token (either direct deposit or incoming from a link) are multiplied by the amplification factor before being added to `activeCharge`.
 
@@ -200,8 +205,10 @@ activateToken(tokenId)
 
 (multi-tx)
 
+This is the firing of the sigil. The accumulated potential energy is transmuted into active kinetic energy, and the material sacrifice (ETH) is settled.
+
 - Requires `active == false`.
-- **Primed Buff**: If the token has an active `PRIMED` (flag 4) buff, the required `activationThreshold` is temporarily halved. Otherwise, requires `charge ≥ activationThreshold` (or already in `activating` mode).
+- **Primed Buff**: If the token has an active `PRIMED` (flag 4) buff, the required `activationThreshold` is temporarily halved. The sigil has been greased for easier release. Otherwise, requires `charge ≥ activationThreshold` (or already in `activating` mode).
 - Also requires `!discharging`.
 - Internally calls `_distribute(tokenId, discharge=false)` in batches:
   - For each contributor:
@@ -250,7 +257,7 @@ is “rounding dust” left behind on the token as `t.value`.
 
 At the end of activation:
 
-- All contributor payouts are sent via `_addDistributedValue(contributor, payout_i)` (which itself splits user/contract fee and mints any bonus coins).
+- All contributor payouts are sent via `_addDistributedValue(contributor, payout_i)` (which itself splits user/contract fee and allocates any bonus coins).
 - The token’s remaining `t.value` (including `dust`) is read as `tValue`, then reset to 0.
 - The owner receives their **contributed ETH pool** plus this `dust` in one go via:
 
@@ -271,7 +278,7 @@ The contract only ever takes its normal fee percentage via `_addDistributedValue
 deactivateToken(tokenId)
 ```
 
-Deactivation is a **purely stateful** operation — no ETH moves in or out:
+Deactivation is a **purely stateful** operation — no ETH moves in or out. It is the banishing of the active construct.
 
 - Requires `active == true` and `charge == 0`.
 - Requires no batch in progress (`distributionIndex == 0`).
@@ -279,11 +286,9 @@ Deactivation is a **purely stateful** operation — no ETH moves in or out:
   - Applies a **thematic bleed**:
     - Let `ac = activeCharge`. If `ac > 0`, compute `lost = ac / AFFINITY_REDUCTION` (currently half).
     - New `activeCharge = ac - lost`.
-    - The lost portion is no longer tracked by any token; the underlying coins remain in the contract as un-attributed “ambient power”.
+    - The lost portion is no longer tracked by any token; the underlying coins remain in the contract as un-attributed “ambient power”. This represents the entropy cost of breaking the spell.
   - Sets `active = false`.
   - Emits `Deactivate(tokenId)`.
-
-This models the idea that **turning a sigil off** leaks some of its power back into the system, but it doesn’t require you to spend ETH at that moment.
 
 ### Discharge
 
@@ -292,6 +297,8 @@ dischargeToken(tokenId)
 ```
 
 (multi-tx; `nonReentrant`)
+
+The final release. The construct is dismantled, value is settled, and remaining energy is grounded or directed outward to its neighbors.
 
 - Requires there is something meaningful to discharge:  
   `t.charge > 0 || t.value > 0 || t.activeCharge > 0 || t.discharging == true`.
@@ -324,7 +331,7 @@ Two main modes:
 After `_distribute` completes in either mode:
 
 - Any remaining `activeCharge` is **redistributed into the token’s links**:
-  - **Anchored Buff**: If the token has an active `ANCHORED` (flag 2) buff, ~25% of the `activeCharge` is **retained** on the token before redistribution begins.
+  - **Anchored Buff**: If the token has an active `ANCHORED` (flag 2) buff, ~25% of the `activeCharge` is **retained** on the token before redistribution begins. The energy is bound to the vessel and does not fully dissipate.
   - Sum base efficiencies across links: `sum = Σ base`.
   - Each link receives: `share = ac × base / sum`, added to its `activeCharge`.
   - `ActiveCharge` events are emitted for each link.
@@ -424,7 +431,7 @@ Returns link data for a given source token and index in its `links[]` array:
 
 ### `tokenBuff(tokenId)`
 
-Returns the current buff state of a token:
+Returns the current buff state of a token. These are the active enchantments on the sigil:
 
 ```solidity
 (
@@ -446,11 +453,13 @@ Returns information about vaulted external ERC721 tokens:
 (
     address contractTokenAddress,
     uint256 externalTokenId,
-    bool recallable
+    bool recallable,
+	bool vaulted,
 )
 ```
-- If `contractTokenAddress` is non-zero, this Digil is wrapping an external NFT.
+- If `contractTokenAddress` is non-zero, this Digil wrapped an external NFT.
 - `recallable` indicates if `recallToken` can currently be called.
+- If `vaulted` if false, but `contractTokenAddress`/`externalTokenId` are non-zero, the external token has been recalled.
 
 ---
 
@@ -461,6 +470,8 @@ linkToken(tokenId, linkId, efficiency)
 ```
 
 (`nonReentrant`)
+
+This is the creation of **Sympathetic Magic** between nodes. By linking Digils, you establish a flow of value. The strength of this connection is determined by **Planar Affinity**—how well the elemental nature of the source aligns with the destination.
 
 - Preconditions:
   - `tokenId != linkId`
@@ -513,13 +524,13 @@ buffToken(tokenId, efficiency, attunement, amplification, anchor, reverb, durati
 
 (`nonReentrant`)
 
-This function lets the owner **temporarily boost** an active token by spending `activeCharge`. There are multiple types of buffs that can be applied simultaneously:
+This function lets the owner **temporarily boost** an active token by spending `activeCharge`. This is a ritual of enhancement, consuming energy to alter the properties of the sigil.
 
 1.  **Efficiency Buff**: Adds a bonus to the base efficiency of all outgoing links.
-2.  **Attunement**: Temporarily mimics a specific Planar ID (1-18) for affinity calculations. Used to gain better bonuses when linking to specific neighbors.
+2.  **Attunement**: Temporarily mimics a specific Planar ID (1-17) for affinity calculations. The sigil vibrates at a different frequency to harmonize with specific neighbors.
 3.  **Amplification**: Applies a multiplier to all incoming charge (coins) that stays on the token.
-4.  **Anchor** (Flag 2): If set, the token retains ~25% of its `activeCharge` when discharged, instead of distributing 100%.
-5.  **Reverb** (Flag 8): If set, a portion of the charge successfully pushed to outgoing links is "echoed" back to the source token as fresh `activeCharge`.
+4.  **Anchor** (Flag 2): If set, the token retains ~25% of its `activeCharge` when discharged, instead of distributing 100%. The energy is bound to the vessel.
+5.  **Reverb** (Flag 8): If set, a portion of the charge successfully pushed to outgoing links is "echoed" back to the source token as fresh `activeCharge`. The intent creates a feedback loop.
 
 **Inputs**
 
@@ -574,7 +585,7 @@ stabilizeToken(tokenId)
 
 (`nonReentrant`)
 
-This function acts as **insurance** against the thematic bleed that occurs during `deactivateToken` or `recallToken`.
+This function acts as **insurance** against the thematic bleed that occurs during `deactivateToken` or `recallToken`. It is a warding spell that prevents energy loss.
 
 - **Mechanism**: The owner pays ERC-20 Coins upfront to flag the token as `stabilized`.
 - **Benefit**: On the next bleed event, the bleed amount (normally ~50% of `activeCharge`) is **skipped**. The stabilization flag is then consumed.
@@ -582,6 +593,26 @@ This function acts as **insurance** against the thematic bleed that occurs durin
   - Base cost is approximately **25%** of current `activeCharge` (calculated as `ac / 4`), subject to a minimum floor.
   - This allows users to pay a smaller fee (~25%) to save the larger loss (~50%).
   - If the token currently has an active **efficiency buff**, the stabilization cost is discounted (`cost * 100 / (100 + efficiency)`).
+
+### Priming (Acceleration)
+
+```solidity
+primeToken(tokenId)
+```
+
+(`nonReentrant`)
+
+Priming acts as a **catalyst**, greasing the ethereal gears to make the next firing (activation) easier.
+
+- **Mechanism**: The owner pays an upfront coin fee to set the `PRIMED` flag on an inactive token.
+- **Benefit**: The `activationThreshold` is temporarily **halved** for the next activation attempt. Once the token is successfully activated, the primed status is consumed.
+- **Preconditions**:
+  - Token must be **inactive**.
+  - Token must not already be primed.
+  - Token must have a non-zero activation threshold.
+- **Cost**:
+  - The fee is approximately **25%** of the token's total `activationThreshold` in coins (calculated as `threshold / 4`).
+  - This allows a practitioner to spend liquid coins now to lower the accumulation requirement later.
 
 ---
 
@@ -616,7 +647,7 @@ The callback `onERC721Received`:
    - `token.contractTokenAddress = collection`
    - Adds `collection` as the initial entry in `contributors[]`.
 
-This Digil now represents the vaulted NFT.
+This Digil now represents the vaulted NFT. It is a shell or "spirit vessel" constructed around the original artifact.
 
 ### Recall
 
@@ -637,7 +668,7 @@ recallToken(collection, digilId)
   - `_applyActiveChargeBleed` is called, which currently burns ~50% of `activeCharge` (via division by `AFFINITY_REDUCTION`) and leaves the remainder on the token (unless the token was `stabilized`).
   - There is **no direct coin payout** from recall; instead, the act of pulling the vaulted NFT back to its owner “drains” part of the sigil’s power.
 
-Vaulted NFTs thus become **chargeable artifacts** whose built-up energy dynamics matter even when you decide to reclaim the underlying asset.
+Vaulted NFTs thus become **chargeable artifacts** whose built-up energy dynamics matter even when you decide to reclaim the underlying asset. When you recall the NFT, the Digil remains as an empty but charged sigil, carrying the memory of that vault session.
 
 ---
 
@@ -711,7 +742,7 @@ createValue(tokenId, value)
 reclaimContribution(tokenId)
 ```
 
-Allows an individual contributor to **pull back** their ETH contribution from a long-inactive token without requiring a full discharge by the owner. This serves as a non-custodial safety hatch.
+Allows an individual contributor to **pull back** their ETH contribution from a long-inactive token without requiring a full discharge by the owner. This serves as a non-custodial safety hatch for abandoned intentions.
 
 High-level behavior:
 
