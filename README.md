@@ -86,20 +86,19 @@ configure(coins, incrementalValue, transferValue, batchSize)
 ```
 
 with checks:
-- `_coinRate = coins × coinMultiplier` • `coins ∈ (0, 1e9]`
-- `_incrementalValue > 0` (global per-coin ETH floor)
-- `_transferValue ∈ [0.9, 1.0] × _incrementalValue`
-- `_batchSize > 0`
+- `_coinRate = coins × coinMultiplier` • `coins ∈ (10, 1,000,000,000]`
+- `_incrementalValue > 1000 gwei` (global per-coin ETH floor)
+- `_transferValue ∈ [0.9, 0.99] × _incrementalValue` (between 1% and 10% fee)
+- `_batchSize ≥ 32`
 
 **Core constants**
 - `BONUS_INTERVAL = 15 minutes` → withdraw time bonus step.
-- `FIRST_WITHDRAW_MULTIPLIER = 50` → first qualifying withdraw can grant up to **50×** the normal coin-rate bonus cap.
 - `VALUE_MULTIPLIER = 1000 gwei` (used for default minimums).
-- `PLANAR_MAX_ID = 18`, `PLANAR_TRANSFER_MAX_ID = 20`
-- `MAX_LINKS = 10`
+- `PLANAR_MAX_ID = 18`, `PLANAR_TRANSFER_MAX_ID = 20`.
+- `MAX_LINKS = 10`.
 - Reclaim timeout:
   - `STALLED_TIMEOUT = 90 days` → window after which contributors can reclaim value from inactive tokens.
-- Affinity helpers: `AFFINITY_BOOST = 2`, `AFFINITY_REDUCTION = 2`
+- Affinity helpers: `AFFINITY_BOOST = 2`, `AFFINITY_REDUCTION = 2`.
 
 **Link buff configuration**
 - `MAX_BUFF_BONUS = 100` — cap on temporary bonus applied to outgoing links (percentage points).
@@ -107,7 +106,7 @@ with checks:
 - `LINK_BUFF_COST_FACTOR = 24 × 60` — calibration constant for buff pricing in terms of `activeCharge`.
 - `BUFF_COST = 50` — Magnitude cost added for special flags (Attunement, Anchored, Primed, Reverb).
 
-These dials collectively shape costs (fees), minimum ETH coupling per coin, payout fairness, throughput of batch operations, the economics of **buffs**, and the **first-withdraw windfall** for new participants.
+These dials collectively shape costs (fees), minimum ETH coupling per coin, payout fairness, throughput of batch operations, and the economics of **buffs**.
 
 ---
 
@@ -495,7 +494,7 @@ linkToken(tokenId, linkId, efficiency)
   - A coin fee is charged that grows with requested `efficiency` and the number of links on the token.
   - The base cost uses a mix of efficiency and a small triangular/quadratic term to keep ultra-high efficiencies expensive.
   - **Early-link discounts** for **new links** on a token:
-    - 1st link on a token: **25%** of the base cost.
+    - 1st link on a token: **50%** of the base cost.
     - 2nd link on a token: **50%** of the base cost.
     - 3rd+ new links: **100%** of the base cost.
   - Upgrading an **existing link** (increasing efficiency) uses the **full** base cost; early-link discounts only apply when a link is first added to the token.
@@ -682,20 +681,7 @@ lets any **non-blacklisted** address claim its pending ETH and coins.
 If the address holds **any Digil** (`balanceOf(addr) > 0`) or any **coin balance** (`_coins.balanceOf(addr) > 0`), it also receives a **time-based coin bonus**:
 
 - For each `BONUS_INTERVAL` (15 minutes) since the last bonus timestamp (`distribution.time`), the account earns `+coinMultiplier` coins.
-- The raw bonus is capped per call:
-  - On the **first qualifying withdraw** (i.e. when `distribution.time == 0`), the cap is:
-
-    ```text
-    cap = FIRST_WITHDRAW_MULTIPLIER × _coinRate
-    ```
-
-    so the first withdraw can grant up to **50×** the usual coin-rate cap.
-  - On all subsequent withdrawals, the cap is just:
-
-    ```text
-    cap = _coinRate
-    ```
-
+- The raw bonus is capped per call at `_coinRate`.
 - The contract computes:
 
   ```text
@@ -796,9 +782,9 @@ Blacklisted addresses:
   - Temporarily increase link effectiveness at the cost of `activeCharge`.
   - Buff state is global per source token (applies to all outgoing links), visible via `tokenLinkAt`.
   - Buffs are time-limited, cost scales with **bonus**, **duration**, and **linkCount**, and they are cleared on full discharge.
-- **First-withdraw bonus**:
+- **Withdraw bonus**:
   - `_pendingBonus` centralizes bonus math and is reused by `withdraw`.
-  - The first qualifying withdraw for an address can grant up to `FIRST_WITHDRAW_MULTIPLIER × _coinRate` in time-based bonus coins, after which future withdraws are capped at `_coinRate` per call.
+  - Accounts holding coins or Digils earn time-based bonuses up to `_coinRate` per withdrawal call.
 
 ### Overcharging
 
@@ -1004,9 +990,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
     - Transfers the caller’s pending ETH distribution in full (subject to a safe-send).
   - Coins:
     - Transfers pending distribution coins (if ERC-20 transfer succeeds).
-    - Adds **time-based bonus** coins:
-      - 1st qualifying withdraw: up to `FIRST_WITHDRAW_MULTIPLIER × _coinRate`.
-      - Subsequent withdraws: up to `_coinRate`.
+    - Adds **time-based bonus** coins (capped at `_coinRate`).
 
 ---
 
@@ -1204,8 +1188,7 @@ withdraw();
 - Pays her ETH and coin balances.
 - If Alice holds any Digil or any coin balance, she also receives a time-based bonus:
   - For each 15-minute interval since her last bonus time, she accrues `+coinMultiplier` coins.
-  - On her **first qualifying withdraw**, this bonus is capped at `FIRST_WITHDRAW_MULTIPLIER × _coinRate` (up to **50×** the normal cap).
-  - On subsequent withdraws, the cap is `_coinRate`.
+  - Bonus coins are capped at `_coinRate` per call.
 
 ### 9) Updating metadata (URI/data) and economic parameters
 
