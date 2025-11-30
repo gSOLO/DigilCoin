@@ -23,12 +23,12 @@ A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrin
   - [Discharge](#discharge)
 - [Read-Only Views](#read-only-views)
 - [Linking & Affinity](#linking--affinity)
-  - [Temporary Buffs (Efficiency, Attunement, Amplification, Flags)](#temporary-buffs-efficiency-attunement-amplification-flags)
+  - [Temporary Buffs (Efficiency, Attunement, Amplification, Anchor, Reverb)](#temporary-buffs-efficiency-attunement-amplification-anchor-reverb)
   - [Stabilization (Anti-Bleed)](#stabilization-anti-bleed)
 - [Vaulting External ERC-721s](#vaulting-external-erc-721s)
 - [Distributions, Withdrawals & Bonuses](#distributions-withdrawals--bonuses)
+- [Contributor Reclaim](#contributor-reclaim)
 - [Opt-Out / Blacklist](#opt-out--blacklist)
-- [Rescue & Recovery](#rescue--recovery)
 - [Admin & Security Notes](#admin--security-notes)
   - [Overcharging](#overcharging)
 - [Pricing and Costs](#pricing-and-costs)
@@ -97,16 +97,15 @@ with checks:
 - `VALUE_MULTIPLIER = 1000 gwei` (used for default minimums).
 - `PLANAR_MAX_ID = 18`, `PLANAR_TRANSFER_MAX_ID = 20`
 - `MAX_LINKS = 10`
-- Rescue & inactivity windows:
-  - `STALLED_TIMEOUT = 30 days` → rescue window for truly stuck batch operations.
-  - `INACTIVITY_PERIOD = 365 days` → long inactivity window for reclaim/rescue of abandoned positions.
+- Reclaim timeout:
+  - `STALLED_TIMEOUT = 90 days` → window after which contributors can reclaim value from inactive tokens.
 - Affinity helpers: `AFFINITY_BOOST = 2`, `AFFINITY_REDUCTION = 2`
 
 **Link buff configuration**
 - `MAX_BUFF_BONUS = 100` — cap on temporary bonus applied to outgoing links (percentage points).
 - `MAX_BUFF_DURATION_MIN = 24 × 60` — maximum buff duration (24 hours, in minutes).
 - `LINK_BUFF_COST_FACTOR = 24 × 60` — calibration constant for buff pricing in terms of `activeCharge`.
-- `BUFF_COST = 50` — Magnitude cost added for special flags (Attunement, Anchored, Primed).
+- `BUFF_COST = 50` — Magnitude cost added for special flags (Attunement, Anchored, Primed, Reverb).
 
 These dials collectively shape costs (fees), minimum ETH coupling per coin, payout fairness, throughput of batch operations, the economics of **buffs**, and the **first-withdraw windfall** for new participants.
 
@@ -126,11 +125,11 @@ These dials collectively shape costs (fees), minimum ETH coupling per coin, payo
 - `activating` / `discharging` — multi-tx operation flags.
 - `distributionIndex` — cursor into `contributors[]` for paging.
 - `contributionEpoch` — logical epoch; incrementing this treats all prior `TokenContribution` entries as reset without clearing the mapping.
-- `lastActivity` — updated on meaningful operations; used by **rescue** and **contributor reclaim** logic. It is only bumped when an operation actually succeeds (charges, lifecycle transitions, link updates, buffing, reclaiming, etc.), so failed calls—including failed linked charges—do not keep a sigil "fresh" for inactivity windows.
+- `lastActivity` — updated on meaningful operations; used by **contributor reclaim** logic. It is only bumped when an operation actually succeeds (charges, lifecycle transitions, link updates, buffing, reclaiming, etc.).
 
 **Links & contributors**
 - `links[]` (≤ 10) • `linkEfficiency[linkId].base` and `.affinityBonus` (percent-like integers).
-- `buff { efficiencyBonus, attunement, amplification, flags, expiresAt }` — optional **temporary buffs** applied to the token. `flags` is a bitmask for special states: `STABILIZED (1)`, `ANCHORED (2)`, `PRIMED (4)`.
+- `buff { efficiencyBonus, attunement, amplification, flags, expiresAt }` — optional **temporary buffs** applied to the token. `flags` is a bitmask for special states: `STABILIZED (1)`, `ANCHORED (2)`, `PRIMED (4)`, `REVERBERATED (8)`.
 - `contributors[]` plus per-address  
   `TokenContribution { charge, value, epoch, exists, distributed, whitelisted }`.
 
@@ -190,8 +189,9 @@ createToken(
       - Does **not** pull ERC-20 from the contributor.
       - Still enforces restriction/whitelist and minimum ETH/coin logic, and may also use the source’s `activeCoins` when charging via links.
     - If a target link cannot be charged (fails checks), its slice of coins falls back into the source’s `activeCharge`.
+    - **Reverb Effect**: If the source token has an active **Reverb Buff** (`REVERBERATED` flag 8), a portion of the coins *successfully propagated* to a link are reflected back to the source as an "echo" (`activeCharge`).
     - Unused ETH after linked charging becomes a pending distribution for the source **owner**.
-  - **Amplification**: If the token has an active **Amplification Buff**, any coins that remain on the token (either direct deposit or incoming from a link) are multiplied by the amplification factor before being added to `activeCharge`. Note that Amplification does **not** boost coins sent to outgoing links (to prevent infinite loops).
+  - **Amplification**: If the token has an active **Amplification Buff**, any coins that remain on the token (either direct deposit or incoming from a link) are multiplied by the amplification factor before being added to `activeCharge`.
 
 ### Activate
 
@@ -370,7 +370,6 @@ Returns high-level lifecycle and bookkeeping state:
   bool    activating,
   bool    discharging,
   bool    restricted,
-  bool    stabilized,
   uint256 links,
   uint256 contributors,
   uint256 contributionEpoch,
@@ -380,7 +379,6 @@ Returns high-level lifecycle and bookkeeping state:
 ```
 
 - `links` and `contributors` are **counts**, not arrays.
-- `stabilized` indicates if the token is protected from the next bleed event.
 - `contributionEpoch` can be compared against `tokenData(tokenId).contributionEpoch` to see if a contribution record belongs to the current epoch.
 - `distributionIndex` reveals whether a **batch operation is in progress** and how far along it is.
 - `data` is arbitrary bytes (planar IDs 0–20 encode affinity data here).
@@ -416,30 +414,30 @@ Returns link data for a given source token and index in its `links[]` array:
 ```solidity
 (
   uint256 linkId,
-  uint8   base,
-  uint256 affinityBonus,
-  uint8   buffBonus,
-  uint8   buffAttunement,
-  uint8   buffAmplification,
-  uint8   flags,
-  uint64  buffExpiresAt,
-  uint256 effectiveBase
+  uint8   baseEfficiency,
+  uint256 affinityBonus
 )
 ```
 
 - If `index` is out of range, the call **reverts** with a standard out-of-bounds error. Use `tokenData(tokenId).links` to discover how many links exist before calling.
-- `base` and `affinityBonus` are the **stored** efficiency parameters.
-- `buff*` fields reflect the **shared link buff state** on the source token:
-  - `buffBonus` is the temporary bonus added to each link’s base (0–100).
-  - `buffAttunement` is the Planar ID the token is temporarily mimicking for affinity calculations (0 if none).
-  - `buffAmplification` is the charge multiplier percentage (0-100).
-  - `flags` is a bitmask: 1 = Stabilized, 2 = Anchored, 4 = Primed.
-  - `buffExpiresAt` is a Unix timestamp in seconds; `0` if no buff active.
-- `effectiveBase` is the **actual efficiency** used right now for that link:
-  - When a buff is active: `effectiveBase ≈ min(base + buffBonus, 255)`.
-  - After expiry or without buff: `effectiveBase = base`.
+- `baseEfficiency` and `affinityBonus` are the **stored** efficiency parameters.
+- To determine the **effective** efficiency currently applied (accounting for buffs), one would generally use `tokenBuff` data in conjunction with this.
 
-This makes it easy for UIs to show whether a token is currently buffed, when the buff expires, and what real effectiveness each link is operating at.
+### `tokenBuff(tokenId)`
+
+Returns the current buff state of a token:
+
+```solidity
+(
+    uint64 expiresAt, 
+    uint8 efficiencyBonus, 
+    uint8 attunement, 
+    uint8 amplification, 
+    uint8 flags
+)
+```
+- `flags` is a bitmask: 1 = Stabilized, 2 = Anchored, 4 = Primed, 8 = Reverberated.
+- `expiresAt` is a Unix timestamp; if `now > expiresAt`, the buff is inactive (except for Stabilized/Primed flags which may persist until consumed).
 
 ### `tokenAttachment(tokenId)`
 
@@ -508,10 +506,10 @@ linkToken(tokenId, linkId, efficiency)
 - Cannot remove foundational planar links (`linkId ≤ PLANAR_MAX_ID` will revert).
 - Emits `Unlink(tokenId, linkId)`.
 
-### Temporary Buffs (Efficiency, Attunement, Amplification, Flags)
+### Temporary Buffs (Efficiency, Attunement, Amplification, Anchor, Reverb)
 
 ```solidity
-buffToken(tokenId, efficiency, attunement, amplification, flags, duration)
+buffToken(tokenId, efficiency, attunement, amplification, anchor, reverb, duration)
 ```
 
 (`nonReentrant`)
@@ -521,8 +519,8 @@ This function lets the owner **temporarily boost** an active token by spending `
 1.  **Efficiency Buff**: Adds a bonus to the base efficiency of all outgoing links.
 2.  **Attunement**: Temporarily mimics a specific Planar ID (1-18) for affinity calculations. Used to gain better bonuses when linking to specific neighbors.
 3.  **Amplification**: Applies a multiplier to all incoming charge (coins) that stays on the token.
-4.  **Anchored** (Flag 2): If set, the token retains ~25% of its `activeCharge` when discharged, instead of distributing 100%.
-5.  **Primed** (Flag 4): If set, the token's `activationThreshold` is temporarily halved, making it easier to activate.
+4.  **Anchor** (Flag 2): If set, the token retains ~25% of its `activeCharge` when discharged, instead of distributing 100%.
+5.  **Reverb** (Flag 8): If set, a portion of the charge successfully pushed to outgoing links is "echoed" back to the source token as fresh `activeCharge`.
 
 **Inputs**
 
@@ -530,7 +528,8 @@ This function lets the owner **temporarily boost** an active token by spending `
 - `efficiency` — additional effectiveness added to each link’s base (0–100).
 - `attunement` — the Planar ID to mimic (1-18), or 0 for none.
 - `amplification` — the percentage charge multiplier (0-100), or 0 for none.
-- `flags` — bitmask for special states: `2` (Anchored), `4` (Primed). Bit `1` (Stabilized) is preserved but cannot be set here.
+- `anchor` — (bool) enable ANCHORED behavior during discharge.
+- `reverb` — (bool) enable REVERBERATED behavior during active charging.
 - `duration` — buff duration in **minutes**, up to 1440 (24 hours).
 
 **Preconditions**
@@ -546,7 +545,8 @@ The buff cost is computed in **coin units** and paid entirely from `activeCharge
 ```text
 magnitude = efficiency + amplification + 
             (attunement > 0 ? BUFF_COST : 0) + 
-            (Anchored ? BUFF_COST : 0) + 
+            (anchor ? BUFF_COST : 0) + 
+            (reverb ? BUFF_COST : 0) +
             (Primed ? BUFF_COST : 0)
 
 cost = magnitude × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
@@ -556,6 +556,7 @@ cost = magnitude × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_
 - `linkCount` is the number of outgoing links on the source token (minimum 1).
 - `LINK_BUFF_COST_FACTOR = 24 × 60`.
 - Any **non-zero buff** is clamped to a minimum cost of `_coinRate`.
+- Note: `Primed` (Flag 4) is applied via `primeToken`, but its existence adds to the magnitude if you refresh buffs.
 
 **New links during a buff**
 
@@ -629,10 +630,9 @@ recallToken(collection, digilId)
 - Safety check: `collection` must match `token.contractTokenAddress`.
 - The contract retrieves the underlying `contractTokenId` and ensures it is currently recallable.
 - State is cleared first:
-  - `contractToken.tokenId = 0`
   - `contractToken.recallable = false`
   - `_contractTokenExists[collection][contractTokenId] = false`
-  - `token.contractTokenAddress = address(0)`
+  - (Note: `contractToken.tokenId` and `token.contractTokenAddress` are preserved as immutable provenance).
 - The external NFT is transferred back to the current Digil owner using `safeTransferFrom`, forwarding the Digil’s `data` bytes.
 - As part of recall, the Digil experiences **thematic bleed** on its `activeCharge`:
   - `_applyActiveChargeBleed` is called, which currently burns ~50% of `activeCharge` (via division by `AFFINITY_REDUCTION`) and leaves the remainder on the token (unless the token was `stabilized`).
@@ -705,30 +705,6 @@ If the address holds **any Digil** (`balanceOf(addr) > 0`) or any **coin balance
 
 - On successful `withdraw`, `distribution.time` is updated to the current timestamp and the user receives `bonus` in addition to any base `coins` in their distribution bucket.
 
-### Contributor reclaim (inactive tokens)
-
-```solidity
-reclaimContribution(tokenId)
-```
-
-Allows an individual contributor to **pull back** their ETH contribution from a long-inactive token without requiring a full discharge by the owner.
-
-High-level behavior:
-
-- **Preconditions**:
-  - Caller must have a non-zero contribution on `tokenId` in the current `contributionEpoch`.
-  - The token must be **inactive** (`active == false`) and not mid-batch (`distributionIndex == 0`).
-  - The token must have been idle for at least the global inactivity window used for rescue:  
-    `block.timestamp ≥ lastActivity + INACTIVITY_PERIOD`.
-
-- **Effects** (conceptual):
-  - The contributor’s recorded **value** for that token is moved into the global distribution bucket for the contributor, to be actually received via a later call to `withdraw()`.
-  - A **penalty fee**, denominated in ETH, is charged from the recovered value and passed through `_addDistributedValue` to the token owner (and, indirectly, the contract via its normal fee cut). The exact fee rate is defined in the contract but is intended to be small relative to the contribution.
-  - The contributor’s recorded `charge` on that token is cleared and they are removed from the token’s contributor flow for future activations/discharges.
-  - By design, the contributor’s **coins are not refunded** on reclaim; only their ETH value is recoverable. The coins remain part of the token/system economics.
-
-This path is intentionally conservative: reclaiming is only possible after a long period of inactivity, sacrifices any coin upside, and pays a small fee back into the system. The goal is to give contributors a safety hatch for stuck ETH **without** undermining the incentives around active participation.
-
 ### Admin value creation
 
 ```solidity
@@ -740,6 +716,30 @@ createValue(tokenId, value)
 - Optionally allows the admin to send additional ETH with the call (credited to the contract’s distribution pool).
 - Requires that the contract’s distribution pool already has at least `value` ETH; otherwise reverts.
 - Moves `value` from the contract’s pool to the token’s intrinsic `value` via `_createValue`.
+
+---
+
+## Contributor Reclaim
+
+```solidity
+reclaimContribution(tokenId)
+```
+
+Allows an individual contributor to **pull back** their ETH contribution from a long-inactive token without requiring a full discharge by the owner. This serves as a non-custodial safety hatch.
+
+High-level behavior:
+
+- **Preconditions**:
+  - Caller must have a non-zero contribution on `tokenId` in the current `contributionEpoch`.
+  - The token must be **inactive** (`active == false`) and not mid-batch (`distributionIndex == 0`).
+  - The token must have been idle for at least the **stall timeout**:  
+    `block.timestamp ≥ lastActivity + STALLED_TIMEOUT` (90 days).
+
+- **Effects** (conceptual):
+  - The contributor’s recorded **value** for that token is moved into the global distribution bucket for the contributor, to be actually received via a later call to `withdraw()`.
+  - A **penalty fee**, denominated in ETH, is charged (caller must send at least 1 incremental value). This fee is passed through `_addDistributedValue` to the token owner (and, indirectly, the contract via its normal fee cut).
+  - The contributor’s recorded `charge` on that token is cleared and they are removed from the token’s contributor flow for future activations/discharges.
+  - By design, the contributor’s **coins are not refunded** on reclaim; only their ETH value is recoverable. The coins remain part of the token/system economics.
 
 ---
 
@@ -762,53 +762,6 @@ Blacklisted addresses:
 - Cannot participate in charges or as `operator` in ERC-721 receptions.
 - Cannot call `withdraw()` until they opt back in.
 - Still retain their existing distribution balances internally, which can be withdrawn if they later opt in again.
-- Are subject to the **blacklisted + abandoned** rescue path (see below) after the long `INACTIVITY_PERIOD`.
-
----
-
-## Rescue & Recovery
-
-Owner-only:
-
-```solidity
-rescueToken(tokenId, to)
-```
-
-supports recovering **stuck or abandoned** Digils in narrowly defined cases. Rescue is gated by **time** and **state**, and is no longer a general “admin seize” path.
-
-The contract distinguishes two scenarios:
-
-1. **Stalled batch operations (safety valve)**
-
-   - If a token is stuck mid-activation or mid-discharge (`distributionIndex > 0`) and has not progressed for at least:
-
-     ```text
-     block.timestamp ≥ lastActivity + STALLED_TIMEOUT
-     ```
-
-     the owner may call `rescueToken` to move the token to `to` and clear approvals.
-
-   - This case is about **system safety**: breaking genuinely stuck batch flows.  
-     It does **not** depend on blacklist status; any stalled token can be rescued once the stall window has elapsed.
-
-2. **Blacklisted + abandoned owners**
-
-   - If the current owner has explicitly opted out (is blacklisted), and the token is **not** in the middle of a batch (`distributionIndex == 0`), then rescue is allowed only after a long inactivity window:
-
-     ```text
-     block.timestamp ≥ lastActivity + INACTIVITY_PERIOD
-     ```
-
-   - This path is typically only relevant for tokens that still have meaningful state—non-zero `value` and/or non-trivial contribution/charge history—where the owner has effectively walked away from the system.
-   - Non-blacklisted owners are **never** rescued purely for inactivity; contributors instead rely on [`reclaimContribution`](#contributor-reclaim-inactive-tokens) to recover value from abandoned, inactive tokens.
-
-Additional rules:
-
-- `to` must be a non-zero address.
-- Approvals are cleared before and after the transfer.
-- Planar tokens are still constrained by planar policy: effectively, they must stay aligned with admin control.
-
-Because `lastActivity` only advances on successful state changes, repeated failing calls (for example, link-charge attempts that do not meet requirements and revert) cannot be used as a cheap "keep-alive"; only real usage moves both the **rescue** and **reclaim** windows forward.
 
 ---
 
@@ -846,9 +799,6 @@ Because `lastActivity` only advances on successful state changes, repeated faili
 - **First-withdraw bonus**:
   - `_pendingBonus` centralizes bonus math and is reused by `withdraw`.
   - The first qualifying withdraw for an address can grant up to `FIRST_WITHDRAW_MULTIPLIER × _coinRate` in time-based bonus coins, after which future withdraws are capped at `_coinRate` per call.
-- **Contributor reclaim vs. rescue**:
-  - Contributors have a dedicated, inactivity-gated `reclaimContribution` path to recover ETH from long-inactive tokens, without needing admin intervention.
-  - Admin rescue is limited to stalled batches and blacklisted + abandoned owners, keeping the system contributor-protective while still maintainable.
 
 ### Overcharging
 
@@ -974,7 +924,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
   - Coins:
     - Pays a coin fee based on `efficiency` and **post-link** link count.
     - Early-link discounts:
-      - 1st link on a token: pay **25%** of base cost.
+      - 1st link on a token: **25%** of the base cost.
       - 2nd link: pay **50%** of base cost.
       - 3rd+ new links: pay **100%** of base cost.
     - Upgrading efficiency on an **existing link** always pays full base cost (no discount).
@@ -990,7 +940,8 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
       ```text
       magnitude = efficiency + amplification 
                 + (attunement > 0 ? BUFF_COST : 0)
-                + (Anchored ? BUFF_COST : 0)
+                + (anchor ? BUFF_COST : 0)
+                + (reverb ? BUFF_COST : 0)
                 + (Primed ? BUFF_COST : 0)
 
       cost = magnitude × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
@@ -1028,7 +979,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
 
     - Added to the contract’s distribution bucket.
   - Coins:
-    - No coin cost, but blacklisting affects the ability to participate in future coin-generating flows and eventually enables the blacklist + abandoned rescue path.
+    - No coin cost, but blacklisting affects the ability to participate in future coin-generating flows.
 
 **Contributor reclaim**
 
@@ -1288,7 +1239,7 @@ configure(
 
 - Re-approves ERC-20 allowance internally and emits `Configure(...)`.
 
-### 10) Opt-out / opt-in and rescue
+### 10) Opt-out / opt-in
 
 **Opt-out**
 
@@ -1297,7 +1248,7 @@ setOptStatus(true);
 // with msg.value ≥ (_incrementalValue × _coinRate / coinMultiplier)
 ```
 
-- Address becomes blacklisted; many operations are blocked and, after `INACTIVITY_PERIOD` of real inactivity, tokens owned by this address may be eligible for **blacklisted + abandoned** rescue.
+- Address becomes blacklisted; many operations are blocked.
 
 **Opt-in**
 
@@ -1305,19 +1256,6 @@ setOptStatus(true);
 setOptStatus(false);
 // with msg.value ≥ (_incrementalValue × _coinRate / coinMultiplier)
 ```
-
-**Rescue a stalled or blacklisted + abandoned token (owner-only)**
-
-```solidity
-rescueToken(tokenId, to = 0xReceiver);
-```
-
-- **Stalled batch case**:
-  - If `distributionIndex > 0` and `now ≥ lastActivity + STALLED_TIMEOUT`, the owner may rescue regardless of blacklist status to break a stuck activation/discharge.
-- **Blacklisted + abandoned case**:
-  - If the owner is blacklisted, `distributionIndex == 0`, and `now ≥ lastActivity + INACTIVITY_PERIOD`, the owner may rescue as a cleanup of an abandoned position.
-
-Non-blacklisted, non-stalled tokens are **not** rescued purely for inactivity; contributors instead rely on `reclaimContribution` to pull their value out of long-idle tokens.
 
 ### 11) Linked discharge with activeCharge redistribution (numerical sketch)
 
@@ -1353,7 +1291,8 @@ Assume:
 - `tokenA` is active with `activeCharge = 1000 * _coinRate`.
 - `tokenA.links.length = 4`.
 - You want a moderate efficiency buff: `efficiency = 30` (+30 percentage points), no attunement, no amplification.
-- You also want to set the `PRIMED` flag (value 4) to make future activation cheaper.
+- You also want to set the `PRIMED` flag via `primeToken`.
+- You want to enable `REVERBERATED` (flag 8).
 - Duration = 60 minutes.
 
 Calling:
@@ -1364,7 +1303,8 @@ buffToken(
   efficiency     = 30,
   attunement     = 0,
   amplification  = 0,
-  flags          = 4,        // Primed
+  anchor         = false,
+  reverb         = true,
   duration       = 60        // minutes
 );
 ```
@@ -1374,22 +1314,18 @@ Cost is:
 ```text
 magnitude = efficiency + amplification 
           + (attunement > 0 ? BUFF_COST : 0)
-          + (Anchored ? BUFF_COST : 0)
+          + (anchor ? BUFF_COST : 0)
+          + (reverb ? BUFF_COST : 0)
           + (Primed ? BUFF_COST : 0)
 
-magnitude = 30 + 0 + 0 + 0 + 50 = 80
+magnitude = 30 + 0 + 0 + 0 + 50 + (Primed if active? No, Primed is separate call, but if already active it counts toward refreshes) -> Let's say no Primed.
+magnitude = 30 + 50 = 80
 
 cost = magnitude × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
      = 80 × 60 × 4 × _coinRate / (24 × 60)
      = (320 / 24) × _coinRate
      ≈ 13.33 × _coinRate
 ```
-
-So:
-
-- `tokenA.activeCharge` is reduced by `13.33 × _coinRate`.
-- All outgoing links temporarily use `effectiveBase = min(base + 30, 255)`.
-- `tokenA` is now Primed (halved activation threshold) for 1 hour.
 
 ### 13) Overcharging (Token Owner/Operator)
 
@@ -1411,7 +1347,7 @@ You must send `msg.value >= 100 * incrementalValue`.
 
 ### 14) Reclaiming contributions from an abandoned token
 
-Assume `tokenB` is inactive, has not seen any successful activity for at least `INACTIVITY_PERIOD`, and you previously contributed value to it.
+Assume `tokenB` is inactive, has not seen any successful activity for at least `STALLED_TIMEOUT` (90 days), and you previously contributed value to it.
 
 ```solidity
 reclaimContribution(tokenB);
@@ -1420,13 +1356,13 @@ withdraw();
 ```
 
 - `reclaimContribution`:
-  - Checks inactivity (`now ≥ lastActivity + INACTIVITY_PERIOD`), inactivity status, and your contributor record.
+  - Checks inactivity (`now ≥ lastActivity + 90 days`), inactivity status, and your contributor record.
   - Moves your contributed ETH (minus a reclaim fee) into your distribution bucket.
   - Clears your contribution on `tokenB` and forfeits any associated coins.
 - `withdraw`:
   - Actually transfers the reclaimed ETH (plus any other pending value and bonuses) to your address.
 
-From a user perspective, this is “opt out of a dead sigil I helped fund, and get my ETH back (less a fee) once it’s obviously abandoned,” without needing the owner or admin to actively discharge or rescue it.
+From a user perspective, this is “opt out of a dead sigil I helped fund, and get my ETH back (less a fee) once it’s obviously abandoned,” without needing the owner or admin to actively discharge it.
 
 ---
 
