@@ -862,22 +862,33 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // ERC721 Receiver
 
-    //// @notice Handles the receipt of an external ERC721 token.
-    /// @dev    When an ERC721 token is sent to this contract, creates a new Digil Token
-    ///         representing the token received.
-    ///         - The new Digil's incremental value is set to the global minimum
-    ///           `_incrementalValue`, with an activation threshold of 0.
-    ///         - The token's URI is tagged with a simple query marker (`?ct=1`) to
-    ///           indicate that it represents a vaulted contract token; detailed
-    ///           provenance (contract address and tokenId) is stored on-chain in
-    ///           `contractTokenAddress` and `_contractTokens`.
-    ///         - Any `data` sent is stored with the Digil and forwarded during
-    ///           `safeTransferFrom` when {recallToken} is called.
-    /// @param  operator The address which initiated the transfer.
-    /// @param  from The previous owner of the ERC721 token.
-    /// @param  tokenId The token ID of the external ERC721.
-    /// @param  data Optional data forwarded with the transfer.
-    /// @return bytes4 Selector confirming receipt.
+    /// @inheritdoc IERC721Receiver
+    /// @notice Vaults an external ERC721 token into a newly-minted Digil token.
+    /// @dev
+    ///  Lifecycle for the attached contract token:
+    ///  - When this function succeeds:
+    ///      * `_contractTokenExists[external][externalTokenId]` is set to `true`,
+    ///        meaning the external ERC721 is now *vaulted* in this contract.
+    ///      * `t.contractTokenAddress` is set to the external ERC721 contract address.
+    ///      * `_contractTokens[external][internalId].tokenId` stores the external tokenId
+    ///        as immutable provenance data.
+    ///      * `recallable` for this Digil remains `false` initially; the external token
+    ///        cannot be recalled yet.
+    ///  - The external token becomes *recallable* only after the Digil completes an
+    ///    **activation** distribution cycle:
+    ///      * When `_distribute(tokenId, false)` finishes (called from {activateToken}),
+    ///        it sets `_contractTokens[contractTokenAddress][tokenId].recallable = true`
+    ///        if and only if `_contractTokenExists[contractTokenAddress][externalTokenId]`
+    ///        is still `true` (i.e., the token remains vaulted).
+    ///  - A subsequent call to {recallToken}:
+    ///      * Transfers the external ERC721 back to the current Digil owner.
+    ///      * Sets `recallable` back to `false`.
+    ///      * Sets `_contractTokenExists[external][externalTokenId] = false`,
+    ///        meaning the token is no longer vaulted.
+    ///      * Leaves `contractTokenAddress` and `tokenId` intact for historical provenance.
+    ///  - A full discharge cycle (see {dischargeToken}) **does not** make a token
+    ///    recallable; in fact, it explicitly clears `recallable` after distribution,
+    ///    while leaving the external token still vaulted until recall.
     function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external nonReentrant returns (bytes4) {
         _notOnBlacklist(operator);
         _notOnBlacklist(from);
@@ -901,27 +912,52 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.uri = string(abi.encodePacked(tokenURI(internalId), "?ct=1"));
 
         // Track the attached contract token address and add it as a contributor.
-        // The contract itself becomes the first "contributor" for distribution logic.
         t.contractTokenAddress = account;
-        t.contributors.push(account);
         
         return this.onERC721Received.selector;
     }
 
-    /// @notice Recalls an external contract token attached to a Digil token.
-    /// @dev    The external token becomes recallable only after the Digil token has
-    ///         passed through an activation/discharge distribution cycle, which sets
-    ///         `contractToken.recallable = true`. This function:
-    ///         - Requires that `account` matches the attached ERC721 contract.
-    ///         - Requires that the attached token is currently marked as recallable.
-    ///         - Applies {_applyActiveChargeBleed} to the Digil's `activeCharge`:
-    ///             * If STABILIZED, the stabilization is consumed and no bleed occurs.
-    ///             * Otherwise, roughly 50% of `activeCharge` is burned.
-    ///         - Clears the attachment state and safely transfers the external
-    ///           ERC721 back to the current Digil owner, forwarding `t.data` as
-    ///           the transfer `data`.
-    /// @param  account The address of the external ERC721 contract.
-    /// @param  tokenId The internal Digil token ID whose attached contract token is to be recalled.
+    /// @notice Recalls an external ERC721 token that has been vaulted inside a Digil,
+    ///         transferring it back to the current owner of the Digil token.
+    /// @dev
+    ///  Preconditions:
+    ///  - The caller must be approved for `tokenId` via the standard ERC721
+    ///    authorization rules ({_checkApproved}).
+    ///  - `account` must match the attached ERC721 contract address:
+    ///        account == _tokens[tokenId].contractTokenAddress.
+    ///  - The attached contract-token record for this Digil must be marked
+    ///    `recallable`:
+    ///        _contractTokens[account][tokenId].recallable == true.
+    ///    This flag is set only when a full **activation** distribution cycle
+    ///    completes via {_distribute} called from {activateToken}, and the external
+    ///    token is still vaulted (i.e.
+    ///        _contractTokenExists[account][externalTokenId] == true
+    ///    at the end of the distribution).
+    ///
+    ///  Effects:
+    ///  - Reads the external tokenId from `_contractTokens[account][tokenId].tokenId`.
+    ///  - Updates state *before* the external call:
+    ///      * Sets `_contractTokens[account][tokenId].recallable = false`.
+    ///      * Sets `_contractTokenExists[account][externalTokenId] = false`,
+    ///        meaning the external token is no longer vaulted.
+    ///      * Leaves `tokenId` and `contractTokenAddress` untouched so that
+    ///        {tokenAttachment} can still report historical provenance even after recall.
+    ///  - Applies thematic bleed to the Digil’s `activeCharge` via
+    ///    {_applyActiveChargeBleed}:
+    ///      * If STABILIZED, the protection is consumed and no bleed occurs.
+    ///      * Otherwise, a fraction of `activeCharge` is burned.
+    ///  - Finally, calls `ERC721(account).safeTransferFrom(address(this), owner, externalTokenId, t.data)`
+    ///    to transfer the external ERC721 back to the current owner of the Digil.
+    ///    Any revert in this external call rolls back all earlier state changes, so
+    ///    invariants are preserved.
+    ///
+    ///  Postconditions:
+    ///  - The external ERC721 token transitions from:
+    ///        { vaulted = true, recallable = true }
+    ///    to:
+    ///        { vaulted = false, recallable = false }
+    ///    while provenance (`contractTokenAddress`, `externalTokenId`) remains queryable
+    ///    via {tokenAttachment}.
     function recallToken(address account, uint256 tokenId) external nonReentrant {
         _checkApproved(tokenId);
 
@@ -1002,8 +1038,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Retrieves status and additional data for a token.
-    /// @dev    Contributors may still be greater than zero after discharge if this is a contract token,
-    ///         as the first contributor will be an ERC721 address until the underlying token is recalled.
     /// @param  tokenId The token ID to query.
     /// @return active Whether the token is active.
     /// @return activating Whether the token is being activated.
@@ -1612,88 +1646,106 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Token Distribution and Discharge
 
-    /// @dev    Internal function to process token distributions in batches.
-    /// @param  tokenId The token ID undergoing distribution.
-    /// @param  discharge Flag indicating if this is a discharge operation.
-    /// @return True if the distribution process is complete.
-    function _distribute(uint256 tokenId, bool discharge) internal returns(bool) {
+    /// @dev Core batch distribution routine used by both {activateToken} and
+    ///      {dischargeToken}.
+    ///
+    ///      High-level behavior:
+    ///      - Iterates over `t.contributors` in batches, up to `_batchSize` entries
+    ///        per call for discharge mode (`discharge = true`), or `_batchSize * 2`
+    ///        for activation-style distribution (`discharge = false`).
+    ///      - Uses `t.distributionIndex` as a cursor so long-running operations can
+    ///        be continued across multiple transactions.
+    ///      - On each contributor:
+    ///          * In discharge mode (`discharge = true`), their recorded `value` and
+    ///            `charge` are returned to them via the global distribution system
+    ///            ({_addValue}) and the token’s contribution state is logically
+    ///            unwound for this epoch.
+    ///          * In activation-style mode (`discharge = false`), contributors receive
+    ///            value distributions, and the token’s remaining `distributionCharge`
+    ///            is later converted into `activeCharge`.
+    ///      - When the final batch is processed (`cEndIndex == contributors.length`):
+    ///          * `distributionIndex`, `distributionCharge`, and `distributionValue` are
+    ///            reset to zero.
+    ///          * Any remaining `t.value` is swept into distributions for the
+    ///            token owner (and contributors, in non-discharge mode).
+    ///          * For non-discharge mode, any captured `distributionCharge` is moved
+    ///            into `t.activeCharge`.
+    ///
+    ///      Attached contract token lifecycle:
+    ///      - At the *end* of a full distribution cycle (regardless of `discharge` flag),
+    ///        this function checks for an attached contract token:
+    ///          * If `t.contractTokenAddress != address(0)` and
+    ///            `_contractTokenExists[contractTokenAddress][externalTokenId]` is `true`
+    ///            (the external ERC721 is still vaulted), it sets
+    ///            `_contractTokens[contractTokenAddress][tokenId].recallable = true`.
+    ///      - This marks the external token as *recallable* for Digils that have
+    ///        just completed an activation-style distribution via {activateToken}.
+    ///      - When called from {dischargeToken}, this recallable flag is immediately
+    ///        overridden by additional logic in {dischargeToken} itself, which
+    ///        clears `recallable` after a full discharge. As a result:
+    ///          * **Activation** cycles can leave `recallable = true` (if still vaulted).
+    ///          * **Discharge** cycles always end with `recallable = false`, even though
+    ///            `_distribute` temporarily sets it to true.
+    function _distribute(uint256 tokenId, bool discharge) internal returns (bool) {
         Token storage t = _tokens[tokenId];
 
-        // Update distribution charge if token charge is higher.
+        // Capture all remaining charge into distributionCharge once per cycle.
         uint256 dCharge = t.distributionCharge;
         if (t.charge >= dCharge) {
-            // Capture all remaining charge into distributionCharge once per cycle.
             dCharge = t.distributionCharge = t.charge;
             t.charge = 0;
         }
 
-        // Update distribution value if token value is higher.
+        // Capture all remaining value into distributionValue once per cycle.
         uint256 dValue = t.distributionValue;
         if (t.value >= dValue) {
-            // Similarly, capture all remaining value into distributionValue.
             dValue = t.distributionValue = t.value;
         }
 
-        // Calculate incremental value per coin unit for distribution.
-        // Use full-precision ratio so we never over-distribute dValue when dCharge
-        // is not an exact multiple of _coinMultiplier.
+        // Full-precision ratio so we never over-distribute dValue.
         uint256 incrementalValue = dCharge > 0 ? (dValue * _coinMultiplier) / dCharge : 0;
 
         uint256 dIndex = t.distributionIndex;
-
         uint256 distribution;
-        
-        // Process contributions in batches defined by _batchSize
-        // If discharge is true (distribution phase of dischargeToken), use batchSize. If false (e.g., activateToken), use batchSize * 2.
+
+        uint256 contributorsLength = t.contributors.length;
         uint256 cEndIndex = dIndex + (discharge ? _batchSize : _batchSize * 2);
-        if (cEndIndex > t.contributors.length) {
-            cEndIndex = t.contributors.length;
+        if (cEndIndex > contributorsLength) {
+            cEndIndex = contributorsLength;
         }
-        
-        for (dIndex; dIndex < cEndIndex; dIndex++) {
+
+        for (; dIndex < cEndIndex; dIndex++) {
             address contributor = t.contributors[dIndex];
 
             TokenContribution storage contribution = t.contributions[contributor];
-            bool distributed = contribution.distributed;
-            // Mark as processed for this epoch; `distributed` prevents double payouts.
+            if (contribution.distributed) {
+                // Already processed in this epoch; skip.
+                continue;
+            }
             contribution.distributed = true;
 
-            // If a contract token is associated, mark it recallable.
-            ContractToken storage contractToken = _contractTokens[contributor][tokenId];
-            if (contractToken.tokenId != 0) {
+            if (discharge) {
+                // For discharge, return contributed value back to the contributor.
+                _addValue(contributor, contribution.value, contribution.charge);
+            } else {
+                // Otherwise, accumulate distribution for the token owner.
+                distribution += contribution.value;
 
-                contractToken.recallable = true;
+                // A percentage of the token's intrinsic value is sent to the contributor.
+                uint256 distributableTokenValue =
+                    incrementalValue * contribution.charge / _coinMultiplier;
 
-            } else if (!distributed) {
-
-                if (discharge) {
-
-                    // For discharge, return contributed value back to the contributor.
-                    _addValue(contributor, contribution.value, contribution.charge);
-
-                } else {
-
-                    // Otherwise, accumulate distribution for the token owner.
-                    distribution += contribution.value;
-                    // A percentage of the token's intrinsic value is sent to the contributor
-                    uint256 distributableTokenValue = incrementalValue * contribution.charge / _coinMultiplier;
-
-                    // Ensure we do not subtract more than exists in t.value due to rounding.
-                    // If distributable is > t.value, we just take what is left.
-                    if (distributableTokenValue > t.value) {
-                        distributableTokenValue = t.value;
-                    }
-
-                    t.value -= distributableTokenValue;
-                    _addDistributedValue(contributor, distributableTokenValue);
-
+                // Clamp to available t.value.
+                if (distributableTokenValue > t.value) {
+                    distributableTokenValue = t.value;
                 }
 
+                t.value -= distributableTokenValue;
+                _addDistributedValue(contributor, distributableTokenValue);
             }
         }
 
-        if (cEndIndex == t.contributors.length) {
-
+        if (cEndIndex == contributorsLength) {
             // Finalize distribution if all contributors have been processed.
             t.distributionIndex = 0;
             t.distributionCharge = 0;
@@ -1702,37 +1754,43 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             uint256 tValue = t.value;
             t.value = 0;
 
+            address owner_ = ownerOf(tokenId);
+
             if (discharge) {
-
                 // For discharge, return any undistributed value to the token owner.
-                _addDistributedValue(ownerOf(tokenId), tValue);
-
+                _addDistributedValue(owner_, tValue);
             } else {
-
                 if (dCharge > 0) {
                     t.activeCharge += dCharge;
                     emit ActiveCharge(tokenId, dCharge);
                 }
 
                 // Create a distribution for the token owner and include remaining value.
-                _addDistributedValue(ownerOf(tokenId), distribution + tValue);
-                
+                _addDistributedValue(owner_, distribution + tValue);
+            }
+
+            // Mark attached contract token recallable once per full cycle ---
+            // Uses _contractTokenExists as the single source of truth for "still vaulted".
+            if (t.contractTokenAddress != address(0)) {
+                ContractToken storage contractToken = _contractTokens[t.contractTokenAddress][tokenId];
+                if (_contractTokenExists[t.contractTokenAddress][contractToken.tokenId]) {
+                    contractToken.recallable = true;
+                }
             }
 
             return true;
-            
-        } else {
-
-            // Update the distribution index for further batch processing.
-            t.distributionIndex = dIndex;
-
-            if (!discharge && distribution > 0) {
-                // If not discharging, flush partial owner distribution each batch to avoid overflow.
-                _addDistributedValue(ownerOf(tokenId), distribution);
-            }
-            return false;
         }
+
+        // Partial progress: save index and optionally flush partial owner distribution.
+        t.distributionIndex = dIndex;
+
+        if (!discharge && distribution > 0) {
+            _addDistributedValue(ownerOf(tokenId), distribution);
+        }
+
+        return false;
     }
+
 
     /// @notice Discharges a token, settling contributions and redistributing any remaining
     ///         active charge into its link graph.
@@ -1898,13 +1956,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // If a contract token is attached, it should no longer be recallable after a full discharge.
-        // Preserve its address as a placeholder contributor so a future activation/distribution round
-        // can re-enable recallability.
         if (t.contractTokenAddress != address(0)) {
             ContractToken storage contractToken = _contractTokens[t.contractTokenAddress][tokenId];
             if (contractToken.tokenId != 0) {
                 contractToken.recallable = false;
-                t.contributors.push(t.contractTokenAddress);
             }
         }
 
