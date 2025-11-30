@@ -97,7 +97,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint8 private constant STABILIZED   = 1;  // 00000001 (Anti-Bleed)
     uint8 private constant ANCHORED     = 2;  // 00000010 (Retain Charge on Discharge)
     uint8 private constant PRIMED       = 4;  // 00000100 (Half Activation Threshold)
-    uint8 private constant REVERBERATED = 8;  // 00001000 (Retain Some Charge On Active Token)
+    uint8 private constant REVERBERATED = 8;  // 00001000 (Retain Some Charge on Active Token)
 
     /// @dev State for a temporary buff on a token
     struct BuffState {
@@ -105,7 +105,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint8 efficiencyBonus;  // Temporary bonus on top of base efficiency (0–100)
         uint8 attunement;       // ID of the plane to mimic (1-18)
         uint8 amplification;    // Bonus multiplier percentage for incoming charge (e.g. 20 = 1.2x)
-        uint8 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed
+        uint8 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated
     }
 
     struct Token {
@@ -1027,7 +1027,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return efficiencyBonus The temporary efficiency bonus applied to all outgoing links (0–100).
     /// @return attunement Planar ID to mimic for affinity (1-18, or 0 for none).
     /// @return amplification Percentage multiplier applied to incoming charge (0-100, or 0 for none).
-    /// @return flags Bitmask: 1 Stabilized, 2 Anchored, 4 Primed.
+    /// @return flags Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated.
     function tokenBuff(uint256 tokenId) external view returns (uint64 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags) {
         _checkTokenExists(tokenId);
         BuffState storage b = _tokens[tokenId].buff;
