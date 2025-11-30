@@ -1111,17 +1111,73 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return (linkId, baseEfficiency, affinityBonus);
     }
 
-    /// @notice Returns information about an external ERC721 token attached to this Digil.
+    /// @notice Returns lifecycle information about any external ERC721 token
+    ///         that has been vaulted inside this Digil.
     /// @dev
-    ///  - If `contractTokenAddress` is zero, this Digil has never wrapped a contract token.
-    ///  - If `vaulted` is true, the external token is still held by this contract.
-    ///  - If `vaulted` is false but `contractTokenAddress`/`externalTokenId` are non-zero,
-    ///    the external token has been recalled and this Digil is now historical-only.
+    ///  Lifecycle states (as observed through this view):
+    ///
+    ///  1. Never vaulted
+    ///     - `contractTokenAddress == address(0)`
+    ///     - `externalTokenId == 0`
+    ///     - `recallable == false`
+    ///     - `vaulted == false`
+    ///     Interpretation: this Digil has never wrapped an external contract token.
+    ///
+    ///  2. Vaulted, not yet recallable
+    ///     - `contractTokenAddress != address(0)`
+    ///     - `externalTokenId != 0`
+    ///     - `_contractTokenExists[contractTokenAddress][externalTokenId] == true`
+    ///       ⇒ `vaulted == true`
+    ///     - `recallable == false`
+    ///     Interpretation:
+    ///       - The external ERC721 has been deposited via {onERC721Received} and is
+    ///         currently held (“vaulted”) by this contract.
+    ///       - No full activation distribution cycle has yet completed to mark it
+    ///         recallable, or a full discharge cycle has since cleared recallability.
+    ///
+    ///  3. Vaulted and recallable
+    ///     - `contractTokenAddress != address(0)`
+    ///     - `externalTokenId != 0`
+    ///     - `_contractTokenExists[contractTokenAddress][externalTokenId] == true`
+    ///       ⇒ `vaulted == true`
+    ///     - `recallable == true`
+    ///     Interpretation:
+    ///       - The external ERC721 is still held by this contract and was marked
+    ///         recallable when a full activation distribution cycle completed via
+    ///         {_distribute} called from {activateToken}.
+    ///       - It can now be reclaimed by an approved operator using {recallToken}.
+    ///
+    ///  4. Recalled (historical-only)
+    ///     - `contractTokenAddress != address(0)`
+    ///     - `externalTokenId != 0`
+    ///     - `_contractTokenExists[contractTokenAddress][externalTokenId] == false`
+    ///       ⇒ `vaulted == false`
+    ///     - `recallable == false`
+    ///     Interpretation:
+    ///       - {recallToken} has successfully transferred the external ERC721 back
+    ///         to the current Digil owner.
+    ///       - The mapping `_contractTokenExists` has been cleared for this pair,
+    ///         so the token is no longer vaulted.
+    ///       - `contractTokenAddress` and `externalTokenId` are intentionally
+    ///         retained for provenance, allowing off-chain indexers and auditors
+    ///         to see which external asset this Digil historically wrapped.
+    ///
+    ///  Invariants:
+    ///  - `vaulted` is derived purely from `_contractTokenExists[contractTokenAddress][externalTokenId]`.
+    ///  - `recallable` is stored in `_contractTokens[contractTokenAddress][tokenId].recallable`
+    ///    and is:
+    ///      * set to `true` when a full activation distribution cycle completes and the
+    ///        external token is still vaulted, and
+    ///      * set back to `false` either when:
+    ///          - {recallToken} succeeds, or
+    ///          - a full discharge cycle completes ({dischargeToken}), which explicitly
+    ///            clears recallability without unvaulting the external token.
+    ///
     /// @param  tokenId The internal Digil token ID being queried.
     /// @return contractTokenAddress The ERC721 contract address of the attached token (zero if none).
     /// @return externalTokenId      The external ERC721 tokenId attached to this Digil (zero if none).
     /// @return recallable           True if the attached token can currently be recalled via {recallToken}.
-    /// @return vaulted              True if the external token is still held in this contract’s custody.
+    /// @return vaulted              True if the external token is still held (“vaulted”) in this contract.
     function tokenAttachment(uint256 tokenId) external view	returns (address contractTokenAddress, uint256 externalTokenId,	bool recallable, bool vaulted) {
         _checkTokenExists(tokenId);
 
