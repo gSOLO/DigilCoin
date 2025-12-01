@@ -41,6 +41,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint16 private constant DEFAULT_BATCH_SIZE = 256;           // Default number of items to process in a single batch operation
     uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Configurable batch size for distribution or discharge operations
     uint16 private constant MIN_BATCH_SIZE = 32;                // Minimum number of items to process in a single batch operation
+    uint16 private constant MAX_BATCH_SIZE = 1024;              // Maximum number of items to process in a single batch operation
 
     // Define the inactivity period for reclaiming contributions
     uint256 private constant STALLED_TIMEOUT = 90 days;         // A short timeout to reclaim contributions from tokens stuck in a batch operation (e.g., activate/discharge)
@@ -447,7 +448,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             incrementalValue > VALUE_MULTIPLIER &&
             transferValue >= (incrementalValue * 9 / 10) &&          // ≥ 90% to user (≤ 10% fee)
             transferValue <= (incrementalValue * 99 / 100) &&        // ≤ 99% to user (≥ 1% fee)
-            batchSize >= MIN_BATCH_SIZE,
+            batchSize >= MIN_BATCH_SIZE &&
+            batchSize <= MAX_BATCH_SIZE,
             "DIGIL: Invalid Configuration"
         );
         
