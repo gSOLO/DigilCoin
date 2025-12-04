@@ -1261,7 +1261,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // If the token is to be restricted, ensure the caller sends the required funds.
         if (restricted) {
-            uint256 required = t.incrementalValue > _incrementalValue ? t.incrementalValue : _incrementalValue;
+            uint256 required = incrementalValue > _incrementalValue ? incrementalValue : _incrementalValue;
             if (msg.value < required) revert InsufficientFunds(required);
 
             t.restricted = true;
@@ -1274,20 +1274,26 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // If a plane is specified (plane > 0), process the coin fee and link the token to the plane.
         if (plane > 0) {
             require(plane <= PLANAR_MAX_ID, "DIGIL: Invalid Plane");
+
             // Different fee structures based on plane index, pricing rarer planes higher.
+            uint256 cost;
             if (plane < 4) {
                 // Void / karmic / kaotic planes (1–3): 5× coinRate
-                _coinsFromSender(_coinRate * 5);
+                cost = (_coinRate * 5);
             } else if (plane > 16) {
                 // Ethereal planes (17–18): 100× coinRate
-                _coinsFromSender(_coinRate * 100);
+                cost = (_coinRate * 100);
             } else if (plane > 11) {
                 // Energy planes (12–16): 25× coinRate
-                _coinsFromSender(_coinRate * 25);
+                cost = (_coinRate * 25);
             } else if (plane > 7) {
                 // Paraelemental planes (8–11): 1× coinRate
-                _coinsFromSender(_coinRate);
+                cost = (_coinRate);
             }
+            if (cost != 0) {
+                _coinsFromSender(cost);
+            }
+
             // Record the plane link as the immutable foundational plane (index 0 in links[]).
             t.links.push(plane);
             t.linkEfficiency[plane] = LinkEfficiency(100, 0);
