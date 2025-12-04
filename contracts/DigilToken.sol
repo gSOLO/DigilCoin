@@ -1276,22 +1276,22 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             require(plane <= PLANAR_MAX_ID, "DIGIL: Invalid Plane");
 
             // Different fee structures based on plane index, pricing rarer planes higher.
-            uint256 cost;
+            uint256 fee;
             if (plane < 4) {
                 // Void / karmic / kaotic planes (1–3): 5× coinRate
-                cost = (_coinRate * 5);
+                fee = (_coinRate * 5);
             } else if (plane > 16) {
                 // Ethereal planes (17–18): 100× coinRate
-                cost = (_coinRate * 100);
+                fee = (_coinRate * 100);
             } else if (plane > 11) {
                 // Energy planes (12–16): 25× coinRate
-                cost = (_coinRate * 25);
+                fee = (_coinRate * 25);
             } else if (plane > 7) {
                 // Paraelemental planes (8–11): 1× coinRate
-                cost = (_coinRate);
+                fee = (_coinRate);
             }
-            if (cost != 0) {
-                _coinsFromSender(cost);
+            if (fee != 0) {
+                _coinsFromSender(fee);
             }
 
             // Record the plane link as the immutable foundational plane (index 0 in links[]).
