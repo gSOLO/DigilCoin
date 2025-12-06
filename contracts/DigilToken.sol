@@ -29,6 +29,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
 
     // Configuration values for incremental and transfer values
+    uint256 private constant MAX_INCREMENTAL_VALUE = 1 ether;   // Upper bound on the global incremental value
     uint256 private _incrementalValue = 100 * VALUE_MULTIPLIER; // Minimum incremental ETH value required for charging
     uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // The portion of incremental value distributed to users
 
@@ -431,21 +432,54 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Configuration
 
-    /// @dev    Updates core economic parameters of the contract. Only callable by the owner.
-    /// @param  coins Used to determine a number of values:
-    ///                     Maximum number of bonus Coins a user can withdraw.
-    ///                     Number of Coins required to Update a Token URI.
-    ///                     Number of Coins required to Link a Token.
-    ///                     Number of Coins required to Opt-Out.
-    /// @param  incrementalValue The minimum value (in wei) used to Charge, Activate a Token, update a Token URI
-    /// @param  transferValue The value (in wei) to be distributed when a Token is Activated per incrementalValue
-    /// @param  batchSize The multiplier used for batch size for distribute and discharge calls that can be made per transaction 
+    /// @notice Updates the core economic parameters of the contract.
+    /// @dev    Only callable by the owner. This function controls the global
+    ///         economic scale for the system:
+    ///         - `coinRate` defines how many ERC20 Coins are minted / required
+    ///           for key operations.
+    ///         - `_incrementalValue` defines the global minimum ETH-per-coin
+    ///           used by charging and other value-based flows and also acts as
+    ///           a lower bound for per-token incrementalValue.
+    ///         - `_transferValue` defines what portion of the incremental
+    ///           value is routed back to users vs. retained as a protocol fee.
+    ///         - `_batchSize` controls how many contributors are processed per
+    ///           transaction during batch activation / discharge.
+    ///
+    ///         Reverts if:
+    ///         - `coins` is not strictly between `MIN_COIN_RATE` and
+    ///           `MAX_COIN_RATE` (inclusive of the upper bound).
+    ///         - `incrementalValue` is not strictly greater than
+    ///           `VALUE_MULTIPLIER` or exceeds `MAX_INCREMENTAL_VALUE`.
+    ///         - `transferValue` is not between 90% and 99% of
+    ///           `incrementalValue` (inclusive), ensuring a protocol fee of
+    ///           between 1% and 10%.
+    ///         - `batchSize` is outside the `[MIN_BATCH_SIZE, MAX_BATCH_SIZE]`
+    ///           range.
+    ///
+    /// @param  coins             Base coin rate (unscaled), later multiplied by
+    ///                           `_coinMultiplier` to produce `_coinRate`. This
+    ///                           rate is used to:
+    ///                           - Cap time-based bonus Coins in {withdraw}.
+    ///                           - Price Token URI updates.
+    ///                           - Price link creation and upgrades.
+    ///                           - Price opt-in / opt-out.
+    /// @param  incrementalValue  Global minimum incremental value (in wei) used
+    ///                           when charging, activating, or updating Tokens.
+    ///                           Must be strictly greater than `VALUE_MULTIPLIER`
+    ///                           and less than or equal to `MAX_INCREMENTAL_VALUE`.
+    /// @param  transferValue     Value (in wei) paid out per incremental unit
+    ///                           when creating distributions. Must remain within
+    ///                           [90%, 99%] of `incrementalValue` so that the
+    ///                           protocol fee stays between 1% and 10%.
+    /// @param  batchSize         Number of contributors processed per batch
+    ///                           step, within `[MIN_BATCH_SIZE, MAX_BATCH_SIZE]`.
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external onlyOwner {
         // Validate configuration parameters.
         require(
             coins > MIN_COIN_RATE &&
             coins <= MAX_COIN_RATE &&
             incrementalValue > VALUE_MULTIPLIER &&
+            incrementalValue <= MAX_INCREMENTAL_VALUE &&
             transferValue >= (incrementalValue * 9 / 10) &&          // ≥ 90% to user (≤ 10% fee)
             transferValue <= (incrementalValue * 99 / 100) &&        // ≤ 99% to user (≥ 1% fee)
             batchSize >= MIN_BATCH_SIZE &&
@@ -461,6 +495,35 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _batchSize = batchSize;
         
         emit Configure(_coinRate, _incrementalValue, _transferValue, batchSize);
+    }
+
+    /// @notice Returns the current global economic configuration.
+    /// @dev    This is a lightweight view helper for front-ends, indexers,
+    ///         and explorers that want to understand the system-wide economic
+    ///         parameters without parsing events.
+    ///
+    ///         - `coinRate` is the fully scaled ERC20 Coin rate (already
+    ///           multiplied by `_coinMultiplier`), used by charging, bonuses,
+    ///           and various coin-priced operations.
+    ///         - `incrementalValue` is the global minimum ETH-per-coin value
+    ///           (in wei) currently enforced by the protocol, and serves as
+    ///           the lower bound for per-token incrementalValue in
+    ///           {createToken} and {updateToken}. It is constrained at
+    ///           configuration time to be within:
+    ///           `(VALUE_MULTIPLIER, MAX_INCREMENTAL_VALUE]`.
+    ///         - `transferValue` is the portion of each incremental unit that
+    ///           is routed back to users via distributions, with the remainder
+    ///           retained as protocol fee.
+    ///         - `batchSize` controls how many contributors can be processed
+    ///           per batch step in {activateToken} and {dischargeToken}.
+    ///
+    /// @return coinRate         Current global coin rate, in the smallest ERC20
+    ///                          units (i.e. already scaled by `_coinMultiplier`).
+    /// @return incrementalValue Current global minimum incremental value, in wei.
+    /// @return transferValue    Current per-increment transfer value, in wei.
+    /// @return batchSize        Current global batch size for distributions.
+    function configuration() external view returns (uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) {
+        return (_coinRate, _incrementalValue, _transferValue, _batchSize);
     }
 
     // Coin Transfers
@@ -1012,7 +1075,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to retrieve the URI for.
     /// @return The token URI string.
     function tokenURI(uint256 tokenId) public view virtual override returns (string memory) {
-        _checkTokenExists(tokenId);
+        // If the token does not exist, _tokens[tokenId].uri returns an empty string.
+        // The code then falls through to super.tokenURI(tokenId).
+        // OpenZeppelin's ERC721.tokenURI already reverts if the token does not exist.
+        //_checkTokenExists(tokenId);
 
         string storage uri = _tokens[tokenId].uri;
 
@@ -1447,20 +1513,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///      - Returns the final echo amount after dividing by AFFINITY_REDUCTION.
     ///      If both linkedCoins and bonusCoins are zero, returns 0.
     function _reverbEcho(uint256 linkedCoins, uint256 bonusCoins) internal pure returns (uint256) {
-        if (linkedCoins == 0 && bonusCoins == 0) {
-            return 0;
-        }
-
         // Cap bonusCoins at 4× linkedCoins for controlled “planar drama”
         uint256 maxBonus = linkedCoins * (AFFINITY_BOOST  * AFFINITY_BOOST);
         if (bonusCoins > maxBonus) {
             bonusCoins = maxBonus;
         }
 
-        unchecked {
-            uint256 total = linkedCoins + bonusCoins;
-            return total / AFFINITY_REDUCTION;
-        }
+        uint256 total = linkedCoins + bonusCoins;
+        return total / AFFINITY_REDUCTION;
     }
 
     /// @dev    Internal function to charge an active token.
@@ -2235,7 +2295,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  linkId     The destination token ID to link to.
     /// @param  efficiency The efficiency of the link (percentage based).
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) external payable nonReentrant {
-        _checkTokenExists(tokenId);
+        // _checkApproved calls ownerOf(tokenId).
+        // ownerOf(tokenId) reverts if the token does not exist.
+        //_checkTokenExists(tokenId);
         _checkApproved(tokenId);
         _checkTokenExists(linkId);
 
@@ -2317,10 +2379,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  linkCount The number of outgoing links affected.
     /// @return cost The activeCharge cost in coin units.
     function _buffCost(uint256 bonus, uint256 duration, uint256 linkCount) internal view returns (uint256 cost) {
-        if (bonus == 0 || duration == 0 || linkCount == 0) {
-            return 0;
-        }
-
         cost = bonus * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR;
 
         // Enforce "minimum cost = _coinRate" rule for any buff.
@@ -2480,9 +2538,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The source token ID initiating the unlink.
     /// @param  linkId The destination token ID to unlink. 
     function unlinkToken(uint256 tokenId, uint256 linkId) external {
-        _checkTokenExists(linkId);
+        // _checkApproved calls ownerOf(tokenId).
+        // ownerOf(tokenId) reverts if the token does not exist.
+        //_checkTokenExists(tokenId);
         _checkApproved(tokenId);
-
+        _checkTokenExists(linkId);
+        
         Token storage t = _tokens[tokenId];
         require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 

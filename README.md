@@ -92,7 +92,7 @@ configure(coins, incrementalValue, transferValue, batchSize)
 
 with checks:
 - `_coinRate = coins × coinMultiplier` • `coins ∈ (10, 1,000,000,000]`
-- `_incrementalValue > 1000 gwei` (global per-coin ETH floor)
+- `_incrementalValue > 1000 gwei ≤ 1 ether` (global per-coin ETH floor)
 - `_transferValue ∈ [0.9, 0.99] × _incrementalValue` (between 1% and 10% fee)
 - `_batchSize ≥ 32 ≤ 1024`
 
