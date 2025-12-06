@@ -9,6 +9,8 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 
 > A sigil is a type of symbol used in magic. In modern usage, especially in the context of chaos magic, sigil refers to a symbolic representation of the practitioner's desired outcome.<sup>[?](https://en.wikipedia.org/wiki/Sigil)</sup>
 
+<img src="assets/planes.png" width="1012">
+
 ---
 
 ## Table of Contents
