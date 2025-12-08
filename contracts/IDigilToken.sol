@@ -3,6 +3,7 @@ pragma solidity ^0.8.30;
 
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title Interface for Digil Token (NFT)
 /// @notice Interface for the DigilToken contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
