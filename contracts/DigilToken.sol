@@ -911,7 +911,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Clear this epoch’s contribution record
         c.value = 0;
         c.charge = 0;
-        c.exists = false;
         c.distributed = true;
 
         emit Reclaim(addr, tokenId, value);
@@ -2072,6 +2071,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             sstore(contributors.slot, 0)
         }
 
+        // Advance the contribution epoch so all existing TokenContribution entries
+        // are treated as reset the next time they are touched.
+        t.contributionEpoch += 1;
+
         // If a contract token is attached, it should no longer be recallable after a full discharge.
         if (t.contractTokenAddress != address(0)) {
             ContractToken storage contractToken = _contractTokens[t.contractTokenAddress][tokenId];
@@ -2079,10 +2082,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 contractToken.recallable = false;
             }
         }
-
-        // Advance the contribution epoch so all existing TokenContribution entries
-        // are treated as reset the next time they are touched.
-        t.contributionEpoch += 1;
 
         // Clear any buffs
         delete t.buff;
@@ -2161,6 +2160,16 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.active = true;
         // Clear flag on completion
         t.activating = false;
+
+        // Clear the contributor list to prevent gas bloat ("Ghost Contributors")
+        address[] storage contributors = t.contributors;
+        // Reset the length to 0 using assembly
+        assembly {
+            sstore(contributors.slot, 0)
+        }
+
+        // Advance epoch to logically wipe old contribution records
+        t.contributionEpoch += 1;
 
         // Consume PRIMED after a successful activation, if present.
         if (primed) {
