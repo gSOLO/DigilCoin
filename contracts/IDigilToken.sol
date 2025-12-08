@@ -3,7 +3,6 @@ pragma solidity ^0.8.30;
 
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title Interface for Digil Token (NFT)
 /// @notice Interface for the DigilToken contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
@@ -18,7 +17,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     event Activate(uint256 indexed tokenId);
     event Batch(uint256 indexed tokenId);
     event Deactivate(uint256 indexed tokenId);
-    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, address sender);
+    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, uint256 value, address sender);
     event ActiveCharge(uint256 indexed tokenId, uint256 coins);
     event Discharge(uint256 indexed tokenId);
     event Link(uint256 indexed tokenId, uint256 indexed linkId, uint8 efficiency, uint256 affinityBonus);
@@ -27,38 +26,12 @@ interface IDigilToken is IERC721, IERC721Receiver {
     event Stabilize(uint256 indexed tokenId);
     event PendingDistribution(address indexed addr, uint256 coins, uint256 value);
     event Contribute(address indexed addr, uint256 indexed tokenId, uint256 value);
+    event Enrich(uint256 indexed tokenId, uint256 value);
     event Reclaim(address indexed addr, uint256 indexed tokenId, uint256 value);
-    event ContributeValue(address indexed addr, uint256 indexed tokenId, uint256 value);
-    event ContributeValue(uint256 indexed tokenId, uint256 value);
 
     // Errors
     error InsufficientFunds(uint256 required);
     error CoinTransferFailed(uint256 coins);
-
-    // Structs (for external visibility if needed)
-    struct Distribution {
-        uint256 time;   // Timestamp of the last distribution or withdrawal
-        uint256 coins;  // Pending coins to be distributed
-        uint256 value;  // Pending Ether value to be distributed
-    }
-
-    struct TokenContribution {
-        uint256 charge;     // Coins contributed to the token's charge
-        uint256 value;      // Ether value contributed
-        bool exists;        // Indicates if the contributor has contributed
-        bool distributed;   // Indicates if the contribution has been distributed
-        bool whitelisted;   // Indicates if the contributor is whitelisted
-    }
-
-    struct ContractToken {
-        uint256 tokenId;    // ID of the external ERC721 token
-        bool recallable;    // Indicates if the token can be recalled
-    }
-
-    struct LinkEfficiency {
-        uint8 base;             // Base efficiency percentage for coin transfer
-        uint256 affinityBonus;  // Additional bonus based on plane affinity
-    }
 
     // Public and External Functions
 

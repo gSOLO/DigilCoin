@@ -204,8 +204,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  addr The address attributed with charging the token
     /// @param  tokenId The ID of the token being charged
     /// @param  coins The number of coins the token was charged with
+    /// @param  value THe value attributed to this charge
     /// @param  sender The address that charged the token
-    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, address sender);
+    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, uint256 value, address sender);
 
     /// @notice Emitted when an active token is charged.
     /// @param  tokenId The ID of the token being charged
@@ -247,15 +248,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  value The value added to the pending distributions for this address
     event PendingDistribution(address indexed addr, uint256 coins, uint256 value);
 
-    /// @notice Emitted when value is added to a token.
-    /// @dev    This event is specifically tied to the charging process of a token. 
-    ///         It records the portion of value contributed by a user that is used to "charge" the token—
-    ///         think of this as satisfying a minimum requirement for charging the token.
-    /// @param  addr The address this event is attributed to
-    /// @param  tokenId The ID of the token whose value increased
-    /// @param  value The value that was contributed
-    event Contribute(address indexed addr, uint256 indexed tokenId, uint256 value);
-
     /// @notice Emitted when value is reclaimed from a token.
     /// @dev    This event is specifically tied to the reclaiming of a contribution after a period of inactivity. 
     ///         It records the portion of value contributed by a user that was used to "charge" the token—
@@ -265,13 +257,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  value The value that was added to pending distribution
     event Reclaim(address indexed addr, uint256 indexed tokenId, uint256 value);
 
-    /// @notice Emitted when contributed value is added directly to a token's value.
-    /// @dev    This event logs excess value contributed during the charging process that goes beyond the minimum required for charging.
-    ///         Instead of being used for the charge, this excess is added directly to the token’s value.
-    /// @param  addr The address this event is attributed to
-    /// @param  tokenId The ID of the token whose value increased
-    /// @param  value The amount the token's value increased
-    event ContributeValueAs(address indexed addr, uint256 indexed tokenId, uint256 value);
+    /// @notice Records additional value contributed to a token during charging
+    ///         beyond the minimum required to satisfy its incremental value.
+    /// @dev    This value is added directly to the token's intrinsic `value` and
+    ///         does *not* increase the contributor's reclaimable stake (`c.value`).
+    /// @param  addr     The address this event is attributed to (logical contributor).
+    /// @param  tokenId  The ID of the token whose value increased.
+    /// @param  value    The amount of surplus value credited to the token.
+    event Contribute(address indexed addr, uint256 indexed tokenId, uint256 value);
 
     /// @notice Emitted when additional value is added to or created for a token.
     /// @dev    This event records general value additions to a token that occur outside the charging process.
@@ -279,7 +272,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         where value is added to the token without being tied to a specific charging action.
     /// @param  tokenId The ID of the token whose value increased
     /// @param  value The amount the token's value increased
-    event ContributeValue(uint256 indexed tokenId, uint256 value);
+    event Enrich(uint256 indexed tokenId, uint256 value);
 
     /// @notice Error thrown when insufficient funds are sent.
     /// @param  required The value required for the transaction
@@ -715,13 +708,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(addr, userValue, bonusCoins);
     }
 
-    /// @dev    Internal function that adds contributed value to a token.
+    /// @dev    Internal function that adds value to a token.
     /// @param  tokenId The token to which the value is added.
     /// @param  value The amount of value (in wei) to add.
     function _createValue(uint256 tokenId, uint256 value) internal {
         if (value > 0) {
             _tokens[tokenId].value += value;
-            emit ContributeValue(tokenId, value);
+            emit Enrich(tokenId, value);
         }
     }
 
@@ -1723,21 +1716,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 c.value = 0;
             }    
 
-            // Add to contribution value
-            if (minimumValue > 0) {
-                c.value += minimumValue;
-                emit Contribute(contributor, tokenId, minimumValue);
-            }
-            
-            // If excess value was provided, add the surplus to the token's value.
-            if (value > minimumValue) {
-                t.value += value - minimumValue;
-                emit ContributeValueAs(contributor, tokenId, value - minimumValue);
-            }
-
+            // Coins + required value are tied together at the Charge level
             c.charge += coins;
             t.charge += coins;
-            emit Charge(contributor, tokenId, coins, _msgSender());
+            c.value += minimumValue;
+            emit Charge(contributor, tokenId, coins, minimumValue, _msgSender());
+
+            // minimumValue -> affects c.value and reclaimContribution
+            // surplus -> goes to t.value and is logged as Contribute
+            if (value > minimumValue) {
+                uint256 surplus = value - minimumValue;
+                t.value += surplus;
+                emit Contribute(contributor, tokenId, surplus);
+            }
 
         }
 
