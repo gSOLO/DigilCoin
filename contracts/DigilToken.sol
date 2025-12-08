@@ -68,10 +68,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev Structure to hold pending coin and value distributions for a user, and
     ///      the timestamp of the last bonus accrual checkpoint (used by {withdraw}).
     struct Distribution {
-        uint256 time;       // Timestamp of the last successful bonus accrual (not every withdrawal)
-        uint256 coins;      // Pending ERC20 coins to be withdrawn
-        uint256 value;      // Pending Ether value to be withdrawn
-        bool bonusEligible; // True if the user can earn time-based bonuses
+        uint256 time;   // Timestamp of the last successful bonus accrual (not every withdrawal)
+        uint256 coins;  // Pending ERC20 coins to be withdrawn
+        uint256 value;  // Pending Ether value to be withdrawn
     }
 
     /// @dev Structure to represent the efficiency of a link between two tokens
@@ -551,14 +550,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @dev    Computes the time-based bonus coins that would be awarded to `addr`
     ///         at `nowTs`, without mutating state. Mirrors the logic used in {withdraw}.
-    ///         - Requires the user to have created and hold at least one Digil.
+    ///         - Requires the user to hold at least one Digil token or some Coins.
     /// @param  addr The address whose bonus is being computed.
     /// @param  distribution The Distribution storage slot for this address.
     /// @param  nowTs The timestamp to use for the calculation (typically block.timestamp).
     /// @return bonus The number of bonus coin units that would be granted.
     function _pendingBonus(address addr, Distribution storage distribution, uint256 nowTs) internal view returns (uint256 bonus) {
-        // Must be a creator and have at least one Digil
-        if (!distribution.bonusEligible || balanceOf(addr) == 0) {
+        // Must have at least one Digil token or some ERC20 Coins.
+        if (balanceOf(addr) == 0 && _coins.balanceOf(addr) == 0) {
+            // User must be economically involved in the system to earn time-based bonuses.
             return 0;
         }
 
@@ -1264,12 +1264,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  data Optional data to store with the token.
     /// @return tokenId The newly created token ID.
     function _createToken(address creator, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data) internal returns(uint256) {      
-        // Mark this address as eligible for time-based bonuses once they create any token
-        Distribution storage d = _distributions[creator];
-        if (!d.bonusEligible) {
-            d.bonusEligible = true;
-        }
-        
         // Get current ID and increment
         uint256 tokenId = _nextTokenId++;
         
