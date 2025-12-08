@@ -45,7 +45,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint16 private constant MAX_BATCH_SIZE = 1024;              // Maximum number of items to process in a single batch operation
 
     // Define the inactivity period for reclaiming contributions
-    uint256 private constant STALLED_TIMEOUT = 90 days;         // A short timeout to reclaim contributions from tokens stuck in a batch operation (e.g., activate/discharge)
+    uint256 private constant INACTIVITY_PERIOD = 90 days;       // A short timeout to reclaim contributions from tokens after inactivity
 
     // Max link and affinity bonus scale
     uint256 private constant MAX_LINKS = 10;                    // Maximum number of links a token can have
@@ -843,7 +843,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - The token must be inactive (`active == false`) and not in the middle
     ///           of an activation or discharge batch (`distributionIndex == 0`).
     ///         - A minimum inactivity window must have passed since the token’s last
-    ///           meaningful activity (`block.timestamp >= lastActivity + STALLED_TIMEOUT`).
+    ///           meaningful activity (`block.timestamp >= lastActivity + INACTIVITY_PERIOD`).
     ///         - The caller must have a recorded contribution (`c.value > 0` or
     ///           `c.charge > 0`) in the current contribution epoch.
     ///
@@ -867,7 +867,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///             * `c.value` and `c.charge` are zeroed,
     ///             * `c.exists` is set to false,
     ///             * `c.distributed` is set to true to prevent double reclamation.
-    ///         - The token’s `lastActivity` timestamp is updated to the current block.
     ///
     ///         Scope:
     ///         - This function never moves the token itself and never touches any
@@ -885,7 +884,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
         // Enforce inactivity window before contributors can reclaim their contribution.
-        require(block.timestamp >= t.lastActivity + STALLED_TIMEOUT, "DIGIL: Token Cannot Be Reclaimed");
+        require(block.timestamp >= t.lastActivity + INACTIVITY_PERIOD, "DIGIL: Token Cannot Be Reclaimed");
 
         // Penalty: require at least one incremental unit of ETH.
         // Use the greater of the token's incrementalValue or the global minimum
@@ -910,8 +909,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             }
         }
 
-        // Update last activity
-        t.lastActivity = block.timestamp;
+        // NOTE: We intentionally do NOT update lastActivity here.
+        //       Once a token has become reclaimable (after INACTIVITY_PERIOD
+        //       of inactivity), multiple contributors should be able to
+        //       reclaim in the same window until the owner performs a
+        //       new, meaningful operation on the token.
 
         // Clear this epoch’s contribution record
         c.value = 0;
@@ -2674,6 +2676,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         t.buff.flags = flags;
+
+        // Update last activity
+        t.lastActivity = block.timestamp;
 
         emit Buff(tokenId);
     }
