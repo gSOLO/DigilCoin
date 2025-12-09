@@ -9,9 +9,10 @@ import "@openzeppelin/contracts/utils/Address.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "contracts/IMintableERC20.sol";
 
-/// @title Digil Token (NFT)
+/// @title Digital Sigils (NFT)
 /// @author gSOLO
-/// @notice NFT contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
+/// @notice NFT contract used for the creation, charging, and activation of Digital Sigils ("Digils")
+/// @dev Digital Sigils are powered by the Digil Coin ERC20 (symbol: DIGIL).
 /// @custom:security-contact security@digil.co.in
 contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Immutable contract-level variables set during construction
@@ -290,7 +291,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  initialOwner The address that will own the contract and initial tokens
     /// @param  coins The address of the ERC20 token used as the system's currency
     /// @param  coinDecimals The number of decimals for the coin token
-    constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digil Token", "DIGILS") Ownable(initialOwner) {
+    constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digital Sigils", "DIGILS") Ownable(initialOwner) {
         _coins = IMintableERC20(coins);
         _coinMultiplier = 10 ** coinDecimals;
         _coinRate = 100 * _coinMultiplier;

@@ -14,6 +14,7 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 ---
 
 ## Table of Contents
+- [Brand & Terminology](#brand--terminology)
 - [Contracts](#contracts)
 - [Planar Tokens & Base URI](#planar-tokens--base-uri)
 - [Global Configuration](#global-configuration)
@@ -41,6 +42,19 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 
 ---
 
+## Brand & Terminology
+
+- **Digil Project** – The broader ecosystem, including the on-chain protocol and frontends at `digil.app`, `digil.co.in`, and related domains.
+- **Digital Sigils** – The name of the ERC-721 collection and contract that implements the dynamic NFT logic described in this document.
+- **Digil / Digils** – One NFT is called **a Digil** (a single Digital Sigil); the plural is **Digils**. Informally: “I charged three of my Digils today.”
+- **Digil Coin (ERC-20)** – The system’s ERC-20 currency, ticker **DIGIL**, used as “coins” inside the protocol for charging, fees, buffs, and rewards.
+- **Digital Sigils (ERC-721)** – The NFT collection itself, referenced by the ticker **DIGILS**. In social contexts you might say: “Picked up two more $DIGILS using $DIGIL.”
+- **ETH vs Coins** – **ETH** represents intrinsic value or “material sacrifice” locked into a Digil; **coins (DIGIL)** represent energy or “gnosis” used to drive the system’s mechanics (charging, linking, buffing).
+
+This terminology keeps the branding consistent: **$DIGIL** is the liquid currency, and **$DIGILS** are the unique on-chain objects you create, charge, and link.
+
+---
+
 ## Contracts
 
 ### Digil Coin | ERC-20
@@ -48,7 +62,7 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 
 Used for **charge units**, feature fees (linking, metadata updates, opt-out), and **bonuses**. In the context of the system, these coins represent **Gnosis** or kinetic energy. They are the fuel required to power the ritual. Internally the contract normalizes coin math with a **coin multiplier**: `10**decimals`. Where we say “coins,” we mean base units at this precision.
 
-### Digil Token | ERC-721
+### Digital Sigils | ERC-721
 **Symbol**: DIGILS • **Address**: TBD
 
 Implements core NFT logic plus the esoteric machinery of the system:
