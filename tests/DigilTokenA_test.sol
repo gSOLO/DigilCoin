@@ -31,19 +31,45 @@ contract AlphaTestSuite {
     }
 
     /// #sender: account-0
-    /// #value: 10000000000000000
+    /// #value: 1011000000000000000
     function testWithdrawl() public payable {
         uint256 balanceCoins = coins.balanceOf(address(this));
         Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
 
-        digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "First withdrawl should be 100 coins");
+        Assert.equal(withdrawlCoins, 1 * 10 ** 18, "First withdrawl should be 1 coin");
         Assert.equal(withdrawlValue, 0, "First withdrawl should be 0 value");
 
         balanceCoins = coins.balanceOf(address(this));
-        Assert.equal(balanceCoins, 100 * 10 ** 18, "Coin balance should be 100 coins");
+        Assert.equal(balanceCoins, 1 * 10 ** 18, "Coin balance should be 1 coin");
+
+        // Approve the Digil Token contract to spend the specified coinAmount.
+        bool approved = coins.approve(address(digil), 1 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        digil.chargeToken{value: 1000000000000000}(tokenId, 1000000000000000000);
+        digil.activateToken(tokenId);
+
+        (withdrawlCoins, withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 10 * 10 ** 18, "Coins from distribution should be 10 bonus for value");
+        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
+
+        balanceCoins = coins.balanceOf(address(this));
+        Assert.equal(balanceCoins, 10 * 10 ** 18, "Coin balance should be 10 coins");
+
+        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+
+        approved = coins.approve(address(digil), 1 * 10 ** 18);
+        Assert.ok(approved, "Coin approval failed");
+
+        digil.chargeToken{value: 1000000000000000000}(tokenId, 1000000000000000000);
+        digil.activateToken(tokenId);
+
+        (withdrawlCoins, withdrawlValue) = digil.withdraw();
+        Assert.equal(withdrawlCoins, 10000 * 10 ** 18, "Coins from distribution should be 10000 bonus for value");
+        Assert.equal(withdrawlValue, 950000000000000000, "Distributed value should be 95% of 1000000000000000000");
     }
 
     /// #sender: account-0
@@ -54,12 +80,12 @@ contract AlphaTestSuite {
         bytes memory data = "Test Token";
 
         uint256 balanceTokens = digil.balanceOf(address(this));
-        Assert.equal(balanceTokens, 1, "Token balance should be 1"); // Form Withdraw
+        Assert.equal(balanceTokens, 2, "Token balance should be 2"); // Form Withdraw
 
         uint256 tokenId = digil.createToken(incrementalValue, activationThreshold, false, plane, data);
 
         balanceTokens = digil.balanceOf(address(this));
-        Assert.equal(balanceTokens, 2, "Token balance should be 2");
+        Assert.equal(balanceTokens, 3, "Token balance should be 3");
        
         (bool active, bool activating, bool discharging, bool tokenRestricted, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory tokenData) = digil.tokenData(tokenId);
         Assert.ok(active == false, "Token should be inactive initially");

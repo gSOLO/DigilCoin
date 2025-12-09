@@ -39,7 +39,7 @@ contract GammaTestSuite {
         uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "First withdrawl should be 100 coins");
+        Assert.equal(withdrawlCoins, 1 * 10 ** 18, "First withdrawl should be 1 coin");
         Assert.equal(withdrawlValue, 0, "First withdrawl should be 0 value");
 
         // Approve the Digil Token contract to spend the specified coinAmount.
@@ -230,8 +230,8 @@ contract GammaTestSuite {
             digil.chargeTokenAs{value: incrementalValue}(contributor, tokenId, coinMultiplier);
 
             (, , , distributed, , epoch) = digil.tokenContribution(tokenId, contributor);
-            Assert.equal(distributed, false, "Invalid new distributed");
-            Assert.equal(epoch, 1, "Invalid new epoch");
+            Assert.equal(distributed, false, "Invalid final distributed");
+            Assert.equal(epoch, 2, "Invalid final epoch");
         }
     }
 }
