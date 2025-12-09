@@ -49,7 +49,7 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 Used for **charge units**, feature fees (linking, metadata updates, opt-out), and **bonuses**. In the context of the system, these coins represent **Gnosis** or kinetic energy. They are the fuel required to power the ritual. Internally the contract normalizes coin math with a **coin multiplier**: `10**decimals`. Where we say “coins,” we mean base units at this precision.
 
 ### Digil Token | ERC-721
-**Symbol**: DDIGIL • **Address**: TBD
+**Symbol**: DIGILS • **Address**: TBD
 
 Implements core NFT logic plus the esoteric machinery of the system:
 - **Economics**: per-token `charge` (potential energy), `activeCharge` (kinetic energy), and ETH `value` (material sacrifice); per-address contribution ledgers; pending distributions.
