@@ -759,12 +759,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _notOnBlacklist(_msgSender());
         _notOnBlacklist(to);
 
-        // If the recipient is receiving their first token (or returning after being empty), reset their timer.
-        // We set the time to "15 minutes ago" (BONUS_INTERVAL).
-        // This grants them 1 Coin immediately, allowing them to start playing 
-        // without waiting, while preventing "infinite past" exploitation.
+        // Sybil Prevention Logic
+        //      1. If 'to' holds 0 tokens, they are either New or Returning.
+        //      2. If 'd.time' is 0, they are New. Give them 1 Welcome Coin to start.
+        //      3. Regardless, reset their timer to NOW. This prevents "Hot Potato"
+        //         attacks where users bounce tokens to claim history they didn't earn.
         if (to != address(0) && balanceOf(to) == 0) {
-            _distributions[to].time = block.timestamp;
+            Distribution storage d = _distributions[to];
+            if (d.time == 0) {
+                // First time ever holding a token: Welcome Gift
+                d.coins += _coinMultiplier;
+            }
+            // Always reset the timer for 0->1 transitions.
+            // This ensures strictly linear time accrual moving forward.
+            d.time = block.timestamp;
         }
 
         // Pre-transfer planar checks (skip on mint: prev == address(0))
