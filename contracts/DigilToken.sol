@@ -550,15 +550,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @dev    Computes the time-based bonus coins that would be awarded to `addr`
     ///         at `nowTs`, without mutating state. Mirrors the logic used in {withdraw}.
-    ///         - Requires the user to hold at least one Digil token or some Coins.
+    ///         - Requires the user to hold at least one Digil token.
     /// @param  addr The address whose bonus is being computed.
     /// @param  distribution The Distribution storage slot for this address.
     /// @param  nowTs The timestamp to use for the calculation (typically block.timestamp).
     /// @return bonus The number of bonus coin units that would be granted.
     function _pendingBonus(address addr, Distribution storage distribution, uint256 nowTs) internal view returns (uint256 bonus) {
-        // Must have at least one Digil token or some ERC20 Coins.
-        if (balanceOf(addr) == 0 && _coins.balanceOf(addr) == 0) {
-            // User must be economically involved in the system to earn time-based bonuses.
+        // User must hold at least one Digil token to earn.
+        // If they hold 0 tokens, they earn 0 bonus.
+        if (balanceOf(addr) == 0) {
             return 0;
         }
 
@@ -758,6 +758,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Ensure neither the sender nor the recipient are blacklisted.
         _notOnBlacklist(_msgSender());
         _notOnBlacklist(to);
+
+        // If the recipient is receiving their first token (or returning after being empty), reset their timer.
+        // We set the time to "15 minutes ago" (BONUS_INTERVAL).
+        // This grants them 1 Coin immediately, allowing them to start playing 
+        // without waiting, while preventing "infinite past" exploitation.
+        if (to != address(0) && balanceOf(to) == 0) {
+            _distributions[to].time = block.timestamp;
+        }
 
         // Pre-transfer planar checks (skip on mint: prev == address(0))
         address prev = _ownerOf(tokenId);
