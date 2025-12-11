@@ -2764,8 +2764,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Calculate Insurance Cost.
         // Bleed is 50% (ac / 2). We set insurance cost to 25% (ac / 4).
         // This makes paying the fee mathematically rational.
-        // We enforce a minimum floor of 100 * coinRate to prevent dust spam.
-        uint256 floor = 100 * _coinRate;
+        // We enforce a minimum floor of 10 * coinRate to prevent dust spam.
+        uint256 floor = 10 * _coinRate;
         uint256 calculatedCost = ac / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
         
         uint256 cost = calculatedCost > floor ? calculatedCost : floor;
