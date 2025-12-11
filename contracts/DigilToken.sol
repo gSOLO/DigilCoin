@@ -192,11 +192,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token that was updated
     event Update(uint256 indexed tokenId);
 
-    /// @notice Emitted when a token is in the process of being activated or discharged.
-    /// @dev    Check with tokenData to get an idea of its completion progress
-    /// @param  tokenId The ID of the token that was or is being activated
-    event Batch(uint256 indexed tokenId);
-
     /// @notice Emitted when a token is activatedd.
     /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being activated
@@ -2032,7 +2027,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Run the distribution phase based on mode (may require multiple calls).
         bool distributionComplete = _distribute(tokenId, !t.active);
         if (!distributionComplete) {
-            emit Batch(tokenId);
             return false;
         }
 
@@ -2175,7 +2169,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         bool distributionComplete = _distribute(tokenId, false);
         
         if (!distributionComplete) {
-            emit Batch(tokenId);
             return false;
         }
         
