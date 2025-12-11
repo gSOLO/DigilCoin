@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.30;
+pragma solidity ^0.8.31;
 
 import "./IDigilToken.sol";
 

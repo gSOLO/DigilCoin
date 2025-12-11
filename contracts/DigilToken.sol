@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.30;
+pragma solidity ^0.8.31;
 
 // Import OpenZeppelin contracts for standard ERC721 functionality, ownership, safe transfers, counters, ERC20 interfacing, and reentrancy protection.
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
@@ -114,7 +114,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     struct BuffState {
         uint40 expiresAt;       // Unix timestamp (in seconds) when the buff expires
         uint16 magnitude;       // Stores the total calculated power/cost
-        uint16 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated
+        uint16 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Reverberated
         uint8 efficiencyBonus;  // Temporary bonus on top of base efficiency (0–100)
         uint8 attunement;       // ID of the plane to mimic (1-18)
         uint8 amplification;    // Bonus multiplier percentage for incoming charge (e.g. 20 = 1.2x)
@@ -1958,8 +1958,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///             * `discharge = false` for active tokens (activation-style settlement
     ///               that can move charge into `activeCharge`).
     ///         - Contributions are processed in batches up to `_batchSize` per call.
-    ///         - On partial progress, a {Batch} event is emitted and the function
-    ///           returns `false`, indicating more calls are required.
+    ///         - On partial progress, the function returns false and leaves distributionIndex > 0,
+    ///           allowing subsequent calls to continue the operation.
     ///         - After the final batch:
     ///             * For discharge mode (`discharge = true`), contributors receive back
     ///               their recorded value/charge via the distribution system and any
@@ -2601,7 +2601,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - Optionally enables REVERBERATED, causing a fraction of outbound link charge
     ///           to be reflected back into this token as fresh activeCharge while the
     ///           buff is active.
-    ///         - Lasts for `duration` minutes (capped at 24 hours).
+    ///         - Lasts for `duration` minutes (capped at 7 days).
     ///         The cost is computed via {_buffCost} using:
     ///             cost ≈ magnitude * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR
     ///         where:
@@ -2618,7 +2618,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  attunement       Planar ID to mimic for affinity (1-17, or 0 for none; world (18) cannot be used).
     /// @param  amplification    Percentage multiplier applied to incoming charge (0-100, or 0 for none).
     /// @param  flags            Bitmask of requested flags (Anchored(2), Reverb(8), etc.). Internal flags (Stabilized/Primed) are ignored if passed here.
-    /// @param  duration         The buff duration in minutes (1–1440).
+    /// @param  duration         The buff duration in minutes (1–10080).
     function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint256 duration) external {
         _checkApproved(tokenId);
 
@@ -2669,6 +2669,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if ((requestedFlags & BUFF256) != 0)      magnitude += BUFF_COST * AFFINITY_BOOST;
             if ((requestedFlags & BUFF512) != 0)      magnitude += BUFF_COST * AFFINITY_BOOST;
             if ((requestedFlags & BUFF1024) != 0)     magnitude += BUFF_COST * AFFINITY_BOOST * AFFINITY_BOOST;
+
+            require(magnitude <= type(uint16).max, "DIGIL: Buff Too Large");
 
             // Save the magnitude
             t.buff.magnitude = uint16(magnitude);
