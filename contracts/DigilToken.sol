@@ -97,24 +97,27 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     // Buff Bitmasks
-    uint8 private constant STABILIZED       = 1;   // 00000001 (Anti-Bleed)
-    uint8 private constant ANCHORED         = 2;   // 00000010 (Retain Charge on Discharge)
-    uint8 private constant PRIMED           = 4;   // 00000100 (Half Activation Threshold)
-    uint8 private constant REVERBERATED     = 8;   // 00001000 (Retain Some Charge on Active Token)
-    uint8 private constant BUFF16           = 16;  // 00010000 ()
-    uint8 private constant BUFF32           = 32;  // 00100000 ()
-    uint8 private constant BUFF64           = 64;  // 01000000 ()
-    uint8 private constant BUFF128          = 128; // 10000000 ()    
-    uint8 private constant USER_FLAGS_MASK  = 250; // 11111010 (Mask for all user-settable flags (excludes STABILIZED and PRIMED))
+    uint16 private constant STABILIZED       = 1;       // Anti-Bleed
+    uint16 private constant ANCHORED         = 2;       // Retain Charge on Discharge
+    uint16 private constant PRIMED           = 4;       // Half Activation Threshold
+    uint16 private constant REVERBERATED     = 8;       // Retain Some Charge on Active Token
+    uint16 private constant BUFF16           = 16;      // 
+    uint16 private constant BUFF32           = 32;      // 
+    uint16 private constant BUFF64           = 64;      // 
+    uint16 private constant BUFF128          = 128;     // 
+    uint16 private constant BUFF256          = 256;     //
+    uint16 private constant BUFF512          = 512;     //
+    uint16 private constant BUFF1024         = 1024;    //
+    uint16 private constant USER_FLAGS_MASK  = 65530;   // Mask for all user-settable flags (excludes STABILIZED and PRIMED)
 
     /// @dev State for a temporary buff on a token
     struct BuffState {
-        uint64 expiresAt;       // Unix timestamp (in seconds) when the buff expires
+        uint40 expiresAt;       // Unix timestamp (in seconds) when the buff expires
+        uint16 magnitude;       // Stores the total calculated power/cost
+        uint16 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated
         uint8 efficiencyBonus;  // Temporary bonus on top of base efficiency (0–100)
         uint8 attunement;       // ID of the plane to mimic (1-18)
         uint8 amplification;    // Bonus multiplier percentage for incoming charge (e.g. 20 = 1.2x)
-        uint8 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated
-        uint16 magnitude;       // Stores the total calculated power/cost
     }
 
     struct Token {
@@ -1142,7 +1145,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return attunement Planar ID to mimic for affinity (1-18, or 0 for none).
     /// @return amplification Percentage multiplier applied to incoming charge (0-100, or 0 for none).
     /// @return flags Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated.
-    function tokenBuff(uint256 tokenId) external view returns (uint64 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags) {
+    function tokenBuff(uint256 tokenId) external view returns (uint64 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags) {
         _checkTokenExists(tokenId);
         BuffState storage b = _tokens[tokenId].buff;
         return (b.expiresAt, b.efficiencyBonus, b.attunement, b.amplification, b.flags);
@@ -2616,7 +2619,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  amplification    Percentage multiplier applied to incoming charge (0-100, or 0 for none).
     /// @param  flags            Bitmask of requested flags (Anchored(2), Reverb(8), etc.). Internal flags (Stabilized/Primed) are ignored if passed here.
     /// @param  duration         The buff duration in minutes (1–1440).
-    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint256 duration) external {
+    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint256 duration) external {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
@@ -2624,7 +2627,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(t.active, "DIGIL: Token Not Active");
 
         // Sanitize input: Only allow user flags (remove Stabilized/Primed if user tried to sneak them in)
-        uint8 requestedFlags = flags & USER_FLAGS_MASK;
+        uint16 requestedFlags = flags & USER_FLAGS_MASK;
 
         require(
             (efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) ||
@@ -2659,10 +2662,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // Check each allowed user flag. If set, increase magnitude by BUFF_COST.
             if ((requestedFlags & ANCHORED) != 0)     magnitude += BUFF_COST;
             if ((requestedFlags & REVERBERATED) != 0) magnitude += BUFF_COST;
-            if ((requestedFlags & BUFF16) != 0)     magnitude += BUFF_COST;
-            if ((requestedFlags & BUFF32) != 0) magnitude += BUFF_COST;
-            if ((requestedFlags & BUFF64) != 0)     magnitude += BUFF_COST;
-            if ((requestedFlags & BUFF128) != 0)    magnitude += BUFF_COST;
+            if ((requestedFlags & BUFF16) != 0)       magnitude += BUFF_COST / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
+            if ((requestedFlags & BUFF32) != 0)       magnitude += BUFF_COST / AFFINITY_REDUCTION;
+            if ((requestedFlags & BUFF64) != 0)       magnitude += BUFF_COST;
+            if ((requestedFlags & BUFF128) != 0)      magnitude += BUFF_COST;
+            if ((requestedFlags & BUFF256) != 0)      magnitude += BUFF_COST * AFFINITY_BOOST;
+            if ((requestedFlags & BUFF512) != 0)      magnitude += BUFF_COST * AFFINITY_BOOST;
+            if ((requestedFlags & BUFF1024) != 0)     magnitude += BUFF_COST * AFFINITY_BOOST * AFFINITY_BOOST;
 
             // Save the magnitude
             t.buff.magnitude = uint16(magnitude);
@@ -2679,13 +2685,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Compute expiry timestamp in seconds
         uint256 expiry = block.timestamp + (duration * 1 minutes);
-        t.buff.expiresAt = uint64(expiry);
+        t.buff.expiresAt = uint40(expiry);
         t.buff.efficiencyBonus = efficiencyBonus;
         t.buff.amplification = amplification;
         t.buff.attunement = attunement;
 
         // Start from existing flags and preserve STABILIZED + PRIMED bits.
-        uint8 preservedFlags = t.buff.flags & (STABILIZED | PRIMED);
+        uint16 preservedFlags = t.buff.flags & (STABILIZED | PRIMED);
         t.buff.flags = preservedFlags | requestedFlags;
 
         // Update last activity
