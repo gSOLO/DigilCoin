@@ -96,7 +96,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     function unlinkToken(uint256 tokenId, uint256 linkId) external;
 
     // Buff Token
-    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, bool anchor, bool reverb, uint256 duration) external;
+    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint8 flags, uint256 duration) external;
 
     // Stabilize Token
     function stabilizeToken(uint256 tokenId) external;
