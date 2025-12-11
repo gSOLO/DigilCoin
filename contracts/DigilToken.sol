@@ -1145,7 +1145,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return attunement Planar ID to mimic for affinity (1-18, or 0 for none).
     /// @return amplification Percentage multiplier applied to incoming charge (0-100, or 0 for none).
     /// @return flags Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated.
-    function tokenBuff(uint256 tokenId) external view returns (uint64 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags) {
+    function tokenBuff(uint256 tokenId) external view returns (uint40 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags) {
         _checkTokenExists(tokenId);
         BuffState storage b = _tokens[tokenId].buff;
         return (b.expiresAt, b.efficiencyBonus, b.attunement, b.amplification, b.flags);
