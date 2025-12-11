@@ -1538,13 +1538,26 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return total / AFFINITY_REDUCTION;
     }
 
-    /// @dev    Internal function to charge an active token.
-    /// @param  contributor The address making the charge.
-    /// @param  tokenId The token ID to charge.
-    /// @param  coins The number of coin units used.
-    /// @param  activeCoins Additional coin units applied as active charge.
-    /// @param  value The native Ether value (in wei) sent.
-    /// @param  link A flag indicating if the charge is coming via a link.
+    /// @dev Internal function to charge an active token.
+    ///      Propagation Behavior:
+    ///      - When a user directly charges an active token (link == false), any sent charge is distributed
+    ///        across the token's outgoing links (if any) according to each link's effective efficiency
+    ///        (base + temporary buff bonus + affinity bonus).
+    ///      - Charge reaching a linked token is always treated as "linked" charge (link == true).
+    ///      - Linked charge is added directly to the destination token's `activeCharge` (after applying
+    ///        any amplification buff on the destination) and does **not** propagate further downstream.
+    ///      - This design intentionally limits propagation to **one level deep** from the original charged
+    ///        token, preventing unbounded recursion, deep call stacks, or issues with cycles in the link
+    ///        graph while still enabling meaningful network effects.
+    ///      - The `if (linksLength == 0 || link)` guard explicitly ensures that only direct user-initiated
+    ///        charges can trigger distribution to links; propagated charges always terminate at the first hop.
+    /// @param contributor The address making the charge.
+    /// @param tokenId The token ID to charge.
+    /// @param coins The number of coin units used.
+    /// @param activeCoins Additional coin units applied as active charge (e.g., from affinity bonuses).
+    /// @param value The native Ether value (in wei) sent.
+    /// @param link A flag indicating if the charge is coming via a link
+    ///             (true = one-level propagation already occurred; no further distribution).
     function _chargeActiveToken(address contributor, uint256 tokenId, uint256 coins, uint256 activeCoins, uint256 value, bool link) internal {
         Token storage t = _tokens[tokenId];
 
