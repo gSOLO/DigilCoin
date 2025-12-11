@@ -55,7 +55,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Buff configuration
     uint8  private constant MAX_BUFF_BONUS = 100;               // Maximum temporary bonus
-    uint16 private constant MAX_BUFF_DURATION_MIN = 24 * 60;    // Maximum duration of buffs (24 hours)
+    uint16 private constant MAX_BUFF_DURATION_MIN = 7 * 24 * 60;// Maximum duration of buffs (7 days)
     uint256 private constant LINK_BUFF_COST_FACTOR = 24 * 60;   // The cost per bonus-point-hour per link
     uint256 private constant BUFF_COST = 50;                    // The cost of each buff flag
 
