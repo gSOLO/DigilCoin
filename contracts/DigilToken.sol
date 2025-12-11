@@ -114,6 +114,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint8 attunement;       // ID of the plane to mimic (1-18)
         uint8 amplification;    // Bonus multiplier percentage for incoming charge (e.g. 20 = 1.2x)
         uint8 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated
+        uint16 magnitude;       // Stores the total calculated power/cost
     }
 
     struct Token {
@@ -2423,29 +2424,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             remainingMinutes = 1;
         }
         
-        // Calculate Magnitude based on efficiency + optional attunement + optional amplification
-        uint256 magnitude = buff.efficiencyBonus + buff.amplification;
-        if (buff.attunement > 0) {
-            // Attunement acts like an extra BUFF_COST chunk of magnitude.
-            magnitude += BUFF_COST;
-        }
-        // Check flags from storage (only ANCHORED/REVERBERATED affects buff cost here).
-        uint8 flags = buff.flags;
-        if ((flags & ANCHORED) != 0) {
-            // Anchoring acts like an extra BUFF_COST chunk of magnitude.
-            magnitude += BUFF_COST;
-        }
-        if ((flags & REVERBERATED) != 0) {
-            magnitude += BUFF_COST;
-        }
+        // Retrieve pre-calculated magnitude
+        uint256 magnitude = uint256(buff.magnitude);
 
         uint256 cost = _buffCost(magnitude, remainingMinutes, 1);
-        if (cost == 0) {
-            return;
+        if (cost > 0) {
+            if (t.activeCharge < cost) revert InsufficientActiveCharge(cost);
+            t.activeCharge -= cost;
         }
-
-        if (t.activeCharge < cost) revert InsufficientActiveCharge(cost);
-        t.activeCharge -= cost;
     }
 
     /// @dev    Internal function to calculate the affinity bonus when linking tokens.
@@ -2677,6 +2663,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if ((requestedFlags & BUFF32) != 0) magnitude += BUFF_COST;
             if ((requestedFlags & BUFF64) != 0)     magnitude += BUFF_COST;
             if ((requestedFlags & BUFF128) != 0)    magnitude += BUFF_COST;
+
+            // Save the magnitude
+            t.buff.magnitude = uint16(magnitude);
 
             // Calculate link count (min 1)
             uint256 linkCount = t.links.length;
