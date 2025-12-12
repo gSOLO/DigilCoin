@@ -878,8 +878,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///             * `value` is credited to `_distributions[caller].value` using
     ///               {_addValue}, to be withdrawn later via {withdraw}.
     ///         - The per-contributor record for the current epoch is cleared:
-    ///             * `c.value` and `c.charge` are zeroed,
-    ///             * `c.exists` is set to false,
+    ///             * `c.value` and `c.charge` are zeroed
     ///             * `c.distributed` is set to true to prevent double reclamation.
     ///
     ///         Scope:
@@ -1220,7 +1219,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///  3. Vaulted and recallable
     ///     - `contractTokenAddress != address(0)`
-    ///     - `externalTokenId != 0`
     ///     - `_contractTokenExists[contractTokenAddress][externalTokenId] == true`
     ///       ⇒ `vaulted == true`
     ///     - `recallable == true`
@@ -1232,7 +1230,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///  4. Recalled (historical-only)
     ///     - `contractTokenAddress != address(0)`
-    ///     - `externalTokenId != 0`
     ///     - `_contractTokenExists[contractTokenAddress][externalTokenId] == false`
     ///       ⇒ `vaulted == false`
     ///     - `recallable == false`
@@ -1427,17 +1424,47 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }        
     }
 
-    /// @notice Updates an existing Token. Message sender must be approved for this Token.
-    ///         In order for the incremental value or activation threshold to be updated, the token must have 0 charge.
-    ///         In order for the token data or URI to be updated a value must be sent of at least the token's incremental value plus the minimum incremental value.
-    ///         In addition, for a data or URI update, a transfer of 1000 coins per coin rate for each.
-    /// @dev    Data for the Planar Tokens must have a length of at least 4 in order to preserve the affinity bonus functionality.
-    ///         Planar tokens must also maintain an Incrmental Value and Activation Threshold of 0.
-    /// @param  tokenId The ID of the Token to Update
-    /// @param  incrementalValue The Value (in wei), required to be sent with each Coin used to Charge the Token. Can be 0 or a greater than the Minimum Incremental Value
-    /// @param  activationThreshold The number of Coins required for the Token to be Activated
-    /// @param  data The updated Data for the Token (only updated if length > 0)
-    /// @param  uri The updated URI for the Token (only updated if length > 0) 
+    /// @notice Updates an existing Token. Caller must be approved for this Token.
+    /// @dev    Batch safety:
+    ///         - Reverts if a batch activation/discharge distribution is in progress
+    ///           (`distributionIndex != 0`).
+    ///
+    ///         Parameter mutability:
+    ///         - If the token has any inactive `charge > 0`, then `incrementalValue` and
+    ///           `activationThreshold` are immutable and must match the stored values.
+    ///         - For planar tokens (IDs 0..PLANAR_TRANSFER_MAX_ID), `incrementalValue` and
+    ///           `activationThreshold` must remain 0.
+    ///
+    ///         Incremental value rules:
+    ///         - `incrementalValue` may be 0 (meaning “use global minimum where applicable”),
+    ///           otherwise it must be >= `_incrementalValue`.
+    ///
+    ///         URI / Data update fees:
+    ///         - Updating `uri` (non-empty string) charges `1000 * _coinRate` coins.
+    ///         - Updating `data` (non-empty bytes) charges `1000 * _coinRate` coins.
+    ///           If both are updated in the same call, both fees are charged.
+    ///         - For planar tokens (IDs 0..PLANAR_TRANSFER_MAX_ID), `data` must have length
+    ///           >= 4 to preserve planar affinity encoding.
+    ///
+    ///         ETH requirement:
+    ///         - If neither `uri` nor `data` is updated (both empty), no minimum ETH is required.
+    ///         - If either `uri` or `data` is updated, the call must include at least:
+    ///               minimumValue = max(t.incrementalValue, incrementalValue, _incrementalValue)
+    ///           Any ETH sent (including excess) is routed into the protocol value pool via `_addValue`
+    ///           and is not refunded.
+    ///
+    ///         State updates:
+    ///         - Updates `t.incrementalValue` and `t.activationThreshold` after validation.
+    ///         - Overwrites `t.uri` only if `uri` is non-empty.
+    ///         - Overwrites `t.data` only if `data` is non-empty.
+    ///         - Updates `t.lastActivity` on success and emits {Update}.
+    ///
+    /// @param  tokenId The ID of the Token to update.
+    /// @param  incrementalValue New incremental value (wei) required per `_coinMultiplier` of charge.
+    ///                          Must be 0 or >= `_incrementalValue` (and must be 0 for planar tokens).
+    /// @param  activationThreshold New activation threshold in coin units (must be 0 for planar tokens).
+    /// @param  data New token data (applied only if `data.length > 0`).
+    /// @param  uri New token URI (applied only if `bytes(uri).length > 0`).
     function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable nonReentrant {
         _checkApproved(tokenId);
         
@@ -1480,7 +1507,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Calculate the minimum required Ether value based on whether data or URI is updated.
-        uint256 minimumValue = (overwriteData || overwriteUri) ? (t.incrementalValue + _incrementalValue) : 0;
+        uint256 minimumValue = 0;
+        if (overwriteData || overwriteUri) {
+            // base = max(old, new, _incrementalValue)
+            minimumValue = t.incrementalValue;
+            if (incrementalValue > minimumValue) minimumValue = incrementalValue;
+            if (_incrementalValue > minimumValue) minimumValue = _incrementalValue;
+        }
         if (msg.value < minimumValue) revert InsufficientFunds(minimumValue);
 
         // Add any sent Ether to the contract's distribution (not directly to this token).
@@ -2110,10 +2143,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // If a contract token is attached, it should no longer be recallable after a full discharge.
         if (t.contractTokenAddress != address(0)) {
-            ContractToken storage contractToken = _contractTokens[t.contractTokenAddress][tokenId];
-            if (contractToken.tokenId != 0) {
-                contractToken.recallable = false;
-            }
+            ContractToken storage ct = _contractTokens[t.contractTokenAddress][tokenId];
+            // Always clear recallable if we have an attached contract address (regardless of external tokenId)
+            ct.recallable = false;
         }
 
         // Clear any buffs
