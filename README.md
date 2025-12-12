@@ -78,7 +78,7 @@ In short, it’s both the **scoreboard** and the **settlement engine** for your 
 
 ## Planar Tokens & Base URI
 
-At deployment the contract mints **21 planar tokens** (IDs `0..20`) to the admin. These embed compact **affinity metadata** (bytes) used by the link bonus algorithm. These are the **Archetypes**—the fundamental forces of the Digil reality to which your specific intention aligns.
+At deployment the contract mints **21 planar tokens** (IDs `0..20`) to the admin. These embed compact **affinity metadata** (bytes) used by the link bonus algorithm. These are the **Archetypes**—the fundamental forces of the Digil reality to which your specific intention aligns. Planar tokens accumulate activeCharge and value from links, and participate fully in link propagation and redistribution. Planar links are counted toward `MAX_LINKS` and early-link discount logic.
 
 - Core: **Void (1), Karma (2), Kaos (3)**
 - Elemental: **Fire (4), Air (5), Earth (6), Water (7)**
@@ -121,7 +121,7 @@ with checks:
 
 **Link buff configuration**
 - `MAX_BUFF_BONUS = 100` — cap on temporary bonus applied to outgoing links (percentage points).
-- `MAX_BUFF_DURATION_MIN = 24 × 60` — maximum buff duration (24 hours, in minutes).
+- `MAX_BUFF_DURATION_MIN = 7 × 24 × 60` — maximum buff duration (7 days, in minutes).
 - `LINK_BUFF_COST_FACTOR = 24 × 60` — calibration constant for buff pricing in terms of `activeCharge`.
 - `BUFF_COST = 50` — Magnitude cost added for special flags (Attunement, Anchored, Primed, Reverb).
 
@@ -822,7 +822,7 @@ Blacklisted addresses:
   - Ethereal (17–18): **100× coin rate**
 - **Metadata updates** via `updateToken`:
   - Can change `uri` and/or `data` if the caller:
-    - Sends `ETH ≥ (token.incrementalValue + globalMin)`, and
+    - Sends `ETH ≥ max(token.incrementalValue, incrementalValue, globalMin)`, and
     - Pays `1000 × coinRate` per field updated (one fee for URI, one for `data`).
   - If a token has any `charge > 0`, its `incrementalValue` and `activationThreshold` cannot be changed.
   - Planar tokens must maintain:
@@ -931,7 +931,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
     - To update `data` and/or `uri`, must send at least:  
 
       ```text
-      msg.value ≥ (token.incrementalValue + globalMin)
+      msg.value ≥ max(token.incrementalValue, incrementalValue, globalMin)
       ```
 
       which is credited to the contract’s distribution bucket.
@@ -957,9 +957,9 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
   - Coins:
     - Pays a coin fee based on `efficiency` and **post-link** link count.
     - Early-link discounts:
-      - 1st link on a token: **25%** of the base cost.
-      - 2nd link: pay **50%** of base cost.
-      - 3rd+ new links: pay **100%** of base cost.
+      - 1st link: pay **50%** of the base cost.
+      - 2nd link: pay **50%** of the base cost.
+      - 3rd+ new links: pay **100%** of the base cost.
     - Upgrading efficiency on an **existing link** always pays full base cost (no discount).
 
 **Buffing**
@@ -1249,7 +1249,7 @@ updateToken(
   data                  = "0x1234...",
   uri                   = "ipfs://new-metadata"
 );
-// with msg.value >= (tokenA.incrementalValue + globalMin)
+// with msg.value >= max(token.incrementalValue, incrementalValue, globalMin)
 // and coins transferred = 1000×coinRate for URI + 1000×coinRate for data
 ```
 
