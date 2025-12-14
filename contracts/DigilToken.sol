@@ -108,7 +108,69 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint16 private constant KAOTIC           = 256;     // Tier 4 Buff
     uint16 private constant AETHERIAL        = 512;     // Tier 5 Buff
     uint16 private constant CELESTIAL        = 1024;    // Tier 6 Buff
-    uint16 private constant USER_FLAGS_MASK  = 65530;   // Mask for all user-settable flags (excludes STABILIZED and PRIMED)
+
+    /// @dev Bit position (0-based) where the 4-bit cosmetic style nibble begins.
+    ///      Example with COSMETIC_SHIFT = 12:
+    ///        - The style id occupies bits 12,13,14,15 inside a uint16.
+    ///        - These four bits form a number from 0..15 (a "nibble").
+    ///
+    ///      Why "SHIFT"?
+    ///        - To **extract** the nibble, we mask the bits and then shift them
+    ///          down to the least-significant position:
+    ///              (flags & COSMETIC_MASK) >> COSMETIC_SHIFT
+    ///        - Shifting right by COSMETIC_SHIFT moves bit 12 -> bit 0, bit 13 -> bit 1, etc.
+    ///          turning the nibble into a small integer (0..15) that off-chain code
+    ///          can interpret as a cosmetic theme/preset id.
+    uint16 private constant COSMETIC_SHIFT = 12;
+
+    /// @dev Mask covering exactly the 4 bits used for the cosmetic style id.
+    ///      With COSMETIC_SHIFT = 12, this is bits 12..15, i.e. 0xF000.
+    ///
+    ///      Layout (uint16):
+    ///        [15 14 13 12 | 11 ... 0]
+    ///         ^  ^  ^  ^
+    ///         |  |  |  |__ lowest bit of cosmetic id (bit 12)
+    ///         |  |  |_____ bit 13
+    ///         |  |________ bit 14
+    ///         |___________ highest bit of cosmetic id (bit 15)
+    ///
+    ///      When these bits are interpreted together, they represent a number 0..15.
+    uint16 private constant COSMETIC_MASK = uint16(0xF) << COSMETIC_SHIFT;
+
+    /// @dev Mask for all **user-settable** bits inside `BuffState.flags`.
+    ///      This is applied to user input in {buffToken} to prevent callers from
+    ///      setting internal / protocol-controlled flags directly.
+    ///
+    ///      Design:
+    ///      - `flags` is a `uint16` bitfield.
+    ///      - Some bits are reserved for internal lifecycle mechanics (set/cleared
+    ///        only by dedicated functions), while the rest are available for users
+    ///        to request via {buffToken}.
+    ///      - This mask includes:
+    ///          * All “gameplay / tier / behavior” flags that users may request, AND
+    ///          * The packed cosmetic nibble (bits 12–15), if you’re using the
+    ///            COS_SHIFT/COSMETIC_MASK pattern.
+    ///      - This mask excludes:
+    ///          * `STABILIZED` (bit 0): only set by {stabilizeToken} and consumed by
+    ///            {_applyActiveChargeBleed} to prevent bleed once.
+    ///          * `PRIMED` (bit 2): only set by {primeToken} and consumed by
+    ///            {activateToken} to temporarily reduce activation threshold.
+    ///
+    ///      Usage:
+    ///      - In {buffToken}, sanitize user-supplied `flags` like:
+    ///            `uint16 requestedFlags = flags & USER_FLAGS_MASK;`
+    ///        This preserves all user-allowed bits (including cosmetics) and strips
+    ///        internal-only bits.
+    ///      - When writing back to storage, preserve internal bits separately:
+    ///            `uint16 preserved = t.buff.flags & (STABILIZED | PRIMED);`
+    ///            `t.buff.flags = preserved | requestedFlags;`
+    ///
+    ///      Constant value:
+    ///      - If the only internal-only bits are `STABILIZED` (1) and `PRIMED` (4),
+    ///        then:
+    ///            USER_FLAGS_MASK = 0xFFFA (65530)
+    ///        i.e., all bits set except bit0 and bit2.
+    uint16 private constant USER_FLAGS_MASK  = 65530;
 
     /// @dev State for a temporary buff on a token
     struct BuffState {
@@ -2683,7 +2745,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  efficiencyBonus  The temporary bonus (0–100) added to each link's base efficiency.
     /// @param  attunement       Planar ID to mimic for affinity (1-17, or 0 for none; world (18) cannot be used).
     /// @param  amplification    Percentage multiplier applied to incoming charge (0-100, or 0 for none).
-    /// @param  flags            Bitmask of requested flags (Anchored(2), Reverb(8), etc.). Internal flags (Stabilized/Primed) are ignored if passed here.
+    /// @param flags             Bitmask of requested flags. Includes:
+    ///                           - Functional flags (anchored/reverberated/etc.)
+    ///                           - A packed 4-bit cosmetic style id stored in bits [COSMETIC_SHIFT..COSMETIC_SHIFT+3].
+    ///                             styleId = 0 means “no cosmetic style”; 1..15 are off-chain cosmetic presets.
     /// @param  duration         The buff duration in minutes (1–10080).
     function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint256 duration) external {
         _checkApproved(tokenId);
@@ -2729,13 +2794,21 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // Check each allowed user flag. If set, increase magnitude by BUFF_COST.
             if ((requestedFlags & ANCHORED) != 0)      magnitude += BUFF_COST;
             if ((requestedFlags & REVERBERATED) != 0)  magnitude += BUFF_COST;
-            if ((requestedFlags & ELEMENTAL) != 0)     magnitude += BUFF_COST / AFFINITY_REDUCTION / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
-            if ((requestedFlags & PARAELEMENTAL) != 0) magnitude += BUFF_COST / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
-            if ((requestedFlags & VOIDIC) != 0)        magnitude += BUFF_COST / AFFINITY_REDUCTION;
+            if ((requestedFlags & ELEMENTAL) != 0)     magnitude += BUFF_COST / 8;
+            if ((requestedFlags & PARAELEMENTAL) != 0) magnitude += BUFF_COST / 4;
+            if ((requestedFlags & VOIDIC) != 0)        magnitude += BUFF_COST / 2;
             if ((requestedFlags & KARMIC) != 0)        magnitude += BUFF_COST;
             if ((requestedFlags & KAOTIC) != 0)        magnitude += BUFF_COST;
-            if ((requestedFlags & AETHERIAL) != 0)     magnitude += BUFF_COST * AFFINITY_BOOST;
-            if ((requestedFlags & CELESTIAL) != 0)     magnitude += BUFF_COST * AFFINITY_BOOST * AFFINITY_BOOST;
+            if ((requestedFlags & AETHERIAL) != 0)     magnitude += BUFF_COST * 2;
+            if ((requestedFlags & CELESTIAL) != 0)     magnitude += BUFF_COST * 4;
+            // --- Cosmetic style cost (packed nibble) ---
+            // If styleId != 0, the caller selected a cosmetic theme/preset.
+            // This adds a small flat magnitude so cosmetic tagging is not free,
+            // while avoiding per-flag branching or per-bit pricing.
+            uint8 styleId = uint8((flags & COSMETIC_MASK) >> COSMETIC_SHIFT);
+            if (styleId != 0) {
+                magnitude += BUFF_COST / 16;
+            }
 
             // Save the magnitude
             t.buff.magnitude = uint16(magnitude);
