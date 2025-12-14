@@ -15,9 +15,10 @@ interface IDigilToken is IERC721, IERC721Receiver {
     event Whitelist(address indexed account, uint256 indexed tokenId);
     event Restrict(uint256 indexed tokenId);
     event Update(uint256 indexed tokenId);
+    event Batch(uint256 indexed tokenId);
     event Activate(uint256 indexed tokenId);
     event Deactivate(uint256 indexed tokenId);
-    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, uint256 value, address sender);
+    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, uint256 value);
     event ActiveCharge(uint256 indexed tokenId, uint256 coins);
     event Discharge(uint256 indexed tokenId);
     event Link(uint256 indexed tokenId, uint256 indexed linkId, uint8 efficiency, uint256 affinityBonus);
@@ -32,15 +33,13 @@ interface IDigilToken is IERC721, IERC721Receiver {
     // Errors
     error InsufficientFunds(uint256 required);
     error CoinTransferFailed(uint256 coins);
+    error InsufficientActiveCharge(uint256 required);
 
     // Public and External Functions
 
     // Configuration
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external;
     function configuration() external view returns (uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize);
-
-    // Pending Distribution
-    function pendingDistribution(address addr) external view returns(uint256 coins, uint256 value, uint256 time);
 
     // Withdraw
     function withdraw() external payable returns (uint256 coins, uint256 value);

@@ -196,6 +196,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token that was updated
     event Update(uint256 indexed tokenId);
 
+    /// @notice Emitted when a token is in the process of being activated or discharged.
+    /// @dev    Check with tokenData to get an idea of its completion progress
+    /// @param  tokenId The ID of the token that was or is being activated
+    event Batch(uint256 indexed tokenId);
+
     /// @notice Emitted when a token is activated.
     /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being activated
@@ -210,8 +215,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token being charged
     /// @param  coins The number of coins the token was charged with
     /// @param  value The value attributed to this charge
-    /// @param  sender The address that charged the token
-    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, uint256 value, address sender);
+    event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, uint256 value);
 
     /// @notice Emitted when an active token is charged.
     /// @param  tokenId The ID of the token being charged
@@ -246,12 +250,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Emitted when a token is primed to reduce activation threshold.
     /// @param  tokenId The ID of the token being primed.
     event Prime(uint256 indexed tokenId);
-
-    /// @notice Emitted when pending coin and value distributions are created for an address.
-    /// @param  addr The address this pending distribution is for
-    /// @param  coins The coins added to the pending distributions for this address  
-    /// @param  value The value added to the pending distributions for this address
-    event PendingDistribution(address indexed addr, uint256 coins, uint256 value);
 
     /// @notice Emitted when value is reclaimed from a token.
     /// @dev    This event is specifically tied to the reclaiming of a contribution after a period of inactivity. 
@@ -652,7 +650,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return (coins, value);
     }
 
-
     // Add Value and Distributions
 
     /// @dev    Internal helper that adds native value to the contract’s own pending distribution bucket.
@@ -670,8 +667,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             Distribution storage distribution = _distributions[addr];
             distribution.value += value;
             distribution.coins += coins;
-
-            emit PendingDistribution(addr, coins, value);
         }
     }
 
@@ -1791,7 +1786,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             c.charge += coins;
             t.charge += coins;
             c.value += minimumValue;
-            emit Charge(contributor, tokenId, coins, minimumValue, _msgSender());
+            emit Charge(contributor, tokenId, coins, minimumValue);
 
             // minimumValue -> affects c.value and reclaimContribution
             // surplus -> goes to t.value and is logged as Contribute
@@ -2090,6 +2085,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Run the distribution phase based on mode (may require multiple calls).
         bool distributionComplete = _distribute(tokenId, !t.active);
         if (!distributionComplete) {
+            emit Batch(tokenId);
             return false;
         }
 
@@ -2234,6 +2230,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         bool distributionComplete = _distribute(tokenId, false);
         
         if (!distributionComplete) {
+            emit Batch(tokenId);
             return false;
         }
         
