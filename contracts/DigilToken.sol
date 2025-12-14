@@ -170,7 +170,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///        then:
     ///            USER_FLAGS_MASK = 0xFFFA (65530)
     ///        i.e., all bits set except bit0 and bit2.
-    uint16 private constant USER_FLAGS_MASK  = 65530;
+    uint16 private constant USER_FLAGS_MASK  = uint16(type(uint16).max) & ~(STABILIZED | PRIMED);
 
     /// @dev State for a temporary buff on a token
     struct BuffState {
@@ -2745,7 +2745,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  efficiencyBonus  The temporary bonus (0–100) added to each link's base efficiency.
     /// @param  attunement       Planar ID to mimic for affinity (1-17, or 0 for none; world (18) cannot be used).
     /// @param  amplification    Percentage multiplier applied to incoming charge (0-100, or 0 for none).
-    /// @param flags             Bitmask of requested flags. Includes:
+    /// @param  flags            Bitmask of requested flags. Includes:
     ///                           - Functional flags (anchored/reverberated/etc.)
     ///                           - A packed 4-bit cosmetic style id stored in bits [COSMETIC_SHIFT..COSMETIC_SHIFT+3].
     ///                             styleId = 0 means “no cosmetic style”; 1..15 are off-chain cosmetic presets.
