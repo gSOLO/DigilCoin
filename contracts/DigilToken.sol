@@ -196,7 +196,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token that was updated
     event Update(uint256 indexed tokenId);
 
-    /// @notice Emitted when a token is activatedd.
+    /// @notice Emitted when a token is activated.
     /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being activated
     event Activate(uint256 indexed tokenId);
@@ -209,7 +209,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  addr The address attributed with charging the token
     /// @param  tokenId The ID of the token being charged
     /// @param  coins The number of coins the token was charged with
-    /// @param  value THe value attributed to this charge
+    /// @param  value The value attributed to this charge
     /// @param  sender The address that charged the token
     event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, uint256 value, address sender);
 
@@ -287,7 +287,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The number of coins required for the transaction that failed to transfer
     error CoinTransferFailed(uint256 coins);
 
-    /// @notice Error thrown when a token's active coin count is insufficienmt to execute an operation.
+    /// @notice Error thrown when a token's active coin count is insufficient to execute an operation.
     /// @param  required The activeCharge required for the transaction
     error InsufficientActiveCharge(uint256 required);
 
@@ -474,7 +474,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external onlyOwner {
         // Validate configuration parameters.
         require(
-            coins > MIN_COIN_RATE &&
+            coins >= MIN_COIN_RATE &&
             coins <= MAX_COIN_RATE &&
             incrementalValue > VALUE_MULTIPLIER &&
             incrementalValue <= MAX_INCREMENTAL_VALUE &&
@@ -1200,14 +1200,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///  1. Never vaulted
     ///     - `contractTokenAddress == address(0)`
-    ///     - `externalTokenId == 0`
     ///     - `recallable == false`
     ///     - `vaulted == false`
     ///     Interpretation: this Digil has never wrapped an external contract token.
     ///
     ///  2. Vaulted, not yet recallable
     ///     - `contractTokenAddress != address(0)`
-    ///     - `externalTokenId != 0`
     ///     - `_contractTokenExists[contractTokenAddress][externalTokenId] == true`
     ///       ⇒ `vaulted == true`
     ///     - `recallable == false`
@@ -2670,6 +2668,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
 
         require(t.active, "DIGIL: Token Not Active");
+        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
         // Sanitize input: Only allow user flags (remove Stabilized/Primed if user tried to sneak them in)
         uint16 requestedFlags = flags & USER_FLAGS_MASK;
@@ -2714,8 +2713,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if ((requestedFlags & KAOTIC) != 0)        magnitude += BUFF_COST;
             if ((requestedFlags & AETHERIAL) != 0)     magnitude += BUFF_COST * AFFINITY_BOOST;
             if ((requestedFlags & CELESTIAL) != 0)     magnitude += BUFF_COST * AFFINITY_BOOST * AFFINITY_BOOST;
-
-            require(magnitude <= type(uint16).max, "DIGIL: Buff Too Large");
 
             // Save the magnitude
             t.buff.magnitude = uint16(magnitude);
