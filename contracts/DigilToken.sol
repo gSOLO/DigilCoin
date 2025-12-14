@@ -1585,11 +1585,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param contributor The address making the charge.
     /// @param tokenId The token ID to charge.
     /// @param coins The number of coin units used.
-    /// @param activeCoins Additional coin units applied as active charge (e.g., from affinity bonuses).
+    /// @param bonusCoins Additional coin units applied as active charge (e.g., from affinity bonuses).
     /// @param value The native Ether value (in wei) sent.
     /// @param link A flag indicating if the charge is coming via a link
     ///             (true = one-level propagation already occurred; no further distribution).
-    function _chargeActiveToken(address contributor, uint256 tokenId, uint256 coins, uint256 activeCoins, uint256 value, bool link) internal {
+    function _chargeActiveToken(address contributor, uint256 tokenId, uint256 coins, uint256 bonusCoins, uint256 value, bool link) internal {
         Token storage t = _tokens[tokenId];
 
         uint256[] storage links = t.links;
@@ -1598,10 +1598,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // If there are no links or the charge is directly linked, add the coins to the active charge.
         if (linksLength == 0 || link) {
             
-            uint256 totalIncoming = coins + activeCoins;
+            uint256 totalIncoming = coins + bonusCoins;
             
             // Check for Amplifier Buff
-            // activeCoins here includes Affinity Bonuses from upstream
+            // bonusCoins here includes Affinity Bonuses from upstream
             BuffState storage buff = t.buff;
             if (buff.amplification > 0 && block.timestamp < buff.expiresAt) {
                 // Calculate bonus: (Total * Multiplier) / 100
@@ -1621,8 +1621,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 // Calculate linkedCoins based on base efficiency applied to the coins split evenly amongst the links
                 // Effective base efficiency (including any temporary buff)
                 uint256 linkedCoins = (coins * _effectiveBaseEfficiency(linkId, t)) / linksLength / 100;
-                // Calculate bonusCoins based on affinity bonus applied to the full coins
-                uint256 bonusCoins = (coins * t.linkEfficiency[linkId].affinityBonus) / 100;
+                // Calculate bonus coins based on affinity bonus applied to the full coins
+                uint256 linkedBonusCoins = (coins * t.linkEfficiency[linkId].affinityBonus) / 100;
 
                 // If nothing at all is going to this link, skip it.
                 if (linkedCoins == 0 && bonusCoins == 0 && linkedValue == 0) {
@@ -1630,9 +1630,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 }
 
                 // Attempt to charge the linked token.
-                bool charged = _ownerOf(linkId) != address(0) && _chargeToken(contributor, linkId, linkedCoins, bonusCoins, linkedValue, true);
+                bool charged = _ownerOf(linkId) != address(0) && _chargeToken(contributor, linkId, linkedCoins, linkedBonusCoins, linkedValue, true);
                 if (charged) {
-                    value -= linkedValue; // Subtract the successfully distributed value
+                    unchecked {
+                        // Subtract the successfully distributed value
+                        value -= linkedValue;
+                    } 
 
                     // If REVERBERATED buff is active, reflect a fraction of the
                     // *successfully propagated* coins back into this token as fresh activeCharge.
@@ -1677,11 +1680,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  contributor The address contributing to the charge.
     /// @param  tokenId The token ID to charge.
     /// @param  coins The coin units used.
-    /// @param  activeCoins Additional active coin units.
+    /// @param  bonusCoins Additional bonus coin units.
     /// @param  value The native Ether value (in wei) provided.
     /// @param  link Flag indicating if the charge is via a link.
     /// @return True if the token was successfully charged.
-    function _chargeToken(address contributor, uint256 tokenId, uint256 coins, uint256 activeCoins, uint256 value, bool link) internal returns(bool) {
+    function _chargeToken(address contributor, uint256 tokenId, uint256 coins, uint256 bonusCoins, uint256 value, bool link) internal returns(bool) {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
         if (t.distributionIndex > 0) {
@@ -1733,21 +1736,25 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             
             // Linked charging can use active coins to meet the requirements of the minimum charge  
             // If the contributor isn't whitelisted, or not enough coins or value are supplied by the link, the token will not be charged
-            if (!whitelisted || minimumCoins > (coins + activeCoins) || value < minimumValue) {
+            if (!whitelisted || minimumCoins > (coins + bonusCoins) || value < minimumValue) {
                  // Fail softly so upstream link logic can continue.
                 return false;
             }
             // In linked charging, use the entire provided value.
             minimumValue = value;
             if (coins < minimumCoins) {
-                // Top up `coins` logically from the activeCoins budget.
+                // Top up `coins` logically from the bonusCoins budget.
+                // delta is paid from bonus budget
+                unchecked {
+                    bonusCoins -= (minimumCoins - coins);
+                }
                 coins = minimumCoins;
             }
 
         } else {
 
             // For non-linked charging, enforce whitelisting and minimum value.
-            require(whitelisted, "DIGIL: Restricted");    
+            require(whitelisted, "DIGIL: Restricted");
 
             if (value < minimumValue) revert InsufficientFunds(minimumValue);
             
@@ -1762,7 +1769,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // If the token is active, route the charge accordingly.
         if (t.active) {
 
-            _chargeActiveToken(contributor, tokenId, coins, activeCoins, value, link);
+            _chargeActiveToken(contributor, tokenId, coins, bonusCoins, value, link);
 
         } else {
 
@@ -1789,9 +1796,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // minimumValue -> affects c.value and reclaimContribution
             // surplus -> goes to t.value and is logged as Contribute
             if (value > minimumValue) {
-                uint256 surplus = value - minimumValue;
-                t.value += surplus;
-                emit Contribute(contributor, tokenId, surplus);
+                unchecked {
+                    uint256 surplus = value - minimumValue;
+                    t.value += surplus;
+                    emit Contribute(contributor, tokenId, surplus);
+                }
             }
 
         }
@@ -1801,6 +1810,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Charges a token.
     ///         Requires a value sent greater than or equal to the token's incremental value for each coin.
+    //          If token.incrementalValue == 0, charging does not require ETH; any ETH sent is treated as surplus value
+    ///         (credited as token value or distributed per the active/inactive path). If token.incrementalValue > 0,
+    ///         ETH must satisfy the per-charge minimum derived from incrementalValue.
     /// @param  tokenId The token ID to charge.
     /// @param  coins The number of coin units to use.
     /// @return True if the token was successfully charged.
@@ -1812,6 +1824,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Charges a token on behalf of another contributor.
     ///         Requires a value sent greater than or equal to the token's incremental value for each coin.
     /// @dev    Requires that the contributor is not blacklisted and the token exists.
+    ///         If token.incrementalValue == 0, charging does not require ETH; any ETH sent is treated as surplus value
+    ///         (credited as token value or distributed per the active/inactive path). If token.incrementalValue > 0,
+    ///         ETH must satisfy the per-charge minimum derived from incrementalValue.
     /// @param  contributor The address contributing the charge.
     /// @param  tokenId The token ID to charge.
     /// @param  coins The coin units used in the charge.
@@ -2085,7 +2100,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // Check flag AND expiry
             if ((t.buff.flags & ANCHORED) != 0 && block.timestamp < t.buff.expiresAt) {
                 retained = ac / (AFFINITY_REDUCTION * AFFINITY_REDUCTION); // Keep 25%
-                ac -= retained;                                            // Distribute the rest
+                unchecked {
+                    // retained = ac / 4 can’t exceed ac.
+                    ac -= retained;                                        // Distribute the rest
+                }
             }
 
             uint256[] storage links = t.links;
@@ -2262,7 +2280,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         uint256 lost = ac / AFFINITY_REDUCTION; // e.g., half
-        t.activeCharge = ac - lost;
+        unchecked {
+            // lost = ac / 2 can’t exceed ac.
+            t.activeCharge = ac - lost;
+        }
     }
 
     /// @notice Deactivates an active token.
@@ -2393,7 +2414,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Split the contributed value evenly between the two tokens.
         uint256 half = value / 2;
         _createValue(tokenId, half);
-        _createValue(linkId, value - half);
+        uint256 otherHalf;
+        unchecked {
+            // half = value / 2 guarantees `value - half` cannot underflow.
+            otherHalf = value - half;
+        }
+        _createValue(linkId, otherHalf);
 
         // Update affinity bonus in storage, if applicable.
         _updateLinkAffinity(t, d, linkId, efficiency);
