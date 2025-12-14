@@ -101,13 +101,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint16 private constant ANCHORED         = 2;       // Retain Charge on Discharge
     uint16 private constant PRIMED           = 4;       // Half Activation Threshold
     uint16 private constant REVERBERATED     = 8;       // Retain Some Charge on Active Token
-    uint16 private constant BUFF16           = 16;      // 
-    uint16 private constant BUFF32           = 32;      // 
-    uint16 private constant BUFF64           = 64;      // 
-    uint16 private constant BUFF128          = 128;     // 
-    uint16 private constant BUFF256          = 256;     //
-    uint16 private constant BUFF512          = 512;     //
-    uint16 private constant BUFF1024         = 1024;    //
+    uint16 private constant ELEMENTAL        = 16;      // Tier 1 Buff
+    uint16 private constant PARAELEMENTAL    = 32;      // Tier 2 Buff
+    uint16 private constant KENOTIC          = 64;      // Tier 3 Buff
+    uint16 private constant KARMIC           = 128;     // Tier 4 Buff
+    uint16 private constant KAOTIC           = 256;     // Tier 4 Buff
+    uint16 private constant AETHERIAL        = 512;     // Tier 5 Buff
+    uint16 private constant CELESTIAL        = 1024;    // Tier 6 Buff
     uint16 private constant USER_FLAGS_MASK  = 65530;   // Mask for all user-settable flags (excludes STABILIZED and PRIMED)
 
     /// @dev State for a temporary buff on a token
@@ -336,8 +336,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // 4:   delimiter
         // 5-9: simplified name
         bytes[21] memory data;
-        data[0] =  bytes("|||||");      // null
-        data[1] =  bytes("xrot|X");     // void
+        data[0] =  bytes("    |");      // null
+        data[1] =  bytes("xrot|X");     // void/kenosis
         data[2] =  bytes("roxy|K.N ");  // karma
         data[3] =  bytes("orxy|K.S");   // kaos
         data[4] =  bytes("faly|X.S");   // fire
@@ -354,7 +354,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         data[15] = bytes("grht|K.E");   // negentropy/exergy
         data[16] = bytes("kpgt|K");     // magick/kosmos
         data[17] = bytes("txy-|K.X");   // aether
-        data[18] = bytes("yxt-|X.R");   // external reality
+        data[18] = bytes("yxt-|X.R");   // external reality/world
         data[19] = bytes("----|.XR");   // extended reality
         data[20] = bytes("----|.ILXR"); // digil reality
         
@@ -1354,22 +1354,22 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             require(plane <= PLANAR_MAX_ID, "DIGIL: Invalid Plane");
 
             // Different fee structures based on plane index, pricing rarer planes higher.
-            uint256 fee;
+            uint256 tier;
             if (plane < 4) {
                 // Void / karmic / kaotic planes (1–3): 5× coinRate
-                fee = (_coinRate * 5);
+                tier = 5;
             } else if (plane > 16) {
                 // Ethereal planes (17–18): 100× coinRate
-                fee = (_coinRate * 100);
+                tier = 100;
             } else if (plane > 11) {
                 // Energy planes (12–16): 25× coinRate
-                fee = (_coinRate * 25);
+                tier =  25;
             } else if (plane > 7) {
                 // Paraelemental planes (8–11): 1× coinRate
-                fee = (_coinRate);
+                tier = 1;
             }
-            if (fee != 0) {
-                _coinsFromSender(fee);
+            if (tier != 0) {
+                _coinsFromSender(tier * _coinRate);
             }
 
             // Record the plane link as the immutable foundational plane (index 0 in links[]).
@@ -2705,15 +2705,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             }
             // 2. Flag Cost (The "Payment" Logic)
             // Check each allowed user flag. If set, increase magnitude by BUFF_COST.
-            if ((requestedFlags & ANCHORED) != 0)     magnitude += BUFF_COST;
-            if ((requestedFlags & REVERBERATED) != 0) magnitude += BUFF_COST;
-            if ((requestedFlags & BUFF16) != 0)       magnitude += BUFF_COST / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
-            if ((requestedFlags & BUFF32) != 0)       magnitude += BUFF_COST / AFFINITY_REDUCTION;
-            if ((requestedFlags & BUFF64) != 0)       magnitude += BUFF_COST;
-            if ((requestedFlags & BUFF128) != 0)      magnitude += BUFF_COST;
-            if ((requestedFlags & BUFF256) != 0)      magnitude += BUFF_COST * AFFINITY_BOOST;
-            if ((requestedFlags & BUFF512) != 0)      magnitude += BUFF_COST * AFFINITY_BOOST;
-            if ((requestedFlags & BUFF1024) != 0)     magnitude += BUFF_COST * AFFINITY_BOOST * AFFINITY_BOOST;
+            if ((requestedFlags & ANCHORED) != 0)      magnitude += BUFF_COST;
+            if ((requestedFlags & REVERBERATED) != 0)  magnitude += BUFF_COST;
+            if ((requestedFlags & ELEMENTAL) != 0)     magnitude += BUFF_COST / AFFINITY_REDUCTION / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
+            if ((requestedFlags & PARAELEMENTAL) != 0) magnitude += BUFF_COST / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
+            if ((requestedFlags & KENOTIC) != 0)       magnitude += BUFF_COST / AFFINITY_REDUCTION;
+            if ((requestedFlags & KARMIC) != 0)        magnitude += BUFF_COST;
+            if ((requestedFlags & KAOTIC) != 0)        magnitude += BUFF_COST;
+            if ((requestedFlags & AETHERIAL) != 0)     magnitude += BUFF_COST * AFFINITY_BOOST;
+            if ((requestedFlags & CELESTIAL) != 0)     magnitude += BUFF_COST * AFFINITY_BOOST * AFFINITY_BOOST;
 
             require(magnitude <= type(uint16).max, "DIGIL: Buff Too Large");
 
