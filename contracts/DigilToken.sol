@@ -103,7 +103,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint16 private constant REVERBERATED     = 8;       // Retain Some Charge on Active Token
     uint16 private constant ELEMENTAL        = 16;      // Tier 1 Buff
     uint16 private constant PARAELEMENTAL    = 32;      // Tier 2 Buff
-    uint16 private constant KENOTIC          = 64;      // Tier 3 Buff
+    uint16 private constant VOIDIC           = 64;      // Tier 3 Buff
     uint16 private constant KARMIC           = 128;     // Tier 4 Buff
     uint16 private constant KAOTIC           = 256;     // Tier 4 Buff
     uint16 private constant AETHERIAL        = 512;     // Tier 5 Buff
@@ -337,7 +337,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // 5-9: simplified name
         bytes[21] memory data;
         data[0] =  bytes("    |");      // null
-        data[1] =  bytes("xrot|X");     // void/kenosis
+        data[1] =  bytes("xrot|X");     // void
         data[2] =  bytes("roxy|K.N ");  // karma
         data[3] =  bytes("orxy|K.S");   // kaos
         data[4] =  bytes("faly|X.S");   // fire
@@ -2709,7 +2709,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if ((requestedFlags & REVERBERATED) != 0)  magnitude += BUFF_COST;
             if ((requestedFlags & ELEMENTAL) != 0)     magnitude += BUFF_COST / AFFINITY_REDUCTION / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
             if ((requestedFlags & PARAELEMENTAL) != 0) magnitude += BUFF_COST / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
-            if ((requestedFlags & KENOTIC) != 0)       magnitude += BUFF_COST / AFFINITY_REDUCTION;
+            if ((requestedFlags & VOIDIC) != 0)        magnitude += BUFF_COST / AFFINITY_REDUCTION;
             if ((requestedFlags & KARMIC) != 0)        magnitude += BUFF_COST;
             if ((requestedFlags & KAOTIC) != 0)        magnitude += BUFF_COST;
             if ((requestedFlags & AETHERIAL) != 0)     magnitude += BUFF_COST * AFFINITY_BOOST;
