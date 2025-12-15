@@ -201,17 +201,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 contributionEpoch;  // Logical epoch for contributions on this token
         uint256 lastActivity;       // Timestamp of the last significant action
 
-        // --- SLOT 10: State Flags (Packed) ---
-        // 4 bools = 4 bytes. Uses 1 slot total.
+        // --- SLOT 10: State Flags & Buffs (Packed) ---
+        // 4 bytes (bools) + 12 bytes (BuffState) = 16 bytes total.
+        // 16 bytes REMAINING in this slot.
         bool active;                // True if the token has been activated
         bool activating;            // A lock flag, true if the token is currently in the process of being activated
         bool discharging;           // A lock flag, true if the token is currently in the process of being discharged
         bool restricted;            // True if contributions are restricted to a whitelist
+        BuffState buff;             // Temporary buff applied to this token.
 
-        // --- SLOT 11: External Data (Packed) ---
-        // 20 bytes (address) + 12 bytes (BuffState) = 32 bytes. Uses 1 slot total.
+        // --- SLOT 11: External Data ---
+        // 20 bytes used. 12 bytes REMAINING.
         address contractTokenAddress; // External ERC721 contract address attached (if any)
-        BuffState buff;               // Temporary buff applied to this token.
 
         // --- SLOTS 12+: Dynamic Data ---
         // Must be at the end to avoid breaking the packing of Slot 10 & 11
