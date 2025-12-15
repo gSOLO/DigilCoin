@@ -101,17 +101,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     // Buff Bitmasks
-    uint16 private constant STABILIZED       = 1;       // Anti-Bleed
-    uint16 private constant ANCHORED         = 2;       // Retain Charge on Discharge
-    uint16 private constant PRIMED           = 4;       // Half Activation Threshold
-    uint16 private constant REVERBERATED     = 8;       // Retain Some Charge on Active Token
-    uint16 private constant ELEMENTAL        = 16;      // Tier 1 Buff
-    uint16 private constant PARAELEMENTAL    = 32;      // Tier 2 Buff
-    uint16 private constant VOIDIC           = 64;      // Tier 3 Buff
-    uint16 private constant KARMIC           = 128;     // Tier 4 Buff
-    uint16 private constant KAOTIC           = 256;     // Tier 4 Buff
-    uint16 private constant AETHERIAL        = 512;     // Tier 5 Buff
-    uint16 private constant CELESTIAL        = 1024;    // Tier 6 Buff
+    uint16 private constant STABILIZED       = 1 << 0;  // Anti-Bleed
+    uint16 private constant ANCHORED         = 1 << 1;  // Retain Charge on Discharge
+    uint16 private constant PRIMED           = 1 << 2;  // Half Activation Threshold
+    uint16 private constant REVERBERATED     = 1 << 3;  // Retain Some Charge on Active Token
+    uint16 private constant ELEMENTAL        = 1 << 4;  // Tier 1 Buff
+    uint16 private constant PARAELEMENTAL    = 1 << 5;  // Tier 2 Buff
+    uint16 private constant VOIDIC           = 1 << 6;  // Tier 3 Buff
+    uint16 private constant KARMIC           = 1 << 7;  // Tier 4 Buff
+    uint16 private constant KAOTIC           = 1 << 8;  // Tier 4 Buff
+    uint16 private constant AETHERIAL        = 1 << 9;  // Tier 5 Buff
+    uint16 private constant CELESTIAL        = 1 << 10; // Tier 6 Buff
 
     /// @dev Bit position (0-based) where the 4-bit cosmetic style nibble begins.
     ///      Example with COSMETIC_SHIFT = 12:
