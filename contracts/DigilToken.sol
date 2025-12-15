@@ -101,86 +101,48 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     // Buff Bitmasks
-    uint16 private constant STABILIZED       = 1 << 0;  // Anti-Bleed
-    uint16 private constant ANCHORED         = 1 << 1;  // Retain Charge on Discharge
-    uint16 private constant PRIMED           = 1 << 2;  // Half Activation Threshold
-    uint16 private constant REVERBERATED     = 1 << 3;  // Retain Some Charge on Active Token
-    uint16 private constant ELEMENTAL        = 1 << 4;  // Tier 1 Buff
-    uint16 private constant PARAELEMENTAL    = 1 << 5;  // Tier 2 Buff
-    uint16 private constant VOIDIC           = 1 << 6;  // Tier 3 Buff
-    uint16 private constant KARMIC           = 1 << 7;  // Tier 4 Buff
-    uint16 private constant KAOTIC           = 1 << 8;  // Tier 4 Buff
-    uint16 private constant AETHERIAL        = 1 << 9;  // Tier 5 Buff
-    uint16 private constant CELESTIAL        = 1 << 10; // Tier 6 Buff
+    uint40 private constant STABILIZED       = 1 << 0;  // Anti-Bleed
+    uint40 private constant ANCHORED         = 1 << 1;  // Retain Charge on Discharge
+    uint40 private constant PRIMED           = 1 << 2;  // Half Activation Threshold
+    uint40 private constant REVERBERATED     = 1 << 3;  // Retain Some Charge on Active Token
+    uint40 private constant ELEMENTAL        = 1 << 4;  // Tier 1 Buff
+    uint40 private constant PARAELEMENTAL    = 1 << 5;  // Tier 2 Buff
+    uint40 private constant VOIDIC           = 1 << 6;  // Tier 3 Buff
+    uint40 private constant KARMIC           = 1 << 7;  // Tier 4 Buff
+    uint40 private constant KAOTIC           = 1 << 8;  // Tier 4 Buff
+    uint40 private constant AETHERIAL        = 1 << 9;  // Tier 5 Buff
+    uint40 private constant CELESTIAL        = 1 << 10; // Tier 6 Buff
 
-    /// @dev Bit position (0-based) where the 4-bit cosmetic style nibble begins.
-    ///      Example with COSMETIC_SHIFT = 12:
-    ///        - The style id occupies bits 12,13,14,15 inside a uint16.
-    ///        - These four bits form a number from 0..15 (a "nibble").
-    ///
-    ///      Why "SHIFT"?
-    ///        - To **extract** the nibble, we mask the bits and then shift them
-    ///          down to the least-significant position:
-    ///              (flags & COSMETIC_MASK) >> COSMETIC_SHIFT
-    ///        - Shifting right by COSMETIC_SHIFT moves bit 12 -> bit 0, bit 13 -> bit 1, etc.
-    ///          turning the nibble into a small integer (0..15) that off-chain code
-    ///          can interpret as a cosmetic theme/preset id.
-    uint16 private constant COSMETIC_SHIFT = 12;
+    // styleId: bits 11..18 (8 bits)
+    uint8  private constant STYLE_SHIFT = 11;
+    uint40 private constant STYLE_MASK  = uint40(0xFF) << STYLE_SHIFT;
 
-    /// @dev Mask covering exactly the 4 bits used for the cosmetic style id.
-    ///      With COSMETIC_SHIFT = 12, this is bits 12..15, i.e. 0xF000.
-    ///
-    ///      Layout (uint16):
-    ///        [15 14 13 12 | 11 ... 0]
-    ///         ^  ^  ^  ^
-    ///         |  |  |  |__ lowest bit of cosmetic id (bit 12)
-    ///         |  |  |_____ bit 13
-    ///         |  |________ bit 14
-    ///         |___________ highest bit of cosmetic id (bit 15)
-    ///
-    ///      When these bits are interpreted together, they represent a number 0..15.
-    uint16 private constant COSMETIC_MASK = uint16(0xF) << COSMETIC_SHIFT;
+    // 5 cosmetic 4-bit slots: bits 19..38
+    uint8  private constant COS0_SHIFT = 19;
+    uint8  private constant COS1_SHIFT = 23;
+    uint8  private constant COS2_SHIFT = 27;
+    uint8  private constant COS3_SHIFT = 31;
+    uint8  private constant COS4_SHIFT = 35;
+    uint40 private constant COS_SLOT_MASK = uint40(0xF);
 
-    /// @dev Mask for all **user-settable** bits inside `BuffState.flags`.
-    ///      This is applied to user input in {buffToken} to prevent callers from
-    ///      setting internal / protocol-controlled flags directly.
-    ///
-    ///      Design:
-    ///      - `flags` is a `uint16` bitfield.
-    ///      - Some bits are reserved for internal lifecycle mechanics (set/cleared
-    ///        only by dedicated functions), while the rest are available for users
-    ///        to request via {buffToken}.
-    ///      - This mask includes:
-    ///          * All “gameplay / tier / behavior” flags that users may request, AND
-    ///          * The packed cosmetic nibble (bits 12–15), if you’re using the
-    ///            COS_SHIFT/COSMETIC_MASK pattern.
-    ///      - This mask excludes:
-    ///          * `STABILIZED` (bit 0): only set by {stabilizeToken} and consumed by
-    ///            {_applyActiveChargeBleed} to prevent bleed once.
-    ///          * `PRIMED` (bit 2): only set by {primeToken} and consumed by
-    ///            {activateToken} to temporarily reduce activation threshold.
-    ///
-    ///      Usage:
-    ///      - In {buffToken}, sanitize user-supplied `flags` like:
-    ///            `uint16 requestedFlags = flags & USER_FLAGS_MASK;`
-    ///        This preserves all user-allowed bits (including cosmetics) and strips
-    ///        internal-only bits.
-    ///      - When writing back to storage, preserve internal bits separately:
-    ///            `uint16 preserved = t.buff.flags & (STABILIZED | PRIMED);`
-    ///            `t.buff.flags = preserved | requestedFlags;`
-    ///
-    ///      Constant value:
-    ///      - If the only internal-only bits are `STABILIZED` (1) and `PRIMED` (4),
-    ///        then:
-    ///            USER_FLAGS_MASK = 0xFFFA (65530)
-    ///        i.e., all bits set except bit0 and bit2.
-    uint16 private constant USER_FLAGS_MASK  = uint16(type(uint16).max) & ~(STABILIZED | PRIMED);
+    uint40 private constant COS0_MASK = COS_SLOT_MASK << COS0_SHIFT;
+    uint40 private constant COS1_MASK = COS_SLOT_MASK << COS1_SHIFT;
+    uint40 private constant COS2_MASK = COS_SLOT_MASK << COS2_SHIFT;
+    uint40 private constant COS3_MASK = COS_SLOT_MASK << COS3_SHIFT;
+    uint40 private constant COS4_MASK = COS_SLOT_MASK << COS4_SHIFT;
+
+    uint40 private constant COSMETICS_MASK = uint40(type(uint40).max) << COS0_SHIFT;
+
+    uint40 private constant STYLE_AND_COSMETICS_MASK = (STYLE_MASK | COSMETICS_MASK);
+
+    // Users may NOT set STABILIZED/PRIMED, but can set everything else (including cosmetics)
+    uint40 private constant USER_FLAGS_MASK = uint40(type(uint40).max) & ~(STABILIZED | PRIMED);
 
     /// @dev State for a temporary buff on a token
     struct BuffState {
         uint40 expiresAt;       // Unix timestamp (in seconds) when the buff expires
         uint16 magnitude;       // Stores the total calculated power/cost
-        uint16 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Reverberated
+        uint40 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Reverberated
         uint8 efficiencyBonus;  // Temporary bonus on top of base efficiency (0–100)
         uint8 attunement;       // ID of the plane to mimic (1-18)
         uint8 amplification;    // Bonus multiplier percentage for incoming charge (e.g. 20 = 1.2x)
@@ -1206,7 +1168,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return attunement Planar ID to mimic for affinity (1-18, or 0 for none).
     /// @return amplification Percentage multiplier applied to incoming charge (0-100, or 0 for none).
     /// @return flags Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated.
-    function tokenBuff(uint256 tokenId) external view returns (uint40 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags) {
+    function tokenBuff(uint256 tokenId) external view returns (uint40 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint40 flags) {
         _checkTokenExists(tokenId);
         BuffState storage b = _tokens[tokenId].buff;
         return (b.expiresAt, b.efficiencyBonus, b.attunement, b.amplification, b.flags);
@@ -2227,8 +2189,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             ct.recallable = false;
         }
 
-        // Clear any buffs
+        // Clear any temporary buff state, but preserve persistent cosmetics (styleId + cosmetic slots).
+        uint40 persistedCosmetics = t.buff.flags & STYLE_AND_COSMETICS_MASK;
         delete t.buff;
+        t.buff.flags = persistedCosmetics;
 
         // Clear flag on completion
         t.discharging = false;
@@ -2755,7 +2719,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///                           - A packed 4-bit cosmetic style id stored in bits [COSMETIC_SHIFT..COSMETIC_SHIFT+3].
     ///                             styleId = 0 means “no cosmetic style”; 1..15 are off-chain cosmetic presets.
     /// @param  duration         The buff duration in minutes (1–10080).
-    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint256 duration) external {
+    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint40 flags, uint256 duration) external {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
@@ -2764,7 +2728,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
         // Sanitize input: Only allow user flags (remove Stabilized/Primed if user tried to sneak them in)
-        uint16 requestedFlags = flags & USER_FLAGS_MASK;
+        uint40 requestedFlags = flags & USER_FLAGS_MASK;
 
         require(
             (efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) ||
@@ -2810,8 +2774,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // If styleId != 0, the caller selected a cosmetic theme/preset.
             // This adds a small flat magnitude so cosmetic tagging is not free,
             // while avoiding per-flag branching or per-bit pricing.
-            uint8 styleId = uint8((flags & COSMETIC_MASK) >> COSMETIC_SHIFT);
+            uint8 styleId = uint8((flags & STYLE_MASK) >> STYLE_SHIFT);
             if (styleId != 0) {
+                magnitude += BUFF_COST / 16;
+            }
+            if ((flags & COSMETICS_MASK) != 0) {
                 magnitude += BUFF_COST / 16;
             }
 
@@ -2836,8 +2803,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.buff.attunement = attunement;
 
         // Start from existing flags and preserve STABILIZED + PRIMED bits.
-        uint16 preservedFlags = t.buff.flags & (STABILIZED | PRIMED);
-        t.buff.flags = preservedFlags | requestedFlags;
+        // Cosmetics are persistent:
+        //   - If caller supplies any cosmetic payload (flags & STYLE_AND_COSMETICS_MASK != 0), overwrite cosmetics.
+        //   - Otherwise preserve the existing cosmetics.
+        uint40 preservedInternal = t.buff.flags & (STABILIZED | PRIMED);
+        uint40 existingCosmetics = t.buff.flags & STYLE_AND_COSMETICS_MASK;
+        uint40 newCosmetics = requestedFlags & STYLE_AND_COSMETICS_MASK;
+        if ((flags & STYLE_AND_COSMETICS_MASK) == 0) {
+            newCosmetics = existingCosmetics;
+        }
+        // Apply non-cosmetic requested flags, then splice cosmetics.
+        t.buff.flags = preservedInternal | (requestedFlags & ~STYLE_AND_COSMETICS_MASK) | newCosmetics;
 
         // Update last activity
         t.lastActivity = block.timestamp;
