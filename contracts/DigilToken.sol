@@ -1649,7 +1649,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 uint256 linkedBonusCoins = (coins * t.linkEfficiency[linkId].affinityBonus) / 100;
 
                 // If nothing at all is going to this link, skip it.
-                if (linkedCoins == 0 && bonusCoins == 0 && linkedValue == 0) {
+                if (linkedCoins == 0 && linkedBonusCoins == 0 && linkedValue == 0) {
                     continue;
                 }
 
@@ -1665,7 +1665,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     // *successfully propagated* coins back into this token as fresh activeCharge.
                     if ((t.buff.flags & REVERBERATED) != 0 && block.timestamp < t.buff.expiresAt) {
                         // Treat both base and affinity bonus as outbound “signal”
-                        uint256 echo = _reverbEcho(linkedCoins, bonusCoins);
+                        uint256 echo = _reverbEcho(linkedCoins, linkedBonusCoins);
                         if (echo > 0) {
                             t.activeCharge += echo;
                             emit ActiveCharge(tokenId, echo);
