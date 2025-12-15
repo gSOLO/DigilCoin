@@ -2,12 +2,16 @@
 pragma solidity ^0.8.31;
 
 // Import OpenZeppelin contracts for standard ERC721 functionality, ownership, safe transfers, counters, ERC20 interfacing, and reentrancy protection.
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
-import "@openzeppelin/contracts/utils/Address.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "contracts/IMintableERC20.sol";
+import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+import {IMintableERC20} from "contracts/IMintableERC20.sol";
+
 
 /// @title Digital Sigils (NFT)
 /// @author gSOLO
@@ -1122,7 +1126,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // --- Interaction: external call happens after state updates ---
         // Safely transfer the external ERC721 token back to the current owner of the Digil token.
-        ERC721(account).safeTransferFrom(address(this), owner, contractTokenId, t.data);
+        IERC721(account).safeTransferFrom(address(this), owner, contractTokenId, t.data);
     }
 
     // Token Information
