@@ -131,6 +131,30 @@ These dials collectively shape the physics of the Digil universe: fees (offering
 
 ## Per-Token Properties
 
+
+### Appearance (Cosmetics)
+
+Each token stores a packed **appearance descriptor** (`uint120`) used exclusively for off-chain rendering.
+This data has **no economic or gameplay effect** and persists across discharge.
+
+**Bit layout:**
+
+```
+bits 0..7     → styleId        (8 bits)
+bits 8..27    → cosmetics      (20 bits, 5 × 4-bit slots)
+bits 28..51   → mainRgb        (24 bits, RRGGBB)
+bits 52..83   → colorStart     (32 bits, RRGGBBAA)
+bits 84..115  → colorEnd       (32 bits, RRGGBBAA)
+bits 116..119 → reserved
+```
+
+- `styleId` selects a visual style.
+- `cosmetics` holds up to five small cosmetic modifiers.
+- `mainRgb` is a background/base color.
+- `colorStart` / `colorEnd` define an optional gradient.
+- Reserved bits are available for future expansion.
+
+
 **Economics**
 - `charge` — pre-activation coins (base units); grows via `chargeToken/As` on inactive tokens. Think of this as **Potential Energy**.
 - `distributionCharge` / `distributionValue` — snapshots used when a distribution is in progress.
@@ -447,15 +471,16 @@ Returns link data for a given source token and index in its `links[]` array:
 
 ### `tokenBuff(tokenId)`
 
-Returns the current buff state of a token. These are the active enchantments on the sigil:
+Returns the current buff state **and appearance** of a token:
 
 ```solidity
 (
-    uint64 expiresAt, 
-    uint8 efficiencyBonus, 
-    uint8 attunement, 
-    uint8 amplification, 
-    uint8 flags
+    uint64  expiresAt,
+    uint8   efficiencyBonus,
+    uint8   attunement,
+    uint8   amplification,
+    uint16  flags,
+    uint120 appearance
 )
 ```
 - `flags` is a bitmask: 1 = Stabilized, 2 = Anchored, 4 = Primed, 8 = Reverberated.
@@ -535,7 +560,15 @@ This is the creation of **Sympathetic Magic** between nodes. By linking Digils, 
 ### Temporary Buffs (Efficiency, Attunement, Amplification, Anchor, Reverb)
 
 ```solidity
-buffToken(tokenId, efficiency, attunement, amplification, anchor, reverb, duration)
+buffToken(
+    uint256 tokenId,
+    uint8   efficiencyBonus,
+    uint8   attunement,
+    uint8   amplification,
+    uint16  flags,
+    uint120 appearance,
+    uint256 durationMinutes
+)
 ```
 
 (`nonReentrant`)
