@@ -11,6 +11,7 @@ import "remix_accounts.sol";
 
 import "../contracts/IDigilToken.sol";
 import "../contracts/DigilTestLibrary.sol";
+import "../contracts/DigilFlags.sol";
 
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
 contract KiloTestSuite {
@@ -159,7 +160,7 @@ contract KiloTestSuite {
         Assert.equal(charge, 0, "Invalid new Source charge");
         Assert.equal(activeCharge, coinMultiplier * 512, "Invalid new Source active charge");
 
-        digil.buffToken(activeTokenId, 30, 0, 0, 0, 24);
+        digil.buffToken(activeTokenId, 30, 0, 0, 0, 0, 24);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post buff Source charge");
@@ -204,7 +205,7 @@ contract KiloTestSuite {
             activationComplete = digil.activateToken(activeTokenId);
         }
 
-        digil.buffToken(activeTokenId, 0, 0, 0, 8, 36);
+        digil.buffToken(activeTokenId, 0, 0, 0, DigilFlags.REVERBERATED, 0, 36);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid final buff Source charge");

@@ -186,7 +186,7 @@ contract HotelTestSuite {
         Assert.equal(activeCharge, coinMultiplier * 512, "Invalid new Source active charge");
         Assert.equal(value, 250000000000000, "Invalid new Source value");
 
-        digil.buffToken(activeTokenId, 30, 0, 0, 0, 24);
+        digil.buffToken(activeTokenId, 30, 0, 0, 0, 0, 24);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post buff Source charge");

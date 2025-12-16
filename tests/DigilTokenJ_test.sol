@@ -11,6 +11,8 @@ import "remix_accounts.sol";
 
 import "../contracts/IDigilToken.sol";
 import "../contracts/DigilTestLibrary.sol";
+import "../contracts/DigilFlags.sol";
+import "../contracts/DigilAppearance.sol";
 
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
 contract JuiletTestSuite {
@@ -125,7 +127,7 @@ contract JuiletTestSuite {
         digil.linkToken{value: 200000000000000}(activeTokenId, linkTokenId, 10);
 
         (uint256 linkId, uint8 baseEfficiency, uint256 affinityBonus) = digil.tokenLinkAt(activeTokenId, 1);
-        (uint64 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags) = digil.tokenBuff(activeTokenId);
+        (uint64 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearance) = digil.tokenBuff(activeTokenId);
 
         Assert.equal(linkId, linkTokenId, "Invalid Link ID");
         Assert.equal(baseEfficiency, 10, "Invalid Link Base Efficiency");
@@ -134,21 +136,29 @@ contract JuiletTestSuite {
         Assert.equal(attunement, 0, "Invalid Attunement");
         Assert.equal(amplification, 0, "Invalid Amplification");
         Assert.equal(flags, 0, "Invalid Flags");
+        Assert.equal(appearance, 0, "Invalid Appearence");
         Assert.equal(expiresAt, 0, "Invalid Buff Expires");
 
-        digil.buffToken(activeTokenId, 5, 5, 5, 2 | 8, 24);
+        uint120 newAppearence = DigilAppearance.pack(1, 0, 0xFF0000, 0x00FF00FF, 0x0000FFFF, 0);
+        newAppearence = DigilAppearance.setCosmetic(newAppearence, 0, 1);
+        newAppearence = DigilAppearance.setCosmetic(newAppearence, 1, 2);
+        newAppearence = DigilAppearance.setCosmetic(newAppearence, 2, 4);
+        newAppearence = DigilAppearance.setCosmetic(newAppearence, 3, 8);
+        newAppearence = DigilAppearance.setCosmetic(newAppearence, 4, 1);
+        digil.buffToken(activeTokenId, 5, 5, 5, DigilFlags.ANCHORED | DigilFlags.REVERBERATED, newAppearence, 24);
 
         digil.linkToken{value: 200000000000000}(activeTokenId, linkTokenId, 20);
 
         (, baseEfficiency, affinityBonus) = digil.tokenLinkAt(activeTokenId, 1);
-        (expiresAt, efficiencyBonus, attunement, amplification, flags) = digil.tokenBuff(activeTokenId);
+        (expiresAt, efficiencyBonus, attunement, amplification, flags, appearance) = digil.tokenBuff(activeTokenId);
 
         Assert.equal(baseEfficiency, 20, "Invalid Buffed Link Base Efficiency");
         Assert.equal(affinityBonus, 40, "Invalid Buffed Link Base Affinity Bonus");
         Assert.equal(efficiencyBonus, 5, "Invalid Buffed Link Base Efficiency Bonus");
         Assert.equal(attunement, 5, "Invalid Buffed Attunement");
         Assert.equal(amplification, 5, "Invalid Buffed Amplification");
-        Assert.equal(flags, 2 + 8, "Invalid Buffed Flags");
+        Assert.equal(flags, DigilFlags.ANCHORED | DigilFlags.REVERBERATED, "Invalid Buffed Flags");
+        Assert.equal(appearance, newAppearence, "Invalid Buffed Appearence");
         Assert.equal(expiresAt, block.timestamp + (24 * 1 minutes), "Invalid Buffed Buff Expires");
     }
 
@@ -175,7 +185,7 @@ contract JuiletTestSuite {
         uint8 amplification = 50;
         uint256 duration = 30; // minutes
 
-        digil.buffToken(tokenId, 0, 0, amplification, 0, duration);
+        digil.buffToken(tokenId, 0, 0, amplification, 0, 0, duration);
 
         // Expected buff cost:
         // cost = magnitude * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR
@@ -189,7 +199,7 @@ contract JuiletTestSuite {
         (, uint256 acAfterBuff, , , ) = digil.tokenCharge(tokenId);
         uint256 expectedAfterBuff = initialAC - expectedCost;
 
-        Assert.equal(acAfterBuff, expectedAfterBuff,"Buff cost did not reduce activeCharge by the expected amount");
+        Assert.equal(acAfterBuff, expectedAfterBuff, "Buff cost did not reduce activeCharge by the expected amount");
 
         // 4. Charge the token once while the amplification buff is active.
         uint256 chargeCoins = 100 * coinMultiplier;
