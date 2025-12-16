@@ -2719,7 +2719,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 magnitude += tier * 50;
             }
             // 2. Flag Cost (The "Payment" Logic)
-            // Check each allowed user flag. If set, increase magnitude by 50.
+            // Check each allowed user flag. If set, increase magnitude.
             if (DigilFlags.has(requestedFlags, DigilFlags.ANCHORED))      magnitude += 50;
             if (DigilFlags.has(requestedFlags, DigilFlags.REVERBERATED))  magnitude += 50;
             if (DigilFlags.has(requestedFlags, DigilFlags.ELEMENTAL))     magnitude += 5;
