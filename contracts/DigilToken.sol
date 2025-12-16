@@ -11,6 +11,9 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 import {IMintableERC20} from "contracts/IMintableERC20.sol";
 
+import {DigilFlags} from "contracts/DigilFlags.sol";
+import {DigilAppearance} from "contracts/DigilAppearance.sol";
+
 /// @title Digital Sigils (NFT)
 /// @author gSOLO
 /// @notice NFT contract used for the creation, charging, and activation of Digital Sigils ("Digils")
@@ -96,57 +99,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint8 base;             // The base efficiency percentage for coin transfer (e.g., 100 = 100%)
         uint256 affinityBonus;  // Additional bonus efficiency generated from planar affinity
     }
-
-    // Buff / State Flags (uint16)
-    //
-    // Notes:
-    // - `flags` is a bitmask stored in `Token.buff.flags`.
-    // - Some bits are "internal-only" (cannot be set via {buffToken}):
-    //     * STABILIZED: set/consumed by {stabilizeToken} and {_applyActiveChargeBleed}
-    //     * PRIMED: set by {primeToken}, consumed by {activateToken}
-    // - User-settable bits (via {buffToken}) include ANCHORED, REVERBERATED, and the tier tags.
-    // - Tier bits are cosmetic / semantic tags in this contract (they only affect `magnitude`
-    //   pricing in {buffToken} unless you add other logic elsewhere).
-
-    uint16 private constant STABILIZED       = uint16(1) << 0;  // Anti-Bleed - Prevents one bleed event; consumed on deactivation/recall bleed
-    uint16 private constant ANCHORED         = uint16(1) << 1;  // Retain Charge - On discharge, retain a fraction of activeCharge if buff still activ
-    uint16 private constant PRIMED           = uint16(1) << 2;  // Half Activation - Next activation threshold is halved once; consumed on successful activation
-    uint16 private constant REVERBERATED     = uint16(1) << 3;  // Reflect Propogated Charge - While buff is active, reflect a fraction of *propagated* link charge back as activeCharge
-
-    // Tier / tag flags (primarily used to scale `magnitude` cost in {buffToken})
-    uint16 private constant ELEMENTAL        = uint16(1) << 4;  // Tier 1 tag
-    uint16 private constant PARAELEMENTAL    = uint16(1) << 5;  // Tier 2 tag
-    uint16 private constant VOIDIC           = uint16(1) << 6;  // Tier 3 tag
-    uint16 private constant KARMIC           = uint16(1) << 7;  // Tier 4 tag (variant A)
-    uint16 private constant KAOTIC           = uint16(1) << 8;  // Tier 4 tag (variant B)
-    uint16 private constant AETHERIAL        = uint16(1) << 9;  // Tier 5 tag
-    uint16 private constant CELESTIAL        = uint16(1) << 10; // Tier 6 tag
-
-    // Users may NOT set STABILIZED/PRIMED via {buffToken}, but can set everything else.
-    uint16 private constant USER_FLAGS_MASK = uint16(type(uint16).max) & ~(STABILIZED | PRIMED);
-
-    // Appearance packing (uint120)
-    //
-    // This contract does not “render” appearance on-chain; it stores a compact payload
-    // that front-ends / indexers can interpret for visuals.
-    //
-    // Layout (little-endian bit indexing):
-    // - styleId:    bits 0..7    (8 bits)   - 0 means “no explicit style override”
-    // - cosmetics:  bits 8..27   (20 bits)  - 5 x 4-bit cosmetic slots (nibbles)
-    // - colorStart: bits 28..59  (32 bits)  - RRGGBBAA packed into uint32
-    // - colorEnd:   bits 60..91  (32 bits)  - RRGGBBAA packed into uint32
-    // - reserved:   bits 92..119 (28 bits)  - reserved for future use
-    uint8   private constant STYLE_SHIFT = 0;
-    uint120 private constant STYLE_MASK  = uint120(0xFF) << STYLE_SHIFT;
-
-    uint8   private constant COSMETICS_SHIFT = 8;
-    uint120 private constant COSMETICS_MASK  = uint120(0xFFFFF) << COSMETICS_SHIFT; // 20 bits (5 nibbles)
-
-    uint8   private constant COLOR_START_SHIFT = 28;
-    uint8   private constant COLOR_END_SHIFT   = 60;
-    uint120 private constant COLOR32_MASK      = uint120(0xFFFFFFFF);
-    uint120 private constant COLOR_START_MASK  = COLOR32_MASK << COLOR_START_SHIFT;
-    uint120 private constant COLOR_END_MASK    = COLOR32_MASK << COLOR_END_SHIFT;
 
     /// @dev State for a temporary buff on a token.
     ///      - The buff is considered "active" if `block.timestamp < expiresAt`.
@@ -1665,7 +1617,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
                     // If REVERBERATED buff is active, reflect a fraction of the
                     // *successfully propagated* coins back into this token as fresh activeCharge.
-                    if ((t.buff.flags & REVERBERATED) != 0 && block.timestamp < t.buff.expiresAt) {
+                    if (DigilFlags.has(t.buff.flags, DigilFlags.REVERBERATED) && block.timestamp < t.buff.expiresAt) {
                         // Treat both base and affinity bonus as outbound “signal”
                         uint256 echo = _reverbEcho(linkedCoins, linkedBonusCoins);
                         if (echo > 0) {
@@ -2124,7 +2076,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (ac > 0) {
             uint256 retained = 0;
             // Check flag AND expiry
-            if ((t.buff.flags & ANCHORED) != 0 && block.timestamp < t.buff.expiresAt) {
+            if (DigilFlags.has(t.buff.flags, DigilFlags.ANCHORED) && block.timestamp < t.buff.expiresAt) {
                 retained = ac / (AFFINITY_REDUCTION * AFFINITY_REDUCTION); // Keep 25%
                 unchecked {
                     // retained = ac / 4 can’t exceed ac.
@@ -2245,7 +2197,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         uint256 threshold = t.activationThreshold;
-        bool primed = (t.buff.flags & PRIMED) != 0;
+        bool primed = DigilFlags.has(t.buff.flags, DigilFlags.PRIMED);
         if (primed) {
             // Temporarily halve the required activation threshold when PRIMED.
             threshold /= AFFINITY_REDUCTION;
@@ -2281,7 +2233,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Consume PRIMED after a successful activation, if present.
         if (primed) {
-            t.buff.flags &= ~PRIMED;
+            t.buff.flags = DigilFlags.clear(t.buff.flags, DigilFlags.PRIMED);
         }
 
         emit Activate(tokenId);
@@ -2298,9 +2250,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 ac = t.activeCharge;
         if (ac == 0) return;
 
-        if ((t.buff.flags & STABILIZED) != 0) {
+        if (DigilFlags.has(t.buff.flags, DigilFlags.STABILIZED)) {
             // Consume the protection, but skip the bleed
-            t.buff.flags &= ~STABILIZED; // Clear flag
+            t.buff.flags = DigilFlags.clear(t.buff.flags, DigilFlags.STABILIZED); // Clear flag
             return;
         }
 
@@ -2734,7 +2686,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
         // Sanitize input: Only allow user flags (remove Stabilized/Primed if user tried to sneak them in)
-        uint16 requestedFlags = flags & USER_FLAGS_MASK;
+        uint16 requestedFlags = flags & DigilFlags.USER_FLAGS_MASK;
 
         require(
             (efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) ||
@@ -2768,21 +2720,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             }
             // 2. Flag Cost (The "Payment" Logic)
             // Check each allowed user flag. If set, increase magnitude by 50.
-            if ((requestedFlags & ANCHORED) != 0)      magnitude += 50;
-            if ((requestedFlags & REVERBERATED) != 0)  magnitude += 50;
-            if ((requestedFlags & ELEMENTAL) != 0)     magnitude += 5;
-            if ((requestedFlags & PARAELEMENTAL) != 0) magnitude += 10;
-            if ((requestedFlags & VOIDIC) != 0)        magnitude += 25;
-            if ((requestedFlags & KARMIC) != 0)        magnitude += 50;
-            if ((requestedFlags & KAOTIC) != 0)        magnitude += 50;
-            if ((requestedFlags & AETHERIAL) != 0)     magnitude += 100;
-            if ((requestedFlags & CELESTIAL) != 0)     magnitude += 200;
+            if (DigilFlags.has(requestedFlags, DigilFlags.ANCHORED))      magnitude += 50;
+            if (DigilFlags.has(requestedFlags, DigilFlags.REVERBERATED))  magnitude += 50;
+            if (DigilFlags.has(requestedFlags, DigilFlags.ELEMENTAL))     magnitude += 5;
+            if (DigilFlags.has(requestedFlags, DigilFlags.PARAELEMENTAL)) magnitude += 10;
+            if (DigilFlags.has(requestedFlags, DigilFlags.VOIDIC))        magnitude += 25;
+            if (DigilFlags.has(requestedFlags, DigilFlags.KARMIC))        magnitude += 50;
+            if (DigilFlags.has(requestedFlags, DigilFlags.KAOTIC))        magnitude += 50;
+            if (DigilFlags.has(requestedFlags, DigilFlags.AETHERIAL))     magnitude += 100;
+            if (DigilFlags.has(requestedFlags, DigilFlags.CELESTIAL))     magnitude += 200;
             // --- Appearance tagging cost (style/cosmetics/colors in `appearance`) ---
             // Light flat magnitude so appearance tagging isn't completely free.
-            uint8 styleId = uint8((appearance & STYLE_MASK) >> STYLE_SHIFT);
-            if (styleId != 0) magnitude += 5;
-            if ((appearance & COSMETICS_MASK) != 0) magnitude += 5;
-            if ((appearance & (COLOR_START_MASK | COLOR_END_MASK)) != 0) magnitude += 5;
+            if (DigilAppearance.hasStyle(appearance))     magnitude += 5;
+            if (DigilAppearance.hasCosmetics(appearance)) magnitude += 5;
+            if (DigilAppearance.hasColors(appearance))    magnitude += 5; // includes mainRgb + gradients
 
             // Save the magnitude
             t.buff.magnitude = uint16(magnitude);
@@ -2805,7 +2756,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.buff.attunement = attunement;
 
         // Preserve internal flags (STABILIZED + PRIMED), apply requested user flags.
-        uint16 preservedInternal = t.buff.flags & (STABILIZED | PRIMED);
+        uint16 preservedInternal = t.buff.flags & DigilFlags.INTERNAL_ONLY_MASK;
         t.buff.flags = preservedInternal | requestedFlags;
 
         // Appearance is persistent across discharges; only overwrite if caller provides nonzero payload.
@@ -2831,7 +2782,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
-        require((t.buff.flags & PRIMED) == 0, "DIGIL: Already Primed");
+        require((t.buff.flags & DigilFlags.PRIMED) == 0, "DIGIL: Already Primed");
 
         // Compact guard: inactive, not mid-batch, not already primed, has threshold.
         require(!t.active && t.distributionIndex == 0 && t.activationThreshold > 0, "DIGIL: Token Cannot Be Primed");
@@ -2841,7 +2792,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _coinsFromSender(cost);
 
         // Mark token as primed.
-        t.buff.flags |= PRIMED;
+        t.buff.flags = DigilFlags.set(t.buff.flags, DigilFlags.PRIMED);
 
         // Update last activity
         t.lastActivity = block.timestamp;
@@ -2860,7 +2811,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
-        require((t.buff.flags & STABILIZED) == 0, "DIGIL: Already Stabilized");
+        require((t.buff.flags & DigilFlags.STABILIZED) == 0, "DIGIL: Already Stabilized");
         
         uint256 ac = t.activeCharge;
         require(ac > 0, "DIGIL: Token Cannot Be Stabilized");
@@ -2882,7 +2833,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Set protection
-        t.buff.flags |= STABILIZED;
+        t.buff.flags = DigilFlags.set(t.buff.flags, DigilFlags.STABILIZED);
 
         // Transfer Coins from the user to the contract
         _coinsFromSender(cost);
