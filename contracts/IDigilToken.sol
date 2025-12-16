@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.31;
 
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title Interface for Digil Token (NFT)
 /// @notice Interface for the DigilToken contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
@@ -15,7 +15,6 @@ interface IDigilToken is IERC721, IERC721Receiver {
     event Whitelist(address indexed account, uint256 indexed tokenId);
     event Restrict(uint256 indexed tokenId);
     event Update(uint256 indexed tokenId);
-    event Batch(uint256 indexed tokenId);
     event Activate(uint256 indexed tokenId);
     event Deactivate(uint256 indexed tokenId);
     event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, uint256 value);
@@ -60,7 +59,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     function tokenURI(uint256 tokenId) external view returns (string memory);
     function tokenCharge(uint256 tokenId) external view returns (uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold);
     function tokenData(uint256 tokenId) external view returns (bool active, bool activating, bool discharging, bool restricted, uint256 links, uint256 contributors, uint256 contributionEpoch, uint256 distributionIndex, bytes memory data);
-    function tokenBuff(uint256 tokenId) external view returns (uint40 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags);
+    function tokenBuff(uint256 tokenId) external view returns (uint40 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearence);
     function tokenContribution(uint256 tokenId, address contributor) external view returns (uint256 charge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch);
     function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 baseEfficiency, uint256 affinityBonus);
     function tokenAttachment(uint256 tokenId) external view returns (address contractTokenAddress, uint256 externalTokenId, bool recallable, bool vaulted); 
@@ -94,7 +93,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     function unlinkToken(uint256 tokenId, uint256 linkId) external;
 
     // Buff Token
-    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint256 duration) external;
+    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearance, uint256 duration) external;
 
     // Stabilize Token
     function stabilizeToken(uint256 tokenId) external;

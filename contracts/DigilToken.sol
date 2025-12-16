@@ -7,7 +7,6 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import {IMintableERC20} from "contracts/IMintableERC20.sol";
@@ -61,7 +60,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint8  private constant MAX_BUFF_BONUS = 100;               // Maximum temporary bonus
     uint16 private constant MAX_BUFF_DURATION_MIN = 7 * 24 * 60;// Maximum duration of buffs (7 days)
     uint256 private constant LINK_BUFF_COST_FACTOR = 24 * 60;   // The cost per bonus-point-hour per link
-    uint256 private constant BUFF_COST = 50;                    // The cost of each buff flag
 
     // Mappings for token data, blacklisted addresses, distributions, and contract tokens
     mapping(uint256 => Token) private _tokens;                                      // Mapping from token ID to its detailed Token struct
@@ -101,48 +99,48 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     // Buff Bitmasks
-    uint40 private constant STABILIZED       = 1 << 0;  // Anti-Bleed
-    uint40 private constant ANCHORED         = 1 << 1;  // Retain Charge on Discharge
-    uint40 private constant PRIMED           = 1 << 2;  // Half Activation Threshold
-    uint40 private constant REVERBERATED     = 1 << 3;  // Retain Some Charge on Active Token
-    uint40 private constant ELEMENTAL        = 1 << 4;  // Tier 1 Buff
-    uint40 private constant PARAELEMENTAL    = 1 << 5;  // Tier 2 Buff
-    uint40 private constant VOIDIC           = 1 << 6;  // Tier 3 Buff
-    uint40 private constant KARMIC           = 1 << 7;  // Tier 4 Buff
-    uint40 private constant KAOTIC           = 1 << 8;  // Tier 4 Buff
-    uint40 private constant AETHERIAL        = 1 << 9;  // Tier 5 Buff
-    uint40 private constant CELESTIAL        = 1 << 10; // Tier 6 Buff
+    uint16 private constant STABILIZED       = uint16(1) << 0;  // Anti-Bleed
+    uint16 private constant ANCHORED         = uint16(1) << 1;  // Retain Charge on Discharge
+    uint16 private constant PRIMED           = uint16(1) << 2;  // Half Activation Threshold
+    uint16 private constant REVERBERATED     = uint16(1) << 3;  // Reflect some propagated charge back as activeCharge
+    uint16 private constant ELEMENTAL        = uint16(1) << 4;  // Tier 1 Buff
+    uint16 private constant PARAELEMENTAL    = uint16(1) << 5;  // Tier 2 Buff
+    uint16 private constant VOIDIC           = uint16(1) << 6;  // Tier 3 Buff
+    uint16 private constant KARMIC           = uint16(1) << 7;  // Tier 4 Buff (1)
+    uint16 private constant KAOTIC           = uint16(1) << 8;  // Tier 4 Buff (2)
+    uint16 private constant AETHERIAL        = uint16(1) << 9;  // Tier 5 Buff
+    uint16 private constant CELESTIAL        = uint16(1) << 10; // Tier 6 Buff
 
-    // styleId: bits 11..18 (8 bits)
-    uint8  private constant STYLE_SHIFT = 11;
-    uint40 private constant STYLE_MASK  = uint40(0xFF) << STYLE_SHIFT;
+    // Users may NOT set STABILIZED/PRIMED, but can set everything else (tiers, anchored, etc.)
+    uint16 private constant USER_FLAGS_MASK = uint16(type(uint16).max) & ~(STABILIZED | PRIMED);
 
-    // 5 cosmetic 4-bit slots: bits 19..38
-    uint8  private constant COS0_SHIFT = 19;
-    uint8  private constant COS1_SHIFT = 23;
-    uint8  private constant COS2_SHIFT = 27;
-    uint8  private constant COS3_SHIFT = 31;
-    uint8  private constant COS4_SHIFT = 35;
-    uint40 private constant COS_SLOT_MASK = uint40(0xF);
+    // Appearance packing (uint120)
+    // Layout (little-endian bit indexing):
+    // - styleId:    bits 0..7   (8 bits)
+    // - cosmetics:  bits 8..27  (20 bits; 5 x 4-bit slots)
+    // - colorStart: bits 28..59 (32 bits; RRGGBBAA)
+    // - colorEnd:   bits 60..91 (32 bits; RRGGBBAA)
+    // - reserved:   bits 92..119 (28 bits)
+    uint8   private constant STYLE_SHIFT = 0;
+    uint120 private constant STYLE_MASK  = uint120(0xFF) << STYLE_SHIFT;
 
-    uint40 private constant COS0_MASK = COS_SLOT_MASK << COS0_SHIFT;
-    uint40 private constant COS1_MASK = COS_SLOT_MASK << COS1_SHIFT;
-    uint40 private constant COS2_MASK = COS_SLOT_MASK << COS2_SHIFT;
-    uint40 private constant COS3_MASK = COS_SLOT_MASK << COS3_SHIFT;
-    uint40 private constant COS4_MASK = COS_SLOT_MASK << COS4_SHIFT;
+    uint8   private constant COSMETICS_SHIFT = 8;
+    uint120 private constant COSMETICS_MASK  = uint120(0xFFFFF) << COSMETICS_SHIFT; // 20 bits
 
-    uint40 private constant COSMETICS_MASK = uint40(type(uint40).max) << COS0_SHIFT;
-
-    uint40 private constant STYLE_AND_COSMETICS_MASK = (STYLE_MASK | COSMETICS_MASK);
-
-    // Users may NOT set STABILIZED/PRIMED, but can set everything else (including cosmetics)
-    uint40 private constant USER_FLAGS_MASK = uint40(type(uint40).max) & ~(STABILIZED | PRIMED);
+    uint8   private constant COLOR_START_SHIFT = 28;
+    uint8   private constant COLOR_END_SHIFT   = 60;
+    uint120 private constant COLOR32_MASK      = uint120(0xFFFFFFFF);
+    uint120 private constant COLOR_START_MASK  = COLOR32_MASK << COLOR_START_SHIFT;
+    uint120 private constant COLOR_END_MASK    = COLOR32_MASK << COLOR_END_SHIFT;
 
     /// @dev State for a temporary buff on a token
     struct BuffState {
+        uint120 appearance;     // Packed style/cosmetics/colors (see masks above)
+
         uint40 expiresAt;       // Unix timestamp (in seconds) when the buff expires
         uint16 magnitude;       // Stores the total calculated power/cost
-        uint40 flags;            // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Reverberated
+        uint16 flags;           // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Reverberated
+
         uint8 efficiencyBonus;  // Temporary bonus on top of base efficiency (0–100)
         uint8 attunement;       // ID of the plane to mimic (1-18)
         uint8 amplification;    // Bonus multiplier percentage for incoming charge (e.g. 20 = 1.2x)
@@ -580,34 +578,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(msg.value);
     }
 
-    /// @dev    Computes the time-based bonus coins that would be awarded to `addr`
-    ///         at `nowTs`, without mutating state. Mirrors the logic used in {withdraw}.
-    ///         - Requires the user to hold at least one Digil token.
-    /// @param  addr The address whose bonus is being computed.
-    /// @param  distribution The Distribution storage slot for this address.
-    /// @param  nowTs The timestamp to use for the calculation (typically block.timestamp).
-    /// @return bonus The number of bonus coin units that would be granted.
-    function _pendingBonus(address addr, Distribution storage distribution, uint256 nowTs) internal view returns (uint256 bonus) {
-        // User must hold at least one Digil token to earn.
-        // If they hold 0 tokens, they earn 0 bonus.
-        if (balanceOf(addr) == 0) {
-            return 0;
-        }
-
-        uint256 lastBonusTime = distribution.time;
-
-        // If lastBonusTime > nowTs (weird but possible in some edge cases), clamp.
-        if (nowTs <= lastBonusTime) {
-            // No time elapsed since the last bonus, so nothing to accrue.
-            return 0;
-        }
-
-        // Each full BONUS_INTERVAL grants _coinMultiplier units, up to the cap.
-        uint256 cap = _coinRate;
-        uint256 rawBonus = (nowTs - lastBonusTime) / BONUS_INTERVAL * _coinMultiplier;
-        bonus = rawBonus < cap ? rawBonus : cap;
-    }
-
     /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
     /// @dev    Bonus coins are calculated based on the time since the last distribution.
     /// @return coins The number of coin units transferred to the sender.
@@ -623,7 +593,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         distribution.value = 0;
 
         if (value > 0) {
-            Address.sendValue(payable(addr), value);
+            (bool ok, ) = payable(addr).call{value: value}("");
+            if (!ok) revert();
         }
 
         // Blacklisted accounts cannot withdraw coins or earn bonus coins.
@@ -640,7 +611,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         distribution.coins = 0;
 
         // Compute time-based bonus *without* mutating state.
-        uint256 bonus = _pendingBonus(addr, distribution, nowTs);
+        uint256 bonus;
+        if (balanceOf(addr) != 0) {
+            if (nowTs > oldTime) {
+                uint256 rawBonus = ((nowTs - oldTime) / BONUS_INTERVAL) * _coinMultiplier;
+                bonus = rawBonus < _coinRate ? rawBonus : _coinRate;
+            }
+        }
         uint256 total = baseCoins + bonus;
 
         if (total == 0) {
@@ -1167,11 +1144,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return efficiencyBonus The temporary efficiency bonus applied to all outgoing links (0–100).
     /// @return attunement Planar ID to mimic for affinity (1-18, or 0 for none).
     /// @return amplification Percentage multiplier applied to incoming charge (0-100, or 0 for none).
-    /// @return flags Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated.
-    function tokenBuff(uint256 tokenId) external view returns (uint40 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint40 flags) {
+    /// @return flags Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated, Tiers.
+    /// @return appearence Style, Cosmetics, Color, Start Gradient, End Gradient
+    function tokenBuff(uint256 tokenId) external view returns (uint40 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearence) {
         _checkTokenExists(tokenId);
         BuffState storage b = _tokens[tokenId].buff;
-        return (b.expiresAt, b.efficiencyBonus, b.attunement, b.amplification, b.flags);
+        return (b.expiresAt, b.efficiencyBonus, b.attunement, b.amplification, b.flags, b.appearance);
     }
 
     /// @notice Retrieves contribution details for a specific address on a given token.
@@ -2114,7 +2092,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Run the distribution phase based on mode (may require multiple calls).
         bool distributionComplete = _distribute(tokenId, !t.active);
         if (!distributionComplete) {
-            emit Batch(tokenId);
             return false;
         }
 
@@ -2189,10 +2166,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             ct.recallable = false;
         }
 
-        // Clear any temporary buff state, but preserve persistent cosmetics (styleId + cosmetic slots).
-        uint40 persistedCosmetics = t.buff.flags & STYLE_AND_COSMETICS_MASK;
+        // Clear any temporary buff state, but preserve persistent appearance (style/cosmetics/colors).
+        uint120 persistedAppearance = t.buff.appearance;
         delete t.buff;
-        t.buff.flags = persistedCosmetics;
+        t.buff.appearance = persistedAppearance;
 
         // Clear flag on completion
         t.discharging = false;
@@ -2261,7 +2238,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         bool distributionComplete = _distribute(tokenId, false);
         
         if (!distributionComplete) {
-            emit Batch(tokenId);
             return false;
         }
         
@@ -2703,8 +2679,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///             cost ≈ magnitude * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR
     ///         where:
     ///             magnitude = efficiencyBonus + amplification
-    ///                 + BUFF_COST for attunement (if any)
-    ///                 + BUFF_COST for ANCHORED (if enabled),
+    ///                 + 50 for attunement (if any)
+    ///                 + 50 for ANCHORED (if enabled),
     ///             duration is in minutes, and linkCount is the number of outgoing links
     ///             (or 1 if there are none).
     ///         A non-zero buff always costs at least `_coinRate` units of activeCharge.
@@ -2714,12 +2690,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  efficiencyBonus  The temporary bonus (0–100) added to each link's base efficiency.
     /// @param  attunement       Planar ID to mimic for affinity (1-17, or 0 for none; world (18) cannot be used).
     /// @param  amplification    Percentage multiplier applied to incoming charge (0-100, or 0 for none).
-    /// @param  flags            Bitmask of requested flags. Includes:
-    ///                           - Functional flags (anchored/reverberated/etc.)
-    ///                           - A packed 4-bit cosmetic style id stored in bits [COSMETIC_SHIFT..COSMETIC_SHIFT+3].
-    ///                             styleId = 0 means “no cosmetic style”; 1..15 are off-chain cosmetic presets.
+    /// @param  flags            Bitmask of requested flags. 
+    /// @param  appearance       Style, Cosmetics, Color
     /// @param  duration         The buff duration in minutes (1–10080).
-    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint40 flags, uint256 duration) external {
+    function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearance, uint256 duration) external {
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
@@ -2728,13 +2702,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
 
         // Sanitize input: Only allow user flags (remove Stabilized/Primed if user tried to sneak them in)
-        uint40 requestedFlags = flags & USER_FLAGS_MASK;
+        uint16 requestedFlags = flags & USER_FLAGS_MASK;
 
         require(
             (efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) ||
             (attunement > 0 && attunement < PLANAR_MAX_ID) || 
             (amplification > 0 && amplification <= MAX_BUFF_BONUS) ||
-            requestedFlags > 0, 
+            requestedFlags > 0 ||
+            appearance != 0,
             "DIGIL: Invalid Buff"
         );
         
@@ -2757,30 +2732,25 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     tier *= AFFINITY_BOOST;
                 }
 
-                magnitude += tier * BUFF_COST;
+                magnitude += tier * 50;
             }
             // 2. Flag Cost (The "Payment" Logic)
-            // Check each allowed user flag. If set, increase magnitude by BUFF_COST.
-            if ((requestedFlags & ANCHORED) != 0)      magnitude += BUFF_COST;
-            if ((requestedFlags & REVERBERATED) != 0)  magnitude += BUFF_COST;
-            if ((requestedFlags & ELEMENTAL) != 0)     magnitude += BUFF_COST / 8;
-            if ((requestedFlags & PARAELEMENTAL) != 0) magnitude += BUFF_COST / 4;
-            if ((requestedFlags & VOIDIC) != 0)        magnitude += BUFF_COST / 2;
-            if ((requestedFlags & KARMIC) != 0)        magnitude += BUFF_COST;
-            if ((requestedFlags & KAOTIC) != 0)        magnitude += BUFF_COST;
-            if ((requestedFlags & AETHERIAL) != 0)     magnitude += BUFF_COST * 2;
-            if ((requestedFlags & CELESTIAL) != 0)     magnitude += BUFF_COST * 4;
-            // --- Cosmetic style cost (packed nibble) ---
-            // If styleId != 0, the caller selected a cosmetic theme/preset.
-            // This adds a small flat magnitude so cosmetic tagging is not free,
-            // while avoiding per-flag branching or per-bit pricing.
-            uint8 styleId = uint8((flags & STYLE_MASK) >> STYLE_SHIFT);
-            if (styleId != 0) {
-                magnitude += BUFF_COST / 16;
-            }
-            if ((flags & COSMETICS_MASK) != 0) {
-                magnitude += BUFF_COST / 16;
-            }
+            // Check each allowed user flag. If set, increase magnitude by 50.
+            if ((requestedFlags & ANCHORED) != 0)      magnitude += 50;
+            if ((requestedFlags & REVERBERATED) != 0)  magnitude += 50;
+            if ((requestedFlags & ELEMENTAL) != 0)     magnitude += 5;
+            if ((requestedFlags & PARAELEMENTAL) != 0) magnitude += 10;
+            if ((requestedFlags & VOIDIC) != 0)        magnitude += 25;
+            if ((requestedFlags & KARMIC) != 0)        magnitude += 50;
+            if ((requestedFlags & KAOTIC) != 0)        magnitude += 50;
+            if ((requestedFlags & AETHERIAL) != 0)     magnitude += 100;
+            if ((requestedFlags & CELESTIAL) != 0)     magnitude += 200;
+            // --- Appearance tagging cost (style/cosmetics/colors in `appearance`) ---
+            // Light flat magnitude so appearance tagging isn't completely free.
+            uint8 styleId = uint8((appearance & STYLE_MASK) >> STYLE_SHIFT);
+            if (styleId != 0) magnitude += 5;
+            if ((appearance & COSMETICS_MASK) != 0) magnitude += 5;
+            if ((appearance & (COLOR_START_MASK | COLOR_END_MASK)) != 0) magnitude += 5;
 
             // Save the magnitude
             t.buff.magnitude = uint16(magnitude);
@@ -2802,18 +2772,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.buff.amplification = amplification;
         t.buff.attunement = attunement;
 
-        // Start from existing flags and preserve STABILIZED + PRIMED bits.
-        // Cosmetics are persistent:
-        //   - If caller supplies any cosmetic payload (flags & STYLE_AND_COSMETICS_MASK != 0), overwrite cosmetics.
-        //   - Otherwise preserve the existing cosmetics.
-        uint40 preservedInternal = t.buff.flags & (STABILIZED | PRIMED);
-        uint40 existingCosmetics = t.buff.flags & STYLE_AND_COSMETICS_MASK;
-        uint40 newCosmetics = requestedFlags & STYLE_AND_COSMETICS_MASK;
-        if ((flags & STYLE_AND_COSMETICS_MASK) == 0) {
-            newCosmetics = existingCosmetics;
+        // Preserve internal flags (STABILIZED + PRIMED), apply requested user flags.
+        uint16 preservedInternal = t.buff.flags & (STABILIZED | PRIMED);
+        t.buff.flags = preservedInternal | requestedFlags;
+
+        // Appearance is persistent across discharges; only overwrite if caller provides nonzero payload.
+        if (appearance != 0) {
+            t.buff.appearance = appearance;
         }
-        // Apply non-cosmetic requested flags, then splice cosmetics.
-        t.buff.flags = preservedInternal | (requestedFlags & ~STYLE_AND_COSMETICS_MASK) | newCosmetics;
 
         // Update last activity
         t.lastActivity = block.timestamp;
