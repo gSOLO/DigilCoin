@@ -11,7 +11,6 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 
 import {IMintableERC20} from "contracts/IMintableERC20.sol";
 
-
 /// @title Digital Sigils (NFT)
 /// @author gSOLO
 /// @notice NFT contract used for the creation, charging, and activation of Digital Sigils ("Digils")
@@ -98,34 +97,50 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 affinityBonus;  // Additional bonus efficiency generated from planar affinity
     }
 
-    // Buff Bitmasks
-    uint16 private constant STABILIZED       = uint16(1) << 0;  // Anti-Bleed
-    uint16 private constant ANCHORED         = uint16(1) << 1;  // Retain Charge on Discharge
-    uint16 private constant PRIMED           = uint16(1) << 2;  // Half Activation Threshold
-    uint16 private constant REVERBERATED     = uint16(1) << 3;  // Reflect some propagated charge back as activeCharge
-    uint16 private constant ELEMENTAL        = uint16(1) << 4;  // Tier 1 Buff
-    uint16 private constant PARAELEMENTAL    = uint16(1) << 5;  // Tier 2 Buff
-    uint16 private constant VOIDIC           = uint16(1) << 6;  // Tier 3 Buff
-    uint16 private constant KARMIC           = uint16(1) << 7;  // Tier 4 Buff (1)
-    uint16 private constant KAOTIC           = uint16(1) << 8;  // Tier 4 Buff (2)
-    uint16 private constant AETHERIAL        = uint16(1) << 9;  // Tier 5 Buff
-    uint16 private constant CELESTIAL        = uint16(1) << 10; // Tier 6 Buff
+    // Buff / State Flags (uint16)
+    //
+    // Notes:
+    // - `flags` is a bitmask stored in `Token.buff.flags`.
+    // - Some bits are "internal-only" (cannot be set via {buffToken}):
+    //     * STABILIZED: set/consumed by {stabilizeToken} and {_applyActiveChargeBleed}
+    //     * PRIMED: set by {primeToken}, consumed by {activateToken}
+    // - User-settable bits (via {buffToken}) include ANCHORED, REVERBERATED, and the tier tags.
+    // - Tier bits are cosmetic / semantic tags in this contract (they only affect `magnitude`
+    //   pricing in {buffToken} unless you add other logic elsewhere).
 
-    // Users may NOT set STABILIZED/PRIMED, but can set everything else (tiers, anchored, etc.)
+    uint16 private constant STABILIZED       = uint16(1) << 0;  // Anti-Bleed - Prevents one bleed event; consumed on deactivation/recall bleed
+    uint16 private constant ANCHORED         = uint16(1) << 1;  // Retain Charge - On discharge, retain a fraction of activeCharge if buff still activ
+    uint16 private constant PRIMED           = uint16(1) << 2;  // Half Activation - Next activation threshold is halved once; consumed on successful activation
+    uint16 private constant REVERBERATED     = uint16(1) << 3;  // Reflect Propogated Charge - While buff is active, reflect a fraction of *propagated* link charge back as activeCharge
+
+    // Tier / tag flags (primarily used to scale `magnitude` cost in {buffToken})
+    uint16 private constant ELEMENTAL        = uint16(1) << 4;  // Tier 1 tag
+    uint16 private constant PARAELEMENTAL    = uint16(1) << 5;  // Tier 2 tag
+    uint16 private constant VOIDIC           = uint16(1) << 6;  // Tier 3 tag
+    uint16 private constant KARMIC           = uint16(1) << 7;  // Tier 4 tag (variant A)
+    uint16 private constant KAOTIC           = uint16(1) << 8;  // Tier 4 tag (variant B)
+    uint16 private constant AETHERIAL        = uint16(1) << 9;  // Tier 5 tag
+    uint16 private constant CELESTIAL        = uint16(1) << 10; // Tier 6 tag
+
+    // Users may NOT set STABILIZED/PRIMED via {buffToken}, but can set everything else.
     uint16 private constant USER_FLAGS_MASK = uint16(type(uint16).max) & ~(STABILIZED | PRIMED);
 
     // Appearance packing (uint120)
+    //
+    // This contract does not “render” appearance on-chain; it stores a compact payload
+    // that front-ends / indexers can interpret for visuals.
+    //
     // Layout (little-endian bit indexing):
-    // - styleId:    bits 0..7   (8 bits)
-    // - cosmetics:  bits 8..27  (20 bits; 5 x 4-bit slots)
-    // - colorStart: bits 28..59 (32 bits; RRGGBBAA)
-    // - colorEnd:   bits 60..91 (32 bits; RRGGBBAA)
-    // - reserved:   bits 92..119 (28 bits)
+    // - styleId:    bits 0..7    (8 bits)   - 0 means “no explicit style override”
+    // - cosmetics:  bits 8..27   (20 bits)  - 5 x 4-bit cosmetic slots (nibbles)
+    // - colorStart: bits 28..59  (32 bits)  - RRGGBBAA packed into uint32
+    // - colorEnd:   bits 60..91  (32 bits)  - RRGGBBAA packed into uint32
+    // - reserved:   bits 92..119 (28 bits)  - reserved for future use
     uint8   private constant STYLE_SHIFT = 0;
     uint120 private constant STYLE_MASK  = uint120(0xFF) << STYLE_SHIFT;
 
     uint8   private constant COSMETICS_SHIFT = 8;
-    uint120 private constant COSMETICS_MASK  = uint120(0xFFFFF) << COSMETICS_SHIFT; // 20 bits
+    uint120 private constant COSMETICS_MASK  = uint120(0xFFFFF) << COSMETICS_SHIFT; // 20 bits (5 nibbles)
 
     uint8   private constant COLOR_START_SHIFT = 28;
     uint8   private constant COLOR_END_SHIFT   = 60;
@@ -133,17 +148,23 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint120 private constant COLOR_START_MASK  = COLOR32_MASK << COLOR_START_SHIFT;
     uint120 private constant COLOR_END_MASK    = COLOR32_MASK << COLOR_END_SHIFT;
 
-    /// @dev State for a temporary buff on a token
+    /// @dev State for a temporary buff on a token.
+    ///      - The buff is considered "active" if `block.timestamp < expiresAt`.
+    ///      - `appearance` is NOT temporary: this contract preserves it across full discharges
+    ///        (see {dischargeToken}), so UI can treat it as an identity/skin payload.
+    ///      - `magnitude` is the precomputed “power score” used for pricing:
+    ///          * It is NOT just `efficiencyBonus` — it includes amplification, attunement tiering,
+    ///            requested flags, and a small appearance-tagging weight (see {buffToken}).
     struct BuffState {
-        uint120 appearance;     // Packed style/cosmetics/colors (see masks above)
+        uint120 appearance;     // Packed style/cosmetics/colors (see masks above). Persisted across discharges.
 
-        uint40 expiresAt;       // Unix timestamp (in seconds) when the buff expires
-        uint16 magnitude;       // Stores the total calculated power/cost
-        uint16 flags;           // Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Reverberated
+        uint40 expiresAt;       // Unix timestamp (seconds) when the temporary buff expires (0 means inactive/never set)
+        uint16 magnitude;       // Precomputed pricing magnitude used by {_buffCost} and charged for new-link additions
+        uint16 flags;           // Bitmask: STABILIZED/ANCHORED/PRIMED/REVERBERATED + tier tags
 
-        uint8 efficiencyBonus;  // Temporary bonus on top of base efficiency (0–100)
-        uint8 attunement;       // ID of the plane to mimic (1-18)
-        uint8 amplification;    // Bonus multiplier percentage for incoming charge (e.g. 20 = 1.2x)
+        uint8 efficiencyBonus;  // Added to outgoing link base efficiency while buff is active (0–100 typical; capped by input rules)
+        uint8 attunement;       // Planar ID to *mimic* for affinity calculations while buff is active (1–17; 0 = none)
+        uint8 amplification;    // Incoming active-charge multiplier (percentage). 20 => +20% boost; 100 => +100% (double)
     }
 
     struct Token {
@@ -1139,14 +1160,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return (t.active, t.activating, t.discharging, t.restricted, t.links.length, t.contributors.length, t.contributionEpoch, t.distributionIndex, t.data);
     }
 
-    /// @notice Retrieves buff information for a token.
-    /// @return expiresAt The unix timestamp when the current buff expires (0 if no buff has ever been set).
-    /// @return efficiencyBonus The temporary efficiency bonus applied to all outgoing links (0–100).
-    /// @return attunement Planar ID to mimic for affinity (1-18, or 0 for none).
-    /// @return amplification Percentage multiplier applied to incoming charge (0-100, or 0 for none).
-    /// @return flags Bitmask: 1 Stabilized, 2 Anchored, 4 Primed, 8 Resonated, Tiers.
-    /// @return appearence Style, Cosmetics, Color, Start Gradient, End Gradient
-    function tokenBuff(uint256 tokenId) external view returns (uint40 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearence) {
+    /// @notice Retrieves buff and appearance information for a token.
+    /// @dev    The buff is considered active iff `block.timestamp < expiresAt`.
+    ///         `appearance` is stored in `BuffState.appearance` and is intentionally
+    ///         preserved across full discharges (see {dischargeToken}).
+    /// @return expiresAt        Unix timestamp when the current temporary buff expires (0 if inactive/never set).
+    /// @return efficiencyBonus  Temporary bonus added to outgoing link base efficiency while buff is active.
+    /// @return attunement       Planar ID mimicked for affinity while buff is active (1–17, or 0 for none).
+    /// @return amplification    Incoming active-charge multiplier percent (e.g., 20 => +20%; 100 => +100%).
+    /// @return flags            Bitmask of STABILIZED/ANCHORED/PRIMED/REVERBERATED plus tier tags.
+    /// @return appearance       Packed appearance payload (style/cosmetics/colors).
+    function tokenBuff(uint256 tokenId) external view returns (uint40 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearance) {
         _checkTokenExists(tokenId);
         BuffState storage b = _tokens[tokenId].buff;
         return (b.expiresAt, b.efficiencyBonus, b.attunement, b.amplification, b.flags, b.appearance);
@@ -2264,15 +2288,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return true;
     }
 
-    /// @dev    Applies thematic "bleed" to a token's active charge:
-    ///         - If the token is STABILIZED (bit 1 set in `buff.flags`), consume that
-    ///           protection and skip the bleed for this call.
-    ///         - Otherwise, compute a loss of 1 / AFFINITY_REDUCTION of the current
-    ///           `activeCharge`, subtract it, and leave the lost units as untracked
-    ///           power in the contract’s ERC20 balance.
-    ///         With the current configuration (AFFINITY_REDUCTION = 2), an unprotected
-    ///         call burns ~50% of the token's activeCharge.
-    /// @param  t The token whose activeCharge will be reduced.
+    /// @dev Applies thematic "bleed" to a token's active charge:
+    ///      - If the token is STABILIZED (STABILIZED bit set in `buff.flags`), consume that
+    ///        protection and skip the bleed for this call.
+    ///      - Otherwise, burn `activeCharge / AFFINITY_REDUCTION`.
+    ///        With AFFINITY_REDUCTION = 2, this burns ~50% (integer-rounded down).
+    /// @param t The token whose activeCharge will be reduced.
     function _applyActiveChargeBleed(Token storage t) internal {
         uint256 ac = t.activeCharge;
         if (ac == 0) return;
@@ -2663,36 +2684,47 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return 0;
     }
 
-    /// @notice Temporarily buffs all outgoing links from a token by adding a bonus
-    ///         on top of each link's base efficiency, and offers discounts on
-    ///         linking and stabilization costs.
-    /// @dev    The buff:
-    ///         - Consumes `activeCharge` from the token as a cost.
-    ///         - Applies the same `efficiencyBonus` to all outgoing links.
-    ///         - Optionally enables ANCHORED, causing a portion of `activeCharge`
-    ///           to be retained on discharge.
-    ///         - Optionally enables REVERBERATED, causing a fraction of outbound link charge
-    ///           to be reflected back into this token as fresh activeCharge while the
-    ///           buff is active.
-    ///         - Lasts for `duration` minutes (capped at 7 days).
-    ///         The cost is computed via {_buffCost} using:
-    ///             cost ≈ magnitude * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR
-    ///         where:
-    ///             magnitude = efficiencyBonus + amplification
-    ///                 + 50 for attunement (if any)
-    ///                 + 50 for ANCHORED (if enabled),
-    ///             duration is in minutes, and linkCount is the number of outgoing links
-    ///             (or 1 if there are none).
-    ///         A non-zero buff always costs at least `_coinRate` units of activeCharge.
-    ///         The STABILIZED and PRIMED bits (if set) are preserved and managed by
-    ///         {stabilizeToken} and {primeToken} respectively.
-    /// @param  tokenId          The ID of the token whose links are to be buffed.
-    /// @param  efficiencyBonus  The temporary bonus (0–100) added to each link's base efficiency.
-    /// @param  attunement       Planar ID to mimic for affinity (1-17, or 0 for none; world (18) cannot be used).
-    /// @param  amplification    Percentage multiplier applied to incoming charge (0-100, or 0 for none).
-    /// @param  flags            Bitmask of requested flags. 
-    /// @param  appearance       Style, Cosmetics, Color
-    /// @param  duration         The buff duration in minutes (1–10080).
+    /// @notice Applies/updates a temporary buff on an **active** token.
+    /// @dev    Buff effects while active (`block.timestamp < expiresAt`):
+    ///         - Outgoing link efficiency: `efficiencyBonus` is added to each link's stored base efficiency
+    ///           when computing propagation splits (see {_effectiveBaseEfficiency}).
+    ///         - Incoming amplification: if `amplification > 0`, any incoming linked charge that lands on this
+    ///           token is increased by `(incoming * amplification) / 100` (see {_chargeActiveToken}).
+    ///         - Attunement: if `attunement > 0`, affinity calculations may treat this token as if it were linked
+    ///           to that plane for bonus selection (see {_updateLinkAffinity}).
+    ///         - ANCHORED: if set and unexpired, {dischargeToken} retains a fraction of remaining activeCharge.
+    ///         - REVERBERATED: if set and unexpired, a fraction of *successfully propagated* link charge
+    ///           “echoes” back into this token as fresh activeCharge.
+    ///
+    ///         Pricing / payment model:
+    ///         - This function charges the token’s `activeCharge` (not ERC20 coins).
+    ///         - A precomputed `magnitude` score is calculated from requested parameters:
+    ///             * `efficiencyBonus + amplification`
+    ///             * + tiered attunement weight (scaled by attunement plane and short-duration boost)
+    ///             * + costs for requested flags and tier tags
+    ///             * + a small flat weight if `appearance` tags are provided
+    ///         - Cost uses {_buffCost(magnitude, duration, linkCount)} where:
+    ///             * duration is in minutes
+    ///             * linkCount is `max(1, t.links.length)`
+    ///             * minimum cost is `_coinRate` (so non-zero buffs are never free)
+    ///
+    ///         Flag rules:
+    ///         - Callers cannot set STABILIZED or PRIMED via this function (they are masked off).
+    ///         - STABILIZED is managed by {stabilizeToken}; PRIMED is managed by {primeToken}/{activateToken}.
+    ///
+    ///         Appearance behavior:
+    ///         - `appearance` is stored in `t.buff.appearance`.
+    ///         - If the caller supplies `appearance == 0`, the existing stored appearance is left unchanged.
+    ///         - Appearance is preserved across full discharges (see {dischargeToken}) even though the rest
+    ///           of the temporary buff state is cleared.
+    ///
+    /// @param tokenId         The token to buff.
+    /// @param efficiencyBonus Temporary bonus added to outgoing link base efficiency (0–100).
+    /// @param attunement      Planar ID to mimic for affinity (1–17, or 0 for none).
+    /// @param amplification   Incoming charge multiplier percent (0–100; 20 => +20%).
+    /// @param flags           Requested buff flags/tier tags. STABILIZED/PRIMED are ignored here.
+    /// @param appearance      Packed style/cosmetics/colors payload (uint120). 0 means “don’t change”.
+    /// @param duration        Buff duration in whole minutes (1 .. 10080).
     function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearance, uint256 duration) external {
         _checkApproved(tokenId);
 
