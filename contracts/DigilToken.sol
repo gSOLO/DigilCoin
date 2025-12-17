@@ -91,7 +91,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev Structure to represent a vaulted external ERC721 token
     struct ContractToken {
         uint256 tokenId;    // The token ID of the external ERC721
-        bool recallable;    // True if the original owner can recall the token
+        bool recallable;    // True if the owner can recall the token
     }
 
     /// @dev Structure to represent link efficiency between tokens
@@ -1016,6 +1016,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         Token storage t = _tokens[tokenId];
 
+        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+
         // Safety check: enforce that the supplied account matches the attached contract.
         require(account == t.contractTokenAddress, "DIGIL: Invalid Contract Account");
 
@@ -1846,7 +1848,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///            into `t.activeCharge`.
     ///
     ///      Attached contract token lifecycle:
-    ///      - At the *end* of a full distribution cycle (regardless of `discharge` flag),
+    ///      - At the *end* of a full distribution cycle with a `false` `discharge` flag,
     ///        this function checks for an attached contract token:
     ///          * If `t.contractTokenAddress != address(0)` and
     ///            `_contractTokenExists[contractTokenAddress][externalTokenId]` is `true`
@@ -1854,12 +1856,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///            `_contractTokens[contractTokenAddress][tokenId].recallable = true`.
     ///      - This marks the external token as *recallable* for Digils that have
     ///        just completed an activation-style distribution via {activateToken}.
-    ///      - When called from {dischargeToken}, this recallable flag is immediately
-    ///        overridden by additional logic in {dischargeToken} itself, which
-    ///        clears `recallable` after a full discharge. As a result:
-    ///          * **Activation** cycles can leave `recallable = true` (if still vaulted).
-    ///          * **Discharge** cycles always end with `recallable = false`, even though
-    ///            `_distribute` temporarily sets it to true.
     function _distribute(uint256 tokenId, bool discharge) internal returns (bool) {
         Token storage t = _tokens[tokenId];
 
@@ -1941,14 +1937,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
                 // Create a distribution for the token owner and include remaining value.
                 _addDistributedValue(owner_, distribution + tValue);
-            }
 
-            // Mark attached contract token recallable once per full cycle ---
-            // Uses _contractTokenExists as the single source of truth for "still vaulted".
-            if (t.contractTokenAddress != address(0)) {
-                ContractToken storage contractToken = _contractTokens[t.contractTokenAddress][tokenId];
-                if (_contractTokenExists[t.contractTokenAddress][contractToken.tokenId]) {
-                    contractToken.recallable = true;
+                // Mark attached contract token recallable once per full cycle ---
+                // Uses _contractTokenExists as the single source of truth for "still vaulted".
+                if (t.contractTokenAddress != address(0)) {
+                    ContractToken storage contractToken = _contractTokens[t.contractTokenAddress][tokenId];
+                    if (_contractTokenExists[t.contractTokenAddress][contractToken.tokenId]) {
+                        contractToken.recallable = true;
+                    }
                 }
             }
 
@@ -2134,13 +2130,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Advance the contribution epoch so all existing TokenContribution entries
         // are treated as reset the next time they are touched.
         t.contributionEpoch += 1;
-
-        // If a contract token is attached, it should no longer be recallable after a full discharge.
-        if (t.contractTokenAddress != address(0)) {
-            ContractToken storage ct = _contractTokens[t.contractTokenAddress][tokenId];
-            // Always clear recallable if we have an attached contract address (regardless of external tokenId)
-            ct.recallable = false;
-        }
 
         // Clear any temporary buff state, but preserve persistent appearance (style/cosmetics/colors).
         uint120 persistedAppearance = t.buff.appearance;
