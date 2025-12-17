@@ -64,6 +64,9 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
     /// @param invalidSupport The integer value submitted that did not match the Enum.
     error InvalidVoteType(uint8 invalidSupport);
 
+    /// @notice Thrown when a user tries to use standard castVote functions.
+    error VoteWithParamsRequired();
+
     constructor(address defaultAdmin, IVotes _token, TimelockController _timelock, address _nftGateAddress) Governor("Digil Governor") GovernorSettings(1 days, 1 weeks, 10000e18) GovernorVotes(_token) GovernorTimelockControl(_timelock) {
         // Grant the specified admin the ability to Veto
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
@@ -71,6 +74,39 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
 
         // Set the NFT Gate address
         nftGate = IERC721(_nftGateAddress);
+    }
+
+    // =============================================================
+    //               DISABLE STANDARD VOTE FUNCTIONS
+    // =============================================================
+
+    /**
+     * @dev Disabled: Requires params to verify NFT ownership.
+     *      Use `castVoteWithReasonAndParams` instead.
+     */
+    function castVote(uint256 /*proposalId*/, uint8 /*support*/) public virtual override returns (uint256) {
+        revert VoteWithParamsRequired();
+    }
+
+    /**
+     * @dev Disabled: Requires params to verify NFT ownership.
+     *      Use `castVoteWithReasonAndParams` instead.
+     */
+    function castVoteWithReason(uint256 /*proposalId*/, uint8 /*support*/, string calldata /*reason*/) public virtual override returns (uint256) {
+        revert VoteWithParamsRequired();
+    }
+
+    /**
+     * @dev Disabled: Requires params to verify NFT ownership.
+     *      Use `castVoteWithReasonAndParamsBySig` instead.
+     */
+    /**
+     * @dev Disabled: Requires params to verify NFT ownership.
+     *      Use `castVoteWithReasonAndParamsBySig` instead.
+     *      (Note: This is the correct v5 signature)
+     */
+    function castVoteBySig(uint256 /*proposalId*/, uint8 /*support*/, address /*voter*/, bytes memory /*signature*/) public virtual override returns (uint256) {
+        revert VoteWithParamsRequired();
     }
 
     // =============================================================
