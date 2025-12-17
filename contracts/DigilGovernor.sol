@@ -2,7 +2,6 @@
 pragma solidity ^0.8.31;
 
 import {Governor} from "@openzeppelin/contracts/governance/Governor.sol";
-import {GovernorSettings} from "@openzeppelin/contracts/governance/extensions/GovernorSettings.sol";
 import {GovernorStorage} from "@openzeppelin/contracts/governance/extensions/GovernorStorage.sol";
 import {GovernorTimelockControl} from "@openzeppelin/contracts/governance/extensions/GovernorTimelockControl.sol";
 import {GovernorVotes} from "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
@@ -11,36 +10,35 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
+import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
 
 import {IERC20Burnable} from "contracts/IERC20Burnable.sol";
 
 /// @title Digil Governor
 /// @author gSOLO
 /// @custom:security-contact security@digil.co.in
-contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorVotes, GovernorTimelockControl, AccessControl {
+// OPTIMIZATION: Removed 'GovernorSettings' inheritance
+contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTimelockControl, AccessControl {
+    using Checkpoints for Checkpoints.Trace208;
+
     bytes32 public constant VETO_ROLE = keccak256("VETO_ROLE");
 
-    // The NFT Contract used for Gating
-    IERC721 public immutable nftGate;
+    IERC721 internal immutable nftGate;
 
-    // Custom Storage for Votes
     struct ProposalVote {
         uint256 againstVotes;
         uint256 forVotes;
         uint256 abstainVotes;
         mapping(address => bool) hasVoted;
-        // Tracks which NFT IDs have been consumed for this proposal
         mapping(uint256 => bool) nftUsed; 
     }
 
     mapping(uint256 => ProposalVote) private _proposalVotes;
 
-    struct VoteLock {
-        uint256 amount;
-        uint256 expiry;
-    }
-
-    mapping(address => VoteLock) internal voteLocks;
+    // Tracks Amount over time
+    mapping(address => Checkpoints.Trace208) private _userLockedAmounts;
+    // Tracks Expiry Timestamp over time
+    mapping(address => Checkpoints.Trace208) private _userLockExpiries;
 
     uint256 public constant MIN_LOCK_DURATION = 1 weeks;
     uint256 public constant MAX_LOCK_DURATION = 1460 days; // 4 years
@@ -50,13 +48,9 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
     uint256 private constant STAKE_KEEPER_FEE =   500; // 5%
     uint256 private constant BPS_DENOMINATOR = 10000;
 
-    // Individual User Stakes
-    mapping(uint256 => mapping(address => uint256)) public proposalStakes;
+    mapping(uint256 => mapping(address => uint256)) internal proposalStakes;
     
-    // Running Total for Batch Burning
     mapping(uint256 => uint256) internal proposalTotalStaked;
-    
-    // Safety flag to ensure we don't burn twice
     mapping(uint256 => bool) internal proposalStakesBurned;
 
     enum VoteType {
@@ -66,117 +60,64 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
     }
 
     // Events
-
-    /// @notice Emitted when coins are burned to signal a proposal
     event Signal(uint256 indexed proposalId, address indexed user, uint256 amount);
-
-    /// @notice Emitted when coins are staked on a proposal outcome
     event Stake(uint256 indexed proposalId, address indexed user, uint256 amount);
-
-    /// @notice Emitted when a stake is returned (Proposal Passed)
     event Claim(uint256 indexed proposalId, address indexed user, uint256 amount);
-
-    /// @notice Emitted when stakes are batch burned (Proposal Failed)
     event Burn(uint256 indexed proposalId, address indexed keeper, uint256 amountBurned, uint256 bountyPaid);
 
     // Errors
-
-    /// @notice Thrown when params are missing or malformed (need tokenId).
     error InvalidParams();
-
-    /// @notice Thrown when an NFT ID has already been used to vote on this proposal.
-    /// @param tokenId The ID that was reused.
     error AlreadyUsedNft(uint256 tokenId);
-
     error InsufficientApproval(address voter, uint256 tokenId);
-
-    /// @notice Thrown when a user attempts to vote twice on the same proposal.
-    /// @param voter The address attempting to vote again.
     error AlreadyCastVote(address voter);
-
-    /// @notice Thrown when an invalid vote type (not Against, For, or Abstain) is submitted.
     error InvalidVoteType();
-
-    /// @notice Thrown when a user tries to use standard castVote functions.
     error VoteWithParamsRequired();
-
-    /// @notice Thrown when moving staked tokens fails (transfer/transferFrom returned false or reverted).
     error TransferFailed(address from, address to, uint256 amount);
-
-    // New Errors for Staking/Signaling
-    error ProposalNotActive();
-    error ProposalNotResolved();
-    error ProposalFailed(); // Used when trying to claim on a failed proposal
-    error ProposalPassed(); // Used when trying to burn on a passed proposal
-    error ProposalResolved();
-    error NoStakeFound();
-    error StakesAlreadyBurned();
-
-    // --- LOCKING ERRORS ---
-    /// @notice Thrown when trying to lock 0 tokens.
     error ZeroLockAmount();
-    
-    /// @notice Thrown when lock duration is outside allowed bounds (1 week - 4 years).
-    /// @param duration The duration attempting to be locked.
     error LockDurationOutOfBounds(uint256 duration);
-    
-    /// @notice Thrown when trying to unlock before the expiry timestamp.
-    /// @param expiry The timestamp when the tokens become unlockable.
     error LockNotExpired(uint256 expiry);
-    
-    /// @notice Thrown when trying to unlock but the user has no tokens locked.
     error NoLockedTokens();
+    error InvalidProposalState(ProposalState state);
+    error NoStake();
 
-    // Constructor
-
-    constructor(address defaultAdmin, IVotes _token, TimelockController _timelock, address _nftGate) Governor("Digil Governor") GovernorSettings(1 days, 1 weeks, 10000e18) GovernorVotes(_token) GovernorTimelockControl(_timelock) {
-        // Grant the specified admin the ability to Veto
+    constructor(address defaultAdmin, IVotes _token, TimelockController _timelock, address _nftGate) Governor("Digil Governor") GovernorVotes(_token) GovernorTimelockControl(_timelock) {
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
         _grantRole(VETO_ROLE, defaultAdmin);
-
-        // Set the NFT Gate
         nftGate = IERC721(_nftGate);
     }
 
-    // Standard Vote Functions
+    function votingDelay() public pure override returns (uint256) {
+        return 1 days; 
+    }
 
-    /**
-     * @dev Disabled: Requires params to verify NFT ownership.
-     *      Use `castVoteWithReasonAndParams` instead.
-     */
+    function votingPeriod() public pure override returns (uint256) {
+        return 1 weeks;
+    }
+
+    function proposalThreshold() public pure override returns (uint256) {
+        return 10000e18;
+    }
+
+    // --- VOTE LOGIC ---
+
     function castVote(uint256 /*proposalId*/, uint8 /*support*/) public virtual override returns (uint256) {
         revert VoteWithParamsRequired();
     }
 
-    /**
-     * @dev Disabled: Requires params to verify NFT ownership.
-     *      Use `castVoteWithReasonAndParams` instead.
-     */
     function castVoteWithReason(uint256 /*proposalId*/, uint8 /*support*/, string calldata /*reason*/) public virtual override returns (uint256) {
         revert VoteWithParamsRequired();
     }
 
-    /**
-     * @dev Disabled: Requires params to verify NFT ownership.
-     *      Use `castVoteWithReasonAndParamsBySig` instead.
-     *      (Note: This is the correct v5 signature)
-     */
     function castVoteBySig(uint256 /*proposalId*/, uint8 /*support*/, address /*voter*/, bytes memory /*signature*/) public virtual override returns (uint256) {
         revert VoteWithParamsRequired();
     }
 
-    // Quadratic Counting + NFT Gate
-
-    function _countVote(uint256 proposalId, address account, uint8 support, uint256 weight, bytes memory params) internal virtual override returns (uint256) {
-        // ------------------------------------------------------------
-        // 1. DECODE & NFT GATE (Scoped to free 'owner' variable immediately)
-        // ------------------------------------------------------------
+    function _countVote(uint256 proposalId, address account, uint8 support, uint256 /*weight*/, bytes memory params) internal virtual override returns (uint256) {
+        // 1. NFT GATE (Scoped)
         if (params.length == 0) revert InvalidParams();
         uint256 tokenId = abi.decode(params, (uint256));
-
         {
             address owner = nftGate.ownerOf(tokenId);
-            // Consolidate logic into one if-check to avoid creating a boolean variable
             if (owner != account && 
                 nftGate.getApproved(tokenId) != account && 
                 !nftGate.isApprovedForAll(owner, account)) {
@@ -184,50 +125,38 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
             }
         }
 
-        // ------------------------------------------------------------
-        // 2. STATE UPDATES (Replay Protection)
-        // ------------------------------------------------------------
+        // 2. STATE UPDATES
         ProposalVote storage proposalVote = _proposalVotes[proposalId];
-
         if (proposalVote.nftUsed[tokenId]) revert AlreadyUsedNft(tokenId);
         if (proposalVote.hasVoted[account]) revert AlreadyCastVote(account);
         
         proposalVote.hasVoted[account] = true;
         proposalVote.nftUsed[tokenId] = true;
 
-        // ------------------------------------------------------------
-        // 3. WEIGHT CALCULATION (Scoped to free 'lock' and math vars)
-        // ------------------------------------------------------------
+        // 3. HISTORICAL WEIGHT CALCULATION (Scoped)
         uint256 finalWeight;
         {
-            VoteLock memory lock = voteLocks[account];
+            uint48 snapshot = uint48(proposalSnapshot(proposalId));
+            uint256 lockedAmount = _userLockedAmounts[account].upperLookup(snapshot);
+            uint256 lockedExpiry = _userLockExpiries[account].upperLookup(snapshot);
 
-            // If lock is valid
-            if (lock.amount > 0 && lock.expiry > block.timestamp) {
-                
-                uint256 timeRemaining = lock.expiry - block.timestamp;
+            if (lockedAmount > 0 && lockedExpiry > snapshot) {
+                uint256 timeRemaining = lockedExpiry - snapshot;
                 if (timeRemaining > MAX_LOCK_DURATION) {
                     timeRemaining = MAX_LOCK_DURATION;
                 }
-
-                // Calculate Normalized Weight
-                uint256 normalizedWeight = (lock.amount * timeRemaining) / MAX_LOCK_DURATION;
-                
-                // Calculate Quadratic Weight
+                uint256 normalizedWeight = (lockedAmount * timeRemaining) / MAX_LOCK_DURATION;
                 finalWeight = Math.sqrt(normalizedWeight);
             }
-            // else finalWeight remains 0
-        } // 'lock', 'timeRemaining', and 'normalizedWeight' are popped here
+        }
 
-        // ------------------------------------------------------------
         // 4. CAP & TALLY
-        // ------------------------------------------------------------
         {
             uint256 voteCap = quorum(proposalSnapshot(proposalId));
             if (finalWeight > voteCap) {
                 finalWeight = voteCap;
             }
-        } // 'voteCap' popped here
+        }
 
         if (support == uint8(VoteType.Against)) {
             proposalVote.againstVotes += finalWeight;
@@ -242,47 +171,22 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
         return finalWeight;
     }
 
-    // Quadratic Quorum
-
-    /**
-     * @notice Calculates Quorum based on Square Root of Total Supply.
-     */
     function quorum(uint256 timepoint) public view override returns (uint256) {
-        // Get total supply of DigilCoin at the snapshot block
         uint256 pastTotalSupply = token().getPastTotalSupply(timepoint);
-        
-        // Calculate sqrt
         uint256 sqrtSupply = Math.sqrt(pastTotalSupply);
-
-        // REQUIREMENT: 4% of the Sqrt(Supply)
         return (sqrtSupply * QUORUM_PERCENT) / 100;
     }
 
-    // Proposal Status
-
-    /**
-     * @dev Determines if the proposal has passed the vote.
-     *      Rule: ForVotes > AgainstVotes
-     */
     function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
         ProposalVote storage proposalVote = _proposalVotes[proposalId];
         return proposalVote.forVotes > proposalVote.againstVotes;
     }
 
-    /**
-     * @dev Determines if the proposal met the quorum requirement.
-     *      Rule: (For + Against) >= Quorum
-     */
     function _quorumReached(uint256 proposalId) internal view virtual override returns (bool) {
         ProposalVote storage proposalVote = _proposalVotes[proposalId];
-        
-        // We count Total Participation (For + Abstain) against the threshold
         uint256 participationVotes = proposalVote.forVotes + proposalVote.abstainVotes;
-        
         return participationVotes >= quorum(proposalSnapshot(proposalId));
     }
-
-    // View Helpers
 
     function hasVoted(uint256 proposalId, address account) public view virtual override returns (bool) {
         return _proposalVotes[proposalId].hasVoted[account];
@@ -297,22 +201,17 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
         return "support=bravo&quorum=for,abstain&mode=quadratic&gate=nft_id";
     }
 
-    // Boilerplate Overrides
-
     function veto(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) public onlyRole(VETO_ROLE) {
         _cancel(targets, values, calldatas, descriptionHash);
     }
 
+    // Overrides required by Solidity due to multiple inheritance
     function state(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (ProposalState) {
         return super.state(proposalId);
     }
 
     function proposalNeedsQueuing(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (bool) {
         return super.proposalNeedsQueuing(proposalId);
-    }
-
-    function proposalThreshold() public view override(Governor, GovernorSettings) returns (uint256) {
-        return super.proposalThreshold();
     }
 
     function _propose(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description, address proposer) internal override(Governor, GovernorStorage) returns (uint256) {
@@ -343,36 +242,34 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
 
     function lockTokens(uint256 amount, uint256 duration) external {
         if (amount == 0) revert ZeroLockAmount();
+        
         if (duration < MIN_LOCK_DURATION || duration > MAX_LOCK_DURATION) {
             revert LockDurationOutOfBounds(duration);
         }
 
-        VoteLock storage userLock = voteLocks[msg.sender];
-        
-        // Transfer tokens into the Governor
         _transferFrom(msg.sender, address(this), amount);
 
-        // Update State
-        userLock.amount += amount;
+        uint208 currentAmount = _userLockedAmounts[msg.sender].latest();
+        uint208 newAmount = currentAmount + uint208(amount);
+        _userLockedAmounts[msg.sender].push(clock(), newAmount);
+
+        uint48 currentExpiry = uint48(_userLockExpiries[msg.sender].latest());
+        uint48 newExpiry = uint48(block.timestamp + duration);
         
-        // Extend the lock expiry if the new duration goes further than the old one
-        uint256 newExpiry = block.timestamp + duration;
-        if (newExpiry > userLock.expiry) {
-            userLock.expiry = newExpiry;
+        if (newExpiry > currentExpiry) {
+            _userLockExpiries[msg.sender].push(clock(), newExpiry);
         }
     }
 
     function unlockTokens() external {
-        VoteLock storage userLock = voteLocks[msg.sender];
-        if (block.timestamp < userLock.expiry) {
-            revert LockNotExpired(userLock.expiry);
-        }
+        uint48 expiry = uint48(_userLockExpiries[msg.sender].latest());
+        uint208 amount = _userLockedAmounts[msg.sender].latest();
 
-        uint256 amount = userLock.amount;
+        if (block.timestamp < expiry) revert LockNotExpired(expiry);
         if (amount == 0) revert NoLockedTokens();
 
-        // Clear struct to release storage gas refund
-        delete voteLocks[msg.sender];
+        _userLockedAmounts[msg.sender].push(clock(), 0);
+        _userLockExpiries[msg.sender].push(clock(), 0);
 
         _transfer(msg.sender, amount);
     }
@@ -401,39 +298,37 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
 
     function stakeOnProposal(uint256 proposalId, uint256 amount) external {
         ProposalState currentState = state(proposalId);
+        
+        // Rule: Can only stake if Pending or Active
         if (currentState != ProposalState.Pending && currentState != ProposalState.Active) {
-            revert ProposalNotActive();
+            revert InvalidProposalState(currentState);
         }
 
         _transferFrom(msg.sender, address(this), amount);
 
-        // Update both Individual and Running Total
         proposalStakes[proposalId][msg.sender] += amount;
         proposalTotalStaked[proposalId] += amount;
 
         emit Stake(proposalId, msg.sender, amount);
     }
 
-    /**
-     * @notice SUCCESS CASE: Individual Claim.
-     *         Called by the USER to get their money back.
-     */
     function claimStake(uint256 proposalId) external {
         ProposalState currentState = state(proposalId);
         
-        // Ensure Proposal Passed or was Vetoed/Canceled
+        // Rule: Can claim if Succeeded, Queued, Executed, or Canceled.
+        // (i.e., NOT Pending, Active, Defeated, or Expired)
         bool claimable = (
             currentState == ProposalState.Succeeded || 
             currentState == ProposalState.Queued || 
             currentState == ProposalState.Executed ||
             currentState == ProposalState.Canceled
         );
-        if (!claimable) revert ProposalFailed();
+        
+        if (!claimable) revert InvalidProposalState(currentState);
 
         uint256 amount = proposalStakes[proposalId][msg.sender];
-        if (amount == 0) revert NoStakeFound();
+        if (amount == 0) revert NoStake();
 
-        // Zero out user balance
         proposalStakes[proposalId][msg.sender] = 0;        
         proposalTotalStaked[proposalId] -= amount; 
 
@@ -441,42 +336,28 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
         emit Claim(proposalId, msg.sender, amount);
     }
 
-    /**
-     * @notice FAILURE CASE: Batch Burn.
-     *         Called by ANYONE (Keeper) to burn the entire pile.
-     *         Keeper gets 5% of the TOTAL pot.
-     */
     function burnAllStakes(uint256 proposalId) external {
-        if (proposalStakesBurned[proposalId]) revert StakesAlreadyBurned();
-
+        // 1. CONSOLIDATED STATE CHECK
+        // Instead of rejecting specific bad states, we only accept the two valid ones.
         ProposalState currentState = state(proposalId);
-
-        if (currentState == ProposalState.Pending || currentState == ProposalState.Active) {
-            revert ProposalNotResolved();
-        }
         
-        // If it passed (or is in the execution pipeline), burning is not allowed.
-        if (currentState == ProposalState.Succeeded || currentState == ProposalState.Queued || currentState == ProposalState.Executed) {
-            revert ProposalPassed();
-        }
-
-        // If it was vetoed/canceled, stakes are refundable (claim), not burnable.
-        if (currentState == ProposalState.Canceled) {
-            revert ProposalResolved();
-        }
-
-        // At this point, only true failure finals should remain.
-        // (Governor defines Defeated / Expired as failure outcomes.)
+        // Rule: Can only burn if Defeated or Expired
         if (currentState != ProposalState.Defeated && currentState != ProposalState.Expired) {
-            revert ProposalFailed();
+            revert InvalidProposalState(currentState);
         }
 
-        uint256 totalAmount = proposalTotalStaked[proposalId];
-        if (totalAmount == 0) revert NoStakeFound();
+        // 2. CONSOLIDATED AMOUNT CHECK
+        // If we already burned it, or if nobody ever staked, there is "NothingToBurn".
+        if (proposalStakesBurned[proposalId] || proposalTotalStaked[proposalId] == 0) {
+            revert NoStake();
+        }
 
-        // Mark as burned so it can't be called again
+        // 3. EXECUTION
+        uint256 totalAmount = proposalTotalStaked[proposalId];
+        
+        // Update state first (Checks-Effects-Interactions)
         proposalStakesBurned[proposalId] = true;
-        proposalTotalStaked[proposalId] = 0; // prevent any accidental reuse
+        proposalTotalStaked[proposalId] = 0; 
 
         // Calculate Jackpot Bounty
         uint256 bounty = (totalAmount * STAKE_KEEPER_FEE) / BPS_DENOMINATOR;
@@ -497,8 +378,10 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
 
     function signalProposal(uint256 proposalId, uint256 amount) external {
         ProposalState currentState = state(proposalId);
+        
+        // Rule: Can only signal if Pending or Active
         if (currentState != ProposalState.Pending && currentState != ProposalState.Active) {
-            revert ProposalNotActive();
+            revert InvalidProposalState(currentState);
         }
 
         _transferFrom(msg.sender, address(this), amount);
