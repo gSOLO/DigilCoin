@@ -12,6 +12,8 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
+import {IERC20Burnable} from "contracts/IERC20Burnable.sol";
+
 /// @title Digil Governor
 /// @author gSOLO
 /// @custom:security-contact security@digil.co.in
@@ -33,11 +35,40 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
 
     mapping(uint256 => ProposalVote) private _proposalVotes;
 
+    // --- SIGNALING & STAKING STORAGE ---
+    uint256 public constant STAKE_KEEPER_FEE =   500; // 5%
+    uint256 public constant BPS_DENOMINATOR = 10000;
+
+    // Individual User Stakes
+    mapping(uint256 => mapping(address => uint256)) public proposalStakes;
+    
+    // Running Total for Batch Burning
+    mapping(uint256 => uint256) public proposalTotalStaked;
+    
+    // Safety flag to ensure we don't burn twice
+    mapping(uint256 => bool) public proposalStakesBurned;
+
+    mapping(uint256 => uint256) public proposalSignal;
+
     enum VoteType {
         Against,
         For,
         Abstain
     }
+
+    // Events
+
+    /// @notice Emitted when coins are burned to signal a proposal
+    event Signal(uint256 indexed proposalId, address indexed user, uint256 amount);
+
+    /// @notice Emitted when coins are staked on a proposal outcome
+    event Stake(uint256 indexed proposalId, address indexed user, uint256 amount);
+
+    /// @notice Emitted when a stake is returned (Proposal Passed)
+    event Claim(uint256 indexed proposalId, address indexed user, uint256 amount);
+
+    /// @notice Emitted when stakes are batch burned (Proposal Failed)
+    event Burn(uint256 indexed proposalId, address indexed keeper, uint256 amountBurned, uint256 bountyPaid);
 
     // Errors
 
@@ -59,6 +90,18 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
 
     /// @notice Thrown when a user tries to use standard castVote functions.
     error VoteWithParamsRequired();
+
+    /// @notice Thrown when moving staked tokens fails (transfer/transferFrom returned false or reverted).
+    error TransferFailed(address from, address to, uint256 amount);
+
+    // New Errors for Staking/Signaling
+    error ProposalNotActive();
+    error ProposalNotResolved();
+    error ProposalFailed(); // Used when trying to claim on a failed proposal
+    error ProposalPassed(); // Used when trying to burn on a passed proposal
+    error ProposalResolved();
+    error NoStakeFound();
+    error StakesAlreadyBurned();
 
     // Constructor
 
@@ -250,5 +293,136 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
 
     function supportsInterface(bytes4 interfaceId) public view override(Governor, AccessControl) returns (bool) {
         return super.supportsInterface(interfaceId);
+    }
+
+    // Signaling and Staking
+
+    function _transferFrom(address from, address to, uint256 amount) internal {
+        try IERC20Burnable(address(token())).transferFrom(from, to, amount) returns (bool ok) {
+            if (!ok) revert TransferFailed(from, to, amount);
+        } catch {
+            revert TransferFailed(from, to, amount);
+        }
+    }
+
+    function _transfer(address to, uint256 amount) internal {
+        try IERC20Burnable(address(token())).transfer(to, amount) returns (bool ok) {
+            if (!ok) revert TransferFailed(address(this), to, amount);
+        } catch {
+            revert TransferFailed(address(this), to, amount);
+        }
+    }
+
+    function _burn(uint256 amount) internal {
+        IERC20Burnable(address(token())).burn(amount);
+    }
+
+    function stakeOnProposal(uint256 proposalId, uint256 amount) external {
+        ProposalState currentState = state(proposalId);
+        if (currentState != ProposalState.Pending && currentState != ProposalState.Active) {
+            revert ProposalNotActive();
+        }
+
+        _transferFrom(msg.sender, address(this), amount);
+
+        // Update both Individual and Running Total
+        proposalStakes[proposalId][msg.sender] += amount;
+        proposalTotalStaked[proposalId] += amount;
+
+        emit Stake(proposalId, msg.sender, amount);
+    }
+
+    /**
+     * @notice SUCCESS CASE: Individual Claim.
+     *         Called by the USER to get their money back.
+     */
+    function claimStake(uint256 proposalId) external {
+        ProposalState currentState = state(proposalId);
+        
+        // Ensure Proposal Passed or was Vetoed/Canceled
+        bool claimable = (
+            currentState == ProposalState.Succeeded || 
+            currentState == ProposalState.Queued || 
+            currentState == ProposalState.Executed ||
+            currentState == ProposalState.Canceled
+        );
+        if (!claimable) revert ProposalFailed();
+
+        uint256 amount = proposalStakes[proposalId][msg.sender];
+        if (amount == 0) revert NoStakeFound();
+
+        // Zero out user balance
+        proposalStakes[proposalId][msg.sender] = 0;        
+        proposalTotalStaked[proposalId] -= amount; 
+
+        _transfer(msg.sender, amount);
+        emit Claim(proposalId, msg.sender, amount);
+    }
+
+    /**
+     * @notice FAILURE CASE: Batch Burn.
+     *         Called by ANYONE (Keeper) to burn the entire pile.
+     *         Keeper gets 5% of the TOTAL pot.
+     */
+    function burnAllStakes(uint256 proposalId) external {
+        if (proposalStakesBurned[proposalId]) revert StakesAlreadyBurned();
+
+        ProposalState currentState = state(proposalId);
+
+        if (currentState == ProposalState.Pending || currentState == ProposalState.Active) {
+            revert ProposalNotResolved();
+        }
+        
+        // If it passed (or is in the execution pipeline), burning is not allowed.
+        if (currentState == ProposalState.Succeeded || currentState == ProposalState.Queued || currentState == ProposalState.Executed) {
+            revert ProposalPassed();
+        }
+
+        // If it was vetoed/canceled, stakes are refundable (claim), not burnable.
+        if (currentState == ProposalState.Canceled) {
+            revert ProposalResolved();
+        }
+
+        // At this point, only true failure finals should remain.
+        // (Governor defines Defeated / Expired as failure outcomes.)
+        if (currentState != ProposalState.Defeated && currentState != ProposalState.Expired) {
+            revert ProposalFailed();
+        }
+
+        uint256 totalAmount = proposalTotalStaked[proposalId];
+        if (totalAmount == 0) revert NoStakeFound();
+
+        // Mark as burned so it can't be called again
+        proposalStakesBurned[proposalId] = true;
+        proposalTotalStaked[proposalId] = 0; // prevent any accidental reuse
+
+        // Calculate Jackpot Bounty
+        uint256 bounty = (totalAmount * STAKE_KEEPER_FEE) / BPS_DENOMINATOR;
+        uint256 burnAmount = totalAmount - bounty;
+
+        // Pay the Keeper
+        if (bounty > 0) {
+            _transfer(msg.sender, bounty);
+        }
+
+        // Burn the rest
+        if (burnAmount > 0) {
+            _burn(burnAmount);
+        }
+
+        emit Burn(proposalId, msg.sender, burnAmount, bounty);
+    }
+
+    function signalProposal(uint256 proposalId, uint256 amount) external {
+        ProposalState currentState = state(proposalId);
+        if (currentState != ProposalState.Pending && currentState != ProposalState.Active) {
+            revert ProposalNotActive();
+        }
+
+        _transferFrom(msg.sender, address(this), amount);
+        _burn(amount);
+
+        proposalSignal[proposalId] += amount;
+        emit Signal(proposalId, msg.sender, amount);
     }
 }
