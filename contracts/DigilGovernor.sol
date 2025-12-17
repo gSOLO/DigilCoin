@@ -86,6 +86,14 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         nftGate = IERC721(_nftGate);
     }
 
+    function clock() public view override(Governor, GovernorVotes) returns (uint48) {
+        return token().clock();
+    }
+
+    function CLOCK_MODE() public view override(Governor, GovernorVotes) returns (string memory) {
+        return token().CLOCK_MODE();
+    }
+
     function votingDelay() public pure override returns (uint256) {
         return 1 days; 
     }
@@ -113,9 +121,18 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     }
 
     function _countVote(uint256 proposalId, address account, uint8 support, uint256 weight, bytes memory params) internal virtual override returns (uint256) {
-        // 1. NFT GATE (Scoped)
         if (params.length == 0) revert InvalidParams();
         uint256 tokenId = abi.decode(params, (uint256));
+
+        // 1. STATE UPDATES
+        ProposalVote storage proposalVote = _proposalVotes[proposalId];
+        if (proposalVote.nftUsed[tokenId]) revert AlreadyUsedNft(tokenId);
+        if (proposalVote.hasVoted[account]) revert AlreadyCastVote(account);
+        
+        proposalVote.hasVoted[account] = true;
+        proposalVote.nftUsed[tokenId] = true;
+
+        // 2. NFT GATE (Scoped)
         {
             address owner = nftGate.ownerOf(tokenId);
             if (owner != account && 
@@ -124,14 +141,6 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
                 revert InsufficientApproval(account, tokenId);
             }
         }
-
-        // 2. STATE UPDATES
-        ProposalVote storage proposalVote = _proposalVotes[proposalId];
-        if (proposalVote.nftUsed[tokenId]) revert AlreadyUsedNft(tokenId);
-        if (proposalVote.hasVoted[account]) revert AlreadyCastVote(account);
-        
-        proposalVote.hasVoted[account] = true;
-        proposalVote.nftUsed[tokenId] = true;
 
         // 3. COMBINED WEIGHT CALCULATION
         uint256 finalWeight;
@@ -259,31 +268,35 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
             revert LockDurationOutOfBounds(duration);
         }
 
-        _transferFrom(msg.sender, address(this), amount);
+        address sender = _msgSender();
 
-        uint208 currentAmount = _userLockedAmounts[msg.sender].latest();
+        _transferFrom(sender, address(this), amount);
+
+        uint208 currentAmount = _userLockedAmounts[sender].latest();
         uint208 newAmount = currentAmount + uint208(amount);
-        _userLockedAmounts[msg.sender].push(clock(), newAmount);
+        _userLockedAmounts[sender].push(clock(), newAmount);
 
-        uint48 currentExpiry = uint48(_userLockExpiries[msg.sender].latest());
-        uint48 newExpiry = uint48(block.timestamp + duration);
+        uint48 currentExpiry = uint48(_userLockExpiries[sender].latest());
+        uint48 newExpiry = clock() + uint48(duration);
         
         if (newExpiry > currentExpiry) {
-            _userLockExpiries[msg.sender].push(clock(), newExpiry);
+            _userLockExpiries[sender].push(clock(), newExpiry);
         }
     }
 
     function unlockTokens() external {
-        uint48 expiry = uint48(_userLockExpiries[msg.sender].latest());
-        uint208 amount = _userLockedAmounts[msg.sender].latest();
+        address sender = _msgSender();
 
-        if (block.timestamp < expiry) revert LockNotExpired(expiry);
+        uint48 expiry = uint48(_userLockExpiries[sender].latest());
+        uint208 amount = _userLockedAmounts[sender].latest();
+
+        if (clock() < expiry) revert LockNotExpired(expiry);
         if (amount == 0) revert NoLockedTokens();
 
-        _userLockedAmounts[msg.sender].push(clock(), 0);
-        _userLockExpiries[msg.sender].push(clock(), 0);
+        _userLockedAmounts[sender].push(clock(), 0);
+        _userLockExpiries[sender].push(clock(), 0);
 
-        _transfer(msg.sender, amount);
+        _transfer(sender, amount);
     }
 
     // Signaling and Staking
@@ -316,12 +329,14 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
             revert InvalidProposalState(currentState);
         }
 
-        _transferFrom(msg.sender, address(this), amount);
+        address sender = _msgSender();
 
-        proposalStakes[proposalId][msg.sender] += amount;
+        _transferFrom(sender, address(this), amount);
+
+        proposalStakes[proposalId][sender] += amount;
         proposalTotalStaked[proposalId] += amount;
 
-        emit Stake(proposalId, msg.sender, amount);
+        emit Stake(proposalId, sender, amount);
     }
 
     function claimStake(uint256 proposalId) external {
@@ -338,14 +353,16 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         
         if (!claimable) revert InvalidProposalState(currentState);
 
-        uint256 amount = proposalStakes[proposalId][msg.sender];
+        address sender = _msgSender();
+
+        uint256 amount = proposalStakes[proposalId][sender];
         if (amount == 0) revert NoStake();
 
-        proposalStakes[proposalId][msg.sender] = 0;        
+        proposalStakes[proposalId][sender] = 0;        
         proposalTotalStaked[proposalId] -= amount; 
 
-        _transfer(msg.sender, amount);
-        emit Claim(proposalId, msg.sender, amount);
+        _transfer(sender, amount);
+        emit Claim(proposalId, sender, amount);
     }
 
     function burnAllStakes(uint256 proposalId) external {
@@ -375,9 +392,11 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         uint256 bounty = (totalAmount * STAKE_KEEPER_FEE) / BPS_DENOMINATOR;
         uint256 burnAmount = totalAmount - bounty;
 
+        address sender = _msgSender();
+
         // Pay the Keeper
         if (bounty > 0) {
-            _transfer(msg.sender, bounty);
+            _transfer(sender, bounty);
         }
 
         // Burn the rest
@@ -385,7 +404,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
             _burn(burnAmount);
         }
 
-        emit Burn(proposalId, msg.sender, burnAmount, bounty);
+        emit Burn(proposalId, sender, burnAmount, bounty);
     }
 
     function signalProposal(uint256 proposalId, uint256 amount) external {
@@ -396,9 +415,11 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
             revert InvalidProposalState(currentState);
         }
 
-        _transferFrom(msg.sender, address(this), amount);
+        address sender = _msgSender();
+
+        _transferFrom(sender, address(this), amount);
         _burn(amount);
 
-        emit Signal(proposalId, msg.sender, amount);
+        emit Signal(proposalId, sender, amount);
     }
 }
