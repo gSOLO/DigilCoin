@@ -9,7 +9,7 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {IMintableERC20} from "contracts/IMintableERC20.sol";
+import {IERC20Mintable} from "contracts/IERC20Mintable.sol";
 
 import {DigilFlags} from "contracts/DigilFlags.sol";
 import {DigilAppearance} from "contracts/DigilAppearance.sol";
@@ -21,7 +21,7 @@ import {DigilAppearance} from "contracts/DigilAppearance.sol";
 /// @custom:security-contact security@digil.co.in
 contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Immutable contract-level variables set during construction
-    IMintableERC20 private immutable _coins;    // The ERC20 token used for coin transfers within the contract
+    IERC20Mintable private immutable _coins;    // The ERC20 token used for coin transfers within the contract
     uint256 private immutable _coinMultiplier;  // Multiplier based on the ERC20 token's decimals to handle calculations correctly
     
     // Coin rate and bonus rate
@@ -294,7 +294,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The address of the ERC20 token used as the system's currency
     /// @param  coinDecimals The number of decimals for the coin token
     constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digital Sigils", "DIGILS") Ownable(initialOwner) {
-        _coins = IMintableERC20(coins);
+        _coins = IERC20Mintable(coins);
         _coinMultiplier = 10 ** coinDecimals;
         _coinRate = 100 * _coinMultiplier;
         _coins.approve(address(this), type(uint256).max); // Approve this contract to spend its own coins for distributions.
