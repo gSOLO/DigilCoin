@@ -35,20 +35,29 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
 
     mapping(uint256 => ProposalVote) private _proposalVotes;
 
+    struct VoteLock {
+        uint256 amount;
+        uint256 expiry;
+    }
+
+    mapping(address => VoteLock) internal voteLocks;
+
+    uint256 public constant MIN_LOCK_DURATION = 1 weeks;
+    uint256 public constant MAX_LOCK_DURATION = 1460 days; // 4 years
+    uint256 private constant QUORUM_PERCENT = 4; // 4%
+
     // --- SIGNALING & STAKING STORAGE ---
-    uint256 public constant STAKE_KEEPER_FEE =   500; // 5%
-    uint256 public constant BPS_DENOMINATOR = 10000;
+    uint256 private constant STAKE_KEEPER_FEE =   500; // 5%
+    uint256 private constant BPS_DENOMINATOR = 10000;
 
     // Individual User Stakes
     mapping(uint256 => mapping(address => uint256)) public proposalStakes;
     
     // Running Total for Batch Burning
-    mapping(uint256 => uint256) public proposalTotalStaked;
+    mapping(uint256 => uint256) internal proposalTotalStaked;
     
     // Safety flag to ensure we don't burn twice
-    mapping(uint256 => bool) public proposalStakesBurned;
-
-    mapping(uint256 => uint256) public proposalSignal;
+    mapping(uint256 => bool) internal proposalStakesBurned;
 
     enum VoteType {
         Against,
@@ -103,6 +112,21 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
     error NoStakeFound();
     error StakesAlreadyBurned();
 
+    // --- LOCKING ERRORS ---
+    /// @notice Thrown when trying to lock 0 tokens.
+    error ZeroLockAmount();
+    
+    /// @notice Thrown when lock duration is outside allowed bounds (1 week - 4 years).
+    /// @param duration The duration attempting to be locked.
+    error LockDurationOutOfBounds(uint256 duration);
+    
+    /// @notice Thrown when trying to unlock before the expiry timestamp.
+    /// @param expiry The timestamp when the tokens become unlockable.
+    error LockNotExpired(uint256 expiry);
+    
+    /// @notice Thrown when trying to unlock but the user has no tokens locked.
+    error NoLockedTokens();
+
     // Constructor
 
     constructor(address defaultAdmin, IVotes _token, TimelockController _timelock, address _nftGate) Governor("Digil Governor") GovernorSettings(1 days, 1 weeks, 10000e18) GovernorVotes(_token) GovernorTimelockControl(_timelock) {
@@ -144,25 +168,25 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
     // Quadratic Counting + NFT Gate
 
     function _countVote(uint256 proposalId, address account, uint8 support, uint256 weight, bytes memory params) internal virtual override returns (uint256) {
-        // 1. DECODE PARAMS & GATE CHECKS
+        // ------------------------------------------------------------
+        // 1. DECODE & NFT GATE (Scoped to free 'owner' variable immediately)
+        // ------------------------------------------------------------
         if (params.length == 0) revert InvalidParams();
         uint256 tokenId = abi.decode(params, (uint256));
 
-        address owner = nftGate.ownerOf(tokenId);
-        // Check 1: Is the voter the owner?
-        bool approvedOrOwner = owner == account;
-        
-        // Check 2: Is the voter the specific approval?
-        approvedOrOwner = approvedOrOwner || nftGate.getApproved(tokenId) == account;
-        
-        // Check 3: Is the voter an operator for all?
-        approvedOrOwner = approvedOrOwner || nftGate.isApprovedForAll(owner, account);
-
-        // If NONE of these are true, revert
-        if (!approvedOrOwner) {
-            revert InsufficientApproval(account, tokenId);
+        {
+            address owner = nftGate.ownerOf(tokenId);
+            // Consolidate logic into one if-check to avoid creating a boolean variable
+            if (owner != account && 
+                nftGate.getApproved(tokenId) != account && 
+                !nftGate.isApprovedForAll(owner, account)) {
+                revert InsufficientApproval(account, tokenId);
+            }
         }
 
+        // ------------------------------------------------------------
+        // 2. STATE UPDATES (Replay Protection)
+        // ------------------------------------------------------------
         ProposalVote storage proposalVote = _proposalVotes[proposalId];
 
         if (proposalVote.nftUsed[tokenId]) revert AlreadyUsedNft(tokenId);
@@ -171,31 +195,51 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
         proposalVote.hasVoted[account] = true;
         proposalVote.nftUsed[tokenId] = true;
 
-        // 2. THE MATH: Quadratic Weight
-        uint256 quadraticWeight = Math.sqrt(weight); 
+        // ------------------------------------------------------------
+        // 3. WEIGHT CALCULATION (Scoped to free 'lock' and math vars)
+        // ------------------------------------------------------------
+        uint256 finalWeight;
+        {
+            VoteLock memory lock = voteLocks[account];
 
-        // 3. THE HARD CAP
-        // We calculate the Quorum for this specific proposal's timepoint.
-        // Cap logic: No single user can have more votes than the Quorum itself.
-        uint256 voteCap = quorum(proposalSnapshot(proposalId));
-        
-        // If the user's power exceeds the Quorum, clip it.
-        if (quadraticWeight > voteCap) {
-            quadraticWeight = voteCap;
-        }
+            // If lock is valid
+            if (lock.amount > 0 && lock.expiry > block.timestamp) {
+                
+                uint256 timeRemaining = lock.expiry - block.timestamp;
+                if (timeRemaining > MAX_LOCK_DURATION) {
+                    timeRemaining = MAX_LOCK_DURATION;
+                }
 
-        // 4. CAST VOTE
+                // Calculate Normalized Weight
+                uint256 normalizedWeight = (lock.amount * timeRemaining) / MAX_LOCK_DURATION;
+                
+                // Calculate Quadratic Weight
+                finalWeight = Math.sqrt(normalizedWeight);
+            }
+            // else finalWeight remains 0
+        } // 'lock', 'timeRemaining', and 'normalizedWeight' are popped here
+
+        // ------------------------------------------------------------
+        // 4. CAP & TALLY
+        // ------------------------------------------------------------
+        {
+            uint256 voteCap = quorum(proposalSnapshot(proposalId));
+            if (finalWeight > voteCap) {
+                finalWeight = voteCap;
+            }
+        } // 'voteCap' popped here
+
         if (support == uint8(VoteType.Against)) {
-            proposalVote.againstVotes += quadraticWeight;
+            proposalVote.againstVotes += finalWeight;
         } else if (support == uint8(VoteType.For)) {
-            proposalVote.forVotes += quadraticWeight;
+            proposalVote.forVotes += finalWeight;
         } else if (support == uint8(VoteType.Abstain)) {
-            proposalVote.abstainVotes += quadraticWeight;
+            proposalVote.abstainVotes += finalWeight;
         } else {
             revert InvalidVoteType();
         }
 
-        return quadraticWeight;
+        return finalWeight;
     }
 
     // Quadratic Quorum
@@ -211,7 +255,7 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
         uint256 sqrtSupply = Math.sqrt(pastTotalSupply);
 
         // REQUIREMENT: 4% of the Sqrt(Supply)
-        return (sqrtSupply * 4) / 100;
+        return (sqrtSupply * QUORUM_PERCENT) / 100;
     }
 
     // Proposal Status
@@ -293,6 +337,44 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
 
     function supportsInterface(bytes4 interfaceId) public view override(Governor, AccessControl) returns (bool) {
         return super.supportsInterface(interfaceId);
+    }
+
+    // Locking Tokens
+
+    function lockTokens(uint256 amount, uint256 duration) external {
+        if (amount == 0) revert ZeroLockAmount();
+        if (duration < MIN_LOCK_DURATION || duration > MAX_LOCK_DURATION) {
+            revert LockDurationOutOfBounds(duration);
+        }
+
+        VoteLock storage userLock = voteLocks[msg.sender];
+        
+        // Transfer tokens into the Governor
+        _transferFrom(msg.sender, address(this), amount);
+
+        // Update State
+        userLock.amount += amount;
+        
+        // Extend the lock expiry if the new duration goes further than the old one
+        uint256 newExpiry = block.timestamp + duration;
+        if (newExpiry > userLock.expiry) {
+            userLock.expiry = newExpiry;
+        }
+    }
+
+    function unlockTokens() external {
+        VoteLock storage userLock = voteLocks[msg.sender];
+        if (block.timestamp < userLock.expiry) {
+            revert LockNotExpired(userLock.expiry);
+        }
+
+        uint256 amount = userLock.amount;
+        if (amount == 0) revert NoLockedTokens();
+
+        // Clear struct to release storage gas refund
+        delete voteLocks[msg.sender];
+
+        _transfer(msg.sender, amount);
     }
 
     // Signaling and Staking
@@ -422,7 +504,6 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
         _transferFrom(msg.sender, address(this), amount);
         _burn(amount);
 
-        proposalSignal[proposalId] += amount;
         emit Signal(proposalId, msg.sender, amount);
     }
 }
