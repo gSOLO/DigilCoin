@@ -112,7 +112,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         revert VoteWithParamsRequired();
     }
 
-    function _countVote(uint256 proposalId, address account, uint8 support, uint256 /*weight*/, bytes memory params) internal virtual override returns (uint256) {
+    function _countVote(uint256 proposalId, address account, uint8 support, uint256 weight, bytes memory params) internal virtual override returns (uint256) {
         // 1. NFT GATE (Scoped)
         if (params.length == 0) revert InvalidParams();
         uint256 tokenId = abi.decode(params, (uint256));
@@ -133,21 +133,33 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         proposalVote.hasVoted[account] = true;
         proposalVote.nftUsed[tokenId] = true;
 
-        // 3. HISTORICAL WEIGHT CALCULATION (Scoped)
+        // 3. COMBINED WEIGHT CALCULATION
         uint256 finalWeight;
         {
             uint48 snapshot = uint48(proposalSnapshot(proposalId));
             uint256 lockedAmount = _userLockedAmounts[account].upperLookup(snapshot);
             uint256 lockedExpiry = _userLockExpiries[account].upperLookup(snapshot);
 
+            // Start with Liquid Weight (from params)
+            uint256 totalRawWeight = weight;
+
+            // Add Locked Weight (if valid)
             if (lockedAmount > 0 && lockedExpiry > snapshot) {
                 uint256 timeRemaining = lockedExpiry - snapshot;
                 if (timeRemaining > MAX_LOCK_DURATION) {
                     timeRemaining = MAX_LOCK_DURATION;
                 }
-                uint256 normalizedWeight = (lockedAmount * timeRemaining) / MAX_LOCK_DURATION;
-                finalWeight = Math.sqrt(normalizedWeight);
+                
+                // INCENTIVE FIX: Bonus Model
+                // Power = Amount + (Amount * Time / MaxTime)
+                // Result: 100 Tokens locked for 0 time = 100 Power (Same as liquid)
+                // Result: 100 Tokens locked for 4 years = 200 Power (2x Bonus)
+                uint256 timeBonus = (lockedAmount * timeRemaining) / MAX_LOCK_DURATION;
+                totalRawWeight += (lockedAmount + timeBonus);
             }
+
+            // Apply Quadratic Root to the Sum
+            finalWeight = Math.sqrt(totalRawWeight);
         }
 
         // 4. CAP & TALLY
