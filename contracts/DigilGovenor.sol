@@ -39,46 +39,39 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
         Abstain
     }
 
-    // =============================================================
-    //                       CUSTOM ERRORS
-    // =============================================================
+    // Errors
 
     /// @notice Thrown when params are missing or malformed (need tokenId).
     error InvalidParams();
 
-    /// @notice Thrown when the voter does not own the NFT ID they claimed.
-    /// @param tokenId The ID claimed.
-    /// @param actualOwner The address that actually owns it.
-    error NotNftOwner(uint256 tokenId, address actualOwner);
-
     /// @notice Thrown when an NFT ID has already been used to vote on this proposal.
     /// @param tokenId The ID that was reused.
-    error NftAlreadyUsed(uint256 tokenId);
+    error AlreadyUsedNft(uint256 tokenId);
+
+    error InsufficientApproval(address voter, uint256 tokenId);
 
     /// @notice Thrown when a user attempts to vote twice on the same proposal.
-    /// @param proposalId The ID of the proposal.
     /// @param voter The address attempting to vote again.
-    error VoteAlreadyCast(uint256 proposalId, address voter);
+    error AlreadyCastVote(address voter);
 
     /// @notice Thrown when an invalid vote type (not Against, For, or Abstain) is submitted.
-    /// @param invalidSupport The integer value submitted that did not match the Enum.
-    error InvalidVoteType(uint8 invalidSupport);
+    error InvalidVoteType();
 
     /// @notice Thrown when a user tries to use standard castVote functions.
     error VoteWithParamsRequired();
 
-    constructor(address defaultAdmin, IVotes _token, TimelockController _timelock, address _nftGateAddress) Governor("Digil Governor") GovernorSettings(1 days, 1 weeks, 10000e18) GovernorVotes(_token) GovernorTimelockControl(_timelock) {
+    // Constructor
+
+    constructor(address defaultAdmin, IVotes _token, TimelockController _timelock, address _nftGate) Governor("Digil Governor") GovernorSettings(1 days, 1 weeks, 10000e18) GovernorVotes(_token) GovernorTimelockControl(_timelock) {
         // Grant the specified admin the ability to Veto
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
         _grantRole(VETO_ROLE, defaultAdmin);
 
-        // Set the NFT Gate address
-        nftGate = IERC721(_nftGateAddress);
+        // Set the NFT Gate
+        nftGate = IERC721(_nftGate);
     }
 
-    // =============================================================
-    //               DISABLE STANDARD VOTE FUNCTIONS
-    // =============================================================
+    // Standard Vote Functions
 
     /**
      * @dev Disabled: Requires params to verify NFT ownership.
@@ -99,67 +92,70 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
     /**
      * @dev Disabled: Requires params to verify NFT ownership.
      *      Use `castVoteWithReasonAndParamsBySig` instead.
-     */
-    /**
-     * @dev Disabled: Requires params to verify NFT ownership.
-     *      Use `castVoteWithReasonAndParamsBySig` instead.
      *      (Note: This is the correct v5 signature)
      */
     function castVoteBySig(uint256 /*proposalId*/, uint8 /*support*/, address /*voter*/, bytes memory /*signature*/) public virtual override returns (uint256) {
         revert VoteWithParamsRequired();
     }
 
-    // =============================================================
-    //                 QUADRATIC COUNTING + NFT GATE
-    // =============================================================
+    // Quadratic Counting + NFT Gate
 
     function _countVote(uint256 proposalId, address account, uint8 support, uint256 weight, bytes memory params) internal virtual override returns (uint256) {
-        // 1. DECODE PARAMS: We expect a TokenID
+        // 1. DECODE PARAMS & GATE CHECKS
         if (params.length == 0) revert InvalidParams();
         uint256 tokenId = abi.decode(params, (uint256));
 
-        // 2. CHECK OWNERSHIP: Does the voter own this specific NFT?
-        // Note: We check the LIVE owner.
         address owner = nftGate.ownerOf(tokenId);
-        if (owner != account) {
-            revert NotNftOwner(tokenId, owner);
-        }
-
-        ProposalVote storage proposalvote = _proposalVotes[proposalId];
-
-        // 3. CHECK REUSE: Has this NFT ID already voted on this proposal?
-        if (proposalvote.nftUsed[tokenId]) {
-            revert NftAlreadyUsed(tokenId);
-        }
-
-        // 4. CHECK ACCOUNT: Has this account voted? (Standard check)
-        if (proposalvote.hasVoted[account]) {
-            revert VoteAlreadyCast(proposalId, account);
-        }
+        // Check 1: Is the voter the owner?
+        bool approvedOrOwner = owner == account;
         
-        // 5. MARK USED
-        proposalvote.hasVoted[account] = true;
-        proposalvote.nftUsed[tokenId] = true;
+        // Check 2: Is the voter the specific approval?
+        approvedOrOwner = approvedOrOwner || nftGate.getApproved(tokenId) == account;
+        
+        // Check 3: Is the voter an operator for all?
+        approvedOrOwner = approvedOrOwner || nftGate.isApprovedForAll(owner, account);
 
-        // 6. THE MATH: Quadratic Weight
+        // If NONE of these are true, revert
+        if (!approvedOrOwner) {
+            revert InsufficientApproval(account, tokenId);
+        }
+
+        ProposalVote storage proposalVote = _proposalVotes[proposalId];
+
+        if (proposalVote.nftUsed[tokenId]) revert AlreadyUsedNft(tokenId);
+        if (proposalVote.hasVoted[account]) revert AlreadyCastVote(account);
+        
+        proposalVote.hasVoted[account] = true;
+        proposalVote.nftUsed[tokenId] = true;
+
+        // 2. THE MATH: Quadratic Weight
         uint256 quadraticWeight = Math.sqrt(weight); 
 
+        // 3. THE HARD CAP
+        // We calculate the Quorum for this specific proposal's timepoint.
+        // Cap logic: No single user can have more votes than the Quorum itself.
+        uint256 voteCap = quorum(proposalSnapshot(proposalId));
+        
+        // If the user's power exceeds the Quorum, clip it.
+        if (quadraticWeight > voteCap) {
+            quadraticWeight = voteCap;
+        }
+
+        // 4. CAST VOTE
         if (support == uint8(VoteType.Against)) {
-            proposalvote.againstVotes += quadraticWeight;
+            proposalVote.againstVotes += quadraticWeight;
         } else if (support == uint8(VoteType.For)) {
-            proposalvote.forVotes += quadraticWeight;
+            proposalVote.forVotes += quadraticWeight;
         } else if (support == uint8(VoteType.Abstain)) {
-            proposalvote.abstainVotes += quadraticWeight;
+            proposalVote.abstainVotes += quadraticWeight;
         } else {
-            revert InvalidVoteType(support);
+            revert InvalidVoteType();
         }
 
         return quadraticWeight;
     }
 
-    // =============================================================
-    //                 QUADRATIC QUORUM LOGIC
-    // =============================================================
+    // Quadratic Quorum
 
     /**
      * @notice Calculates Quorum based on Square Root of Total Supply.
@@ -175,17 +171,15 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
         return (sqrtSupply * 4) / 100;
     }
 
-    // =============================================================
-    //                  PROPOSAL STATUS
-    // =============================================================
+    // Proposal Status
 
     /**
      * @dev Determines if the proposal has passed the vote.
      *      Rule: ForVotes > AgainstVotes
      */
     function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
-        ProposalVote storage proposalvote = _proposalVotes[proposalId];
-        return proposalvote.forVotes > proposalvote.againstVotes;
+        ProposalVote storage proposalVote = _proposalVotes[proposalId];
+        return proposalVote.forVotes > proposalVote.againstVotes;
     }
 
     /**
@@ -193,34 +187,30 @@ contract DigilGovernor is Governor, GovernorSettings, GovernorStorage, GovernorV
      *      Rule: (For + Against) >= Quorum
      */
     function _quorumReached(uint256 proposalId) internal view virtual override returns (bool) {
-        ProposalVote storage proposalvote = _proposalVotes[proposalId];
+        ProposalVote storage proposalVote = _proposalVotes[proposalId];
         
         // We count Total Participation (For + Abstain) against the threshold
-        uint256 participationVotes = proposalvote.forVotes + proposalvote.abstainVotes;
+        uint256 participationVotes = proposalVote.forVotes + proposalVote.abstainVotes;
         
         return participationVotes >= quorum(proposalSnapshot(proposalId));
     }
 
-    // =============================================================
-    //                  VIEW HELPERS
-    // =============================================================
+    // View Helpers
 
     function hasVoted(uint256 proposalId, address account) public view virtual override returns (bool) {
         return _proposalVotes[proposalId].hasVoted[account];
     }
 
     function proposalVotes(uint256 proposalId) public view virtual returns (uint256 againstVotes, uint256 forVotes, uint256 abstainVotes) {
-        ProposalVote storage proposalvote = _proposalVotes[proposalId];
-        return (proposalvote.againstVotes, proposalvote.forVotes, proposalvote.abstainVotes);
+        ProposalVote storage proposalVote = _proposalVotes[proposalId];
+        return (proposalVote.againstVotes, proposalVote.forVotes, proposalVote.abstainVotes);
     }
 
     function COUNTING_MODE() public pure virtual override returns (string memory) {
         return "support=bravo&quorum=for,abstain&mode=quadratic&gate=nft_id";
     }
 
-    // =============================================================
-    //                    BOILERPLATE OVERRIDES
-    // =============================================================
+    // Boilerplate Overrides
 
     function veto(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) public onlyRole(VETO_ROLE) {
         _cancel(targets, values, calldatas, descriptionHash);
