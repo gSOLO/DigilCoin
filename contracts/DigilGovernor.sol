@@ -16,15 +16,23 @@ import {IERC20Burnable} from "contracts/IERC20Burnable.sol";
 
 /// @title Digil Governor
 /// @author gSOLO
+/// @notice Governance contract for DigilCoin with: (1) NFT-gated voting, (2) vote weight boosted by time-locked coins, (3) quadratic counting, (4) timelock execution, and (5) optional signaling/staking side-mechanics.
+/// @dev Extends OpenZeppelin Governor with custom `_getVotes` (raw power) + `_countVote` (quadratic tally). Time is sourced from the token’s ERC6372 clock (`token().clock()` / `token().CLOCK_MODE()`).
 /// @custom:security-contact security@digil.co.in
 // OPTIMIZATION: Removed 'GovernorSettings' inheritance
 contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTimelockControl, AccessControl {
     using Checkpoints for Checkpoints.Trace208;
 
+    /// @notice Role allowed to veto (cancel) proposals.
     bytes32 public constant VETO_ROLE = keccak256("VETO_ROLE");
 
+    /// @notice ERC721 used as a gate/credential to cast a vote (by tokenId) and to prevent double-use of an NFT per proposal.
+    /// @dev Assumed to be a “well-behaved” ERC721. Even if malicious, reentrancy into `_countVote` is prevented by setting replay-protection flags before calling `ownerOf`.
     IERC721 internal immutable nftGate;
 
+    /// @dev Per-proposal vote totals + replay-protection mappings.
+    /// - `hasVoted[address]` prevents multiple ballots per address for that proposal.
+    /// - `nftUsed[tokenId]` prevents using the same NFT tokenId more than once for that proposal.
     struct ProposalVote {
         uint256 againstVotes;
         uint256 forVotes;
@@ -33,26 +41,38 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         mapping(uint256 => bool) nftUsed; 
     }
 
+    /// @dev Custom storage for vote totals keyed by proposalId.
     mapping(uint256 => ProposalVote) private _proposalVotes;
 
     // Tracks Amount over time
+    /// @dev Checkpointed locked coin amounts per user (keyed by ERC6372 timepoints).
     mapping(address => Checkpoints.Trace208) private _userLockedAmounts;
     // Tracks Expiry Timestamp over time
+    /// @dev Checkpointed lock expiry timestamps per user (keyed by ERC6372 timepoints). Expiry itself is a timestamp-like timepoint.
     mapping(address => Checkpoints.Trace208) private _userLockExpiries;
 
+    /// @notice Minimum lock duration enforced for any lock/extension operation.
     uint256 public constant MIN_LOCK_DURATION = 1 weeks;
+    /// @notice Maximum lock duration used both for validation and for bonus normalization.
     uint256 public constant MAX_LOCK_DURATION = 1460 days; // 4 years
+    /// @dev Quorum is computed as a percentage of sqrt(totalSupplyAtSnapshot).
     uint256 private constant QUORUM_PERCENT = 4; // 4%
 
     // --- SIGNALING & STAKING STORAGE ---
+    /// @dev Keeper bounty in basis points paid when burning all stakes on a failed proposal.
     uint256 private constant STAKE_KEEPER_FEE =  500; // 5%
+    /// @dev Basis points denominator.
     uint256 private constant BPS_DENOMINATOR = 10000;
 
+    /// @notice User stake amounts per proposal (principal claimable if proposal succeeds/cancels; burned if defeated/expired via batch burn).
     mapping(uint256 => mapping(address => uint256)) internal proposalStakes;
     
+    /// @dev Cached total stake per proposal to allow single-call batch burn.
     mapping(uint256 => uint256) internal proposalTotalStaked;
+    /// @dev One-way flag to prevent burning the same proposal’s stakes twice.
     mapping(uint256 => bool) internal proposalStakesBurned;
 
+    /// @dev Internal support encoding used in `_countVote`.
     enum VoteType {
         Against,
         For,
@@ -60,69 +80,113 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     }
 
     // Events
+    /// @notice Emitted when a proposal is vetoed/canceled by a VETO_ROLE holder.
     event ProposalVetoed(uint256 proposalId);
+    /// @notice Emitted when coins are locked and/or the expiry is extended.
     event Lock(address indexed user, uint256 amount, uint48 expiry);
+    /// @notice Emitted when coins are unlocked (principal returned).
     event Unlock(address indexed user);
+    /// @notice Emitted when coins are irreversibly burned as “signal” during Pending/Active state.
     event Signal(uint256 indexed proposalId, address indexed user, uint256 amount);
+    /// @notice Emitted when a user stakes coins on a proposal during Pending/Active state.
     event Stake(uint256 indexed proposalId, address indexed user, uint256 amount);
+    /// @notice Emitted when a user claims stake back on success/cancel states.
     event Claim(uint256 indexed proposalId, address indexed user, uint256 amount);
+    /// @notice Emitted when stakes are batch-burned on failure; keeper receives bounty.
     event Burn(uint256 indexed proposalId, address indexed keeper, uint256 amountBurned, uint256 bountyPaid);
 
     // Errors
+    /// @notice Thrown when vote params are missing (tokenId is required for NFT-gated voting).
     error InvalidParams();
+    /// @notice Thrown when the same NFT tokenId is reused on the same proposal.
     error AlreadyUsedNft(uint256 tokenId);
+    /// @notice Thrown when `account` is not owner/approved operator for the specified NFT tokenId.
     error InsufficientApproval(address voter, uint256 tokenId);
+    /// @notice Thrown when the same address tries to vote multiple times on the same proposal.
     error AlreadyCastVote(address voter);
+    /// @notice Thrown when `support` is not a recognized VoteType.
     error InvalidVoteType();
+    /// @notice Thrown when standard Governor castVote variants are called without params.
     error VoteWithParamsRequired();
+    /// @notice Thrown when ERC20 transfer/transferFrom fails (false return or revert).
     error TransferFailed(address from, address to, uint256 amount);
+    /// @notice Thrown when `lockCoins` neither increases amount nor extends expiry.
     error NoLockAction();
+    /// @notice Thrown when lock duration is outside configured bounds.
     error LockDurationOutOfBounds(uint256 duration);
+    /// @notice Thrown when attempting to unlock before expiry.
     error LockNotExpired(uint256 expiry);
+    /// @notice Thrown when attempting to unlock with no locked balance.
     error NoLockedCoins();
+    /// @notice Thrown when staking/signaling actions are attempted in an invalid Governor state.
     error InvalidProposalState(ProposalState state);
+    /// @notice Thrown when a stake-related action is attempted but user/total stake is zero or already burned.
     error NoStake();
 
+    /// @param defaultAdmin Admin that receives DEFAULT_ADMIN_ROLE and VETO_ROLE.
+    /// @param _token The IVotes token used for delegation-based voting power (DigilCoin).
+    /// @param _timelock Timelock controller used for queued/executed operations.
+    /// @param _nftGate The ERC721 used to gate voting by NFT tokenId.
     constructor(address defaultAdmin, IVotes _token, TimelockController _timelock, address _nftGate) Governor("Digil Governor") GovernorVotes(_token) GovernorTimelockControl(_timelock) {
+        // AccessControl: configure admin + veto authority.
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
         _grantRole(VETO_ROLE, defaultAdmin);
+        // Immutable gate reference (saves gas vs storage read).
         nftGate = IERC721(_nftGate);
     }
 
+    /// @notice ERC6372 clock passthrough to the IVotes token.
+    /// @dev Ensures this Governor and token share the same timepoint system (timestamp vs blocknumber).
     function clock() public view override(Governor, GovernorVotes) returns (uint48) {
         return token().clock();
     }
 
+    /// @notice ERC6372 clock mode passthrough to the IVotes token (e.g., "mode=timestamp").
     function CLOCK_MODE() public view override(Governor, GovernorVotes) returns (string memory) {
         return token().CLOCK_MODE();
     }
 
+    /// @notice Voting delay (time from proposal creation until voting starts).
     function votingDelay() public pure override returns (uint256) {
         return 1 days; 
     }
 
+    /// @notice Voting period (time between vote start and vote end).
     function votingPeriod() public pure override returns (uint256) {
         return 1 weeks;
     }
 
+    /// @notice Minimum proposal threshold in raw voting units (token base units).
+    /// @dev This is checked by OpenZeppelin Governor during proposal creation.
     function proposalThreshold() public pure override returns (uint256) {
         return 10000e18;
     }
 
     // --- VOTE LOGIC ---
 
+    /// @dev Disabled: voting must include params (an NFT tokenId) for gate/replay protection.
     function castVote(uint256 /*proposalId*/, uint8 /*support*/) public virtual override returns (uint256) {
         revert VoteWithParamsRequired();
     }
 
+    /// @dev Disabled: voting must include params (an NFT tokenId) for gate/replay protection.
     function castVoteWithReason(uint256 /*proposalId*/, uint8 /*support*/, string calldata /*reason*/) public virtual override returns (uint256) {
         revert VoteWithParamsRequired();
     }
 
+    /// @dev Disabled: signature voting must include params (an NFT tokenId) for gate/replay protection.
     function castVoteBySig(uint256 /*proposalId*/, uint8 /*support*/, address /*voter*/, bytes memory /*signature*/) public virtual override returns (uint256) {
         revert VoteWithParamsRequired();
     }
 
+    /// @notice Computes an account’s raw voting power at a snapshot timepoint.
+    /// @dev This function feeds `weight` into `_countVote`. Here you combine:
+    /// 1) Liquid delegated votes from the token, plus
+    /// 2) Locked coins tracked by this Governor, plus a time-based bonus.
+    /// The bonus model is linear: `lockedAmount + lockedAmount * (timeRemaining / MAX_LOCK_DURATION)`.
+    /// @param account Voter address whose power is being queried.
+    /// @param timepoint Snapshot timepoint (ERC6372-based).
+    /// @return Raw (pre-quadratic) voting weight.
     function _getVotes(address account, uint256 timepoint, bytes memory /*params*/) internal view override(Governor, GovernorVotes) returns (uint256) {
         // 1. Get Liquid Balance (Delegated) from Token
         uint256 rawWeight = token().getPastVotes(account, timepoint);
@@ -131,30 +195,47 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // Note: Using uint48 casting because checkpoints store uint48 keys
         uint48 snapshot = uint48(timepoint);
         
+        // Look up the latest lock amount/expiry that was in effect at the snapshot.
         uint256 lockedAmount = _userLockedAmounts[account].upperLookup(snapshot);
         uint256 lockedExpiry = _userLockExpiries[account].upperLookup(snapshot);
 
         // If lock existed and was valid at the snapshot
         if (lockedAmount > 0 && lockedExpiry > snapshot) {
+            // Remaining lock time as-of the snapshot, capped at MAX_LOCK_DURATION for normalization.
             uint256 timeRemaining = lockedExpiry - snapshot;
             if (timeRemaining > MAX_LOCK_DURATION) {
                 timeRemaining = MAX_LOCK_DURATION;
             }
             
             // Bonus Model: LockedAmount + (LockedAmount * Time / MaxTime)
+            // - If timeRemaining == 0 -> bonus = 0, power adds lockedAmount.
+            // - If timeRemaining == MAX_LOCK_DURATION -> bonus = lockedAmount, power adds 2x lockedAmount.
             uint256 timeBonus = (lockedAmount * timeRemaining) / MAX_LOCK_DURATION;
             
+            // Add both principal and bonus power to the liquid power.
             rawWeight += (lockedAmount + timeBonus);
         }
 
         return rawWeight;
     }
 
+    /// @notice Counts a vote for a proposal using NFT gating, replay protection, and quadratic counting.
+    /// @dev `weight` is raw power computed by `_getVotes()` at the proposal snapshot; this function applies sqrt() and tallies.
+    /// Params MUST decode to a `uint256 tokenId`.
+    /// @param proposalId Proposal being voted on.
+    /// @param account Voter address credited for the vote.
+    /// @param support Support value (Against/For/Abstain).
+    /// @param weight Raw voting weight passed from `_getVotes`.
+    /// @param params ABI-encoded `uint256 tokenId` used for NFT gating and anti-replay.
+    /// @return finalWeight Quadratic (sqrt) weight actually counted.
     function _countVote(uint256 proposalId, address account, uint8 support, uint256 weight, bytes memory params) internal virtual override returns (uint256) {
+        // Enforce presence of vote params (must contain tokenId).
         if (params.length == 0) revert InvalidParams();
+        // Decode the NFT tokenId used for gating.
         uint256 tokenId = abi.decode(params, (uint256));
 
         // 1. STATE UPDATES
+        // Replay protection is applied before the external ERC721 call to prevent reentrancy abuse.
         ProposalVote storage proposalVote = _proposalVotes[proposalId];
         if (proposalVote.nftUsed[tokenId]) revert AlreadyUsedNft(tokenId);
         if (proposalVote.hasVoted[account]) revert AlreadyCastVote(account);
@@ -163,6 +244,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         proposalVote.nftUsed[tokenId] = true;
 
         // 2. NFT GATE (Scoped)
+        // Voter must be the owner OR approved operator for the tokenId (supports delegated custody/approval patterns).
         {
             address owner = nftGate.ownerOf(tokenId);
             if (owner != account && 
@@ -175,9 +257,11 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // 3. QUADRATIC MATH
         // 'weight' is passed in from _getVotes(), so it already includes Liquid + Locked + Bonus.
         // We simply apply the square root here.
+        // Note: quadratic reduces marginal influence of large weights while still rewarding larger holders.
         uint256 finalWeight = Math.sqrt(weight);
 
         // 4. TALLY
+        // Tally the quadratic weight into the per-proposal buckets.
         if (support == uint8(VoteType.Against)) {
             proposalVote.againstVotes += finalWeight;
         } else if (support == uint8(VoteType.For)) {
@@ -191,36 +275,52 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         return finalWeight;
     }
 
+    /// @notice Calculates the quorum requirement at a given timepoint.
+    /// @dev Quorum = QUORUM_PERCENT% of sqrt(totalSupplyAtTimepoint). Uses the IVotes snapshot supply.
+    /// @param timepoint Snapshot timepoint used to query past total supply.
     function quorum(uint256 timepoint) public view override returns (uint256) {
         uint256 pastTotalSupply = token().getPastTotalSupply(timepoint);
         uint256 sqrtSupply = Math.sqrt(pastTotalSupply);
         return (sqrtSupply * QUORUM_PERCENT) / 100;
     }
 
+    /// @dev Proposal passes if ForVotes > AgainstVotes (Abstain does not affect success).
     function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
         ProposalVote storage proposalVote = _proposalVotes[proposalId];
         return proposalVote.forVotes > proposalVote.againstVotes;
     }
 
+    /// @dev Quorum checks participation as (For + Abstain) against the snapshot quorum.
+    /// @notice Treats abstentions as participation for quorum purposes.
     function _quorumReached(uint256 proposalId) internal view virtual override returns (bool) {
         ProposalVote storage proposalVote = _proposalVotes[proposalId];
         uint256 participationVotes = proposalVote.forVotes + proposalVote.abstainVotes;
         return participationVotes >= quorum(proposalSnapshot(proposalId));
     }
 
+    /// @notice Returns whether `account` has already cast a vote on `proposalId`.
     function hasVoted(uint256 proposalId, address account) public view virtual override returns (bool) {
         return _proposalVotes[proposalId].hasVoted[account];
     }
 
+    /// @notice Returns current tallies for a proposal (Against, For, Abstain).
     function proposalVotes(uint256 proposalId) public view virtual returns (uint256 againstVotes, uint256 forVotes, uint256 abstainVotes) {
         ProposalVote storage proposalVote = _proposalVotes[proposalId];
         return (proposalVote.againstVotes, proposalVote.forVotes, proposalVote.abstainVotes);
     }
 
+    /// @notice Declares this Governor’s counting configuration for off-chain tooling.
+    /// @dev Indicates a Bravo-like 3-option support, quorum counts For+Abstain, quadratic mode, and NFT gate requirement.
     function COUNTING_MODE() public pure virtual override returns (string memory) {
         return "support=bravo&quorum=for,abstain&mode=quadratic&gate=nft_id";
     }
 
+    /// @notice Cancels a proposal through the timelock/governor pipeline.
+    /// @dev Emits ProposalVetoed(proposalId) for off-chain consumers. Uses `_cancel` from Governor (and TimelockControl extension).
+    /// @param targets Target contracts for the proposal actions.
+    /// @param values ETH values for each call.
+    /// @param calldatas Encoded function calls.
+    /// @param descriptionHash Hash of the proposal description (as per OZ Governor).
     function veto(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) public onlyRole(VETO_ROLE) {
         uint256 proposalId = getProposalId(targets, values, calldatas, descriptionHash);
         emit ProposalVetoed(proposalId);
@@ -228,40 +328,55 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     }
 
     // Overrides required by Solidity due to multiple inheritance
+
+    /// @notice Returns the current Governor state of a proposal (includes timelock pipeline states).
     function state(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (ProposalState) {
         return super.state(proposalId);
     }
 
+    /// @notice Whether a proposal needs to be queued in the timelock before execution.
     function proposalNeedsQueuing(uint256 proposalId) public view override(Governor, GovernorTimelockControl) returns (bool) {
         return super.proposalNeedsQueuing(proposalId);
     }
 
+    /// @dev Storage extension hook for proposal creation bookkeeping.
     function _propose(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, string memory description, address proposer) internal override(Governor, GovernorStorage) returns (uint256) {
         return super._propose(targets, values, calldatas, description, proposer);
     }
 
+    /// @dev Timelock enqueue hook.
     function _queueOperations(uint256 proposalId, address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) internal override(Governor, GovernorTimelockControl) returns (uint48) {
         return super._queueOperations(proposalId, targets, values, calldatas, descriptionHash);
     }
 
+    /// @dev Timelock execute hook.
     function _executeOperations(uint256 proposalId, address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) internal override(Governor, GovernorTimelockControl) {
         super._executeOperations(proposalId, targets, values, calldatas, descriptionHash);
     }
 
+    /// @dev Timelock/Governor cancel hook.
     function _cancel(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) internal override(Governor, GovernorTimelockControl) returns (uint256) {
         return super._cancel(targets, values, calldatas, descriptionHash);
     }
 
+    /// @dev Returns the execution authority (typically the timelock).
     function _executor() internal view override(Governor, GovernorTimelockControl) returns (address) {
         return super._executor();
     }
 
+    /// @notice ERC165 support for interfaces exposed through Governor and AccessControl.
+    /// @dev Required because both parents implement supportsInterface; super() resolves correctly by linearization.
     function supportsInterface(bytes4 interfaceId) public view override(Governor, AccessControl) returns (bool) {
         return super.supportsInterface(interfaceId);
     }
 
     // Locking Coins
 
+    /// @notice Locks DigilCoin inside this Governor and/or extends the lock expiry.
+    /// @dev Uses checkpoints so `_getVotes` can read the locked state at any proposal snapshot timepoint.
+    ///      Uses a CEI pattern: compute new state, commit to storage, then perform the ERC20 transferFrom.
+    /// @param amount Additional amount to lock (0 allowed if only extending).
+    /// @param duration Desired lock duration from “now” (used only to compute a proposedExpiry); must be within bounds.
     function lockCoins(uint256 amount, uint256 duration) external {
         address sender = _msgSender();
 
@@ -271,6 +386,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         }
 
         // Read current state
+        // `clock()` aligns with token().clock() so checkpoints and snapshots share the same time scale.
         uint48 nowTs = clock();
         uint208 currentAmount = _userLockedAmounts[sender].latest();
         uint48 currentExpiry = uint48(_userLockExpiries[sender].latest());
@@ -278,17 +394,21 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // Decide new state (no external calls yet)
         uint208 newAmount = currentAmount;
         if (amount > 0) {
+            // Safe cast: Trace208 stores uint208 values; assumes amount fits (typical ERC20 ranges).
             newAmount = currentAmount + uint208(amount);
         }
 
+        // Proposed expiry is “now + duration” in the Governor’s clock units (timestamp-mode).
         uint48 proposedExpiry = uint48(nowTs + uint48(duration));
         bool isExtension = proposedExpiry > currentExpiry;
 
+        // Caller must either add coins or extend expiry.
         if (amount == 0 && !isExtension) {
             revert NoLockAction();
         }
 
         // --- EFFECTS ---
+        // Record new checkpoints before external token transfer; revert will roll back if transfer fails.
         if (amount > 0) {
             _userLockedAmounts[sender].push(nowTs, newAmount);
         }
@@ -297,16 +417,18 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         }
 
         // --- INTERACTION ---
+        // Pull tokens into the Governor only when increasing locked amount.
         if (amount > 0) {
             _transferFrom(sender, address(this), amount);
         }
 
+        // Emit final expiry used (either newly extended or unchanged).
         emit Lock(sender, amount, isExtension ? proposedExpiry : currentExpiry);
     }
 
-
     // Signaling and Staking
 
+    /// @dev Internal safe wrapper for ERC20 transferFrom with explicit false-return handling.
     function _transferFrom(address from, address to, uint256 amount) internal {
         try IERC20Burnable(address(token())).transferFrom(from, to, amount) returns (bool ok) {
             if (!ok) revert TransferFailed(from, to, amount);
@@ -315,6 +437,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         }
     }
 
+    /// @dev Internal safe wrapper for ERC20 transfer with explicit false-return handling.
     function _transfer(address to, uint256 amount) internal {
         try IERC20Burnable(address(token())).transfer(to, amount) returns (bool ok) {
             if (!ok) revert TransferFailed(address(this), to, amount);
@@ -323,10 +446,15 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         }
     }
 
+    /// @dev Burns DigilCoin held by this Governor.
     function _burn(uint256 amount) internal {
         IERC20Burnable(address(token())).burn(amount);
     }
 
+    /// @notice Stakes coins on a proposal while it is Pending or Active.
+    /// @dev Uses CEI: updates accounting first, then pulls tokens. If transferFrom fails, the whole tx reverts and storage updates roll back.
+    /// @param proposalId Proposal to stake on.
+    /// @param amount Amount of DigilCoin to stake.
     function stakeOnProposal(uint256 proposalId, uint256 amount) external {
         ProposalState currentState = state(proposalId);
 
@@ -347,7 +475,9 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         emit Stake(proposalId, sender, amount);
     }
 
-
+    /// @notice Claims staked coins back for proposals that succeeded (or were canceled) and are refundable.
+    /// @dev Refundable in: Succeeded, Queued, Executed, Canceled. Not refundable in Defeated/Expired (those are burnable).
+    /// @param proposalId Proposal to claim stake from.
     function claimStake(uint256 proposalId) external {
         ProposalState currentState = state(proposalId);
         
@@ -367,6 +497,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         uint256 amount = proposalStakes[proposalId][sender];
         if (amount == 0) revert NoStake();
 
+        // Effects: clear user stake and reduce cached total before transferring.
         proposalStakes[proposalId][sender] = 0;        
         proposalTotalStaked[proposalId] -= amount; 
 
@@ -374,6 +505,9 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         emit Claim(proposalId, sender, amount);
     }
 
+    /// @notice Burns all stake on a failed proposal (Defeated or Expired) in one call; pays a keeper bounty.
+    /// @dev Any caller can execute this “cleanup” once. This is intended as a batch-guard pattern to avoid per-user loops.
+    /// @param proposalId Proposal whose stakes should be finalized by burning.
     function burnAllStakes(uint256 proposalId) external {
         // 1. CONSOLIDATED STATE CHECK
         // Instead of rejecting specific bad states, we only accept the two valid ones.
@@ -416,6 +550,10 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         emit Burn(proposalId, sender, burnAmount, bounty);
     }
 
+    /// @notice Burns coins immediately as a “signal” during Pending/Active state (non-refundable).
+    /// @dev This is separate from staking: signal is always burned; stake is conditionally refundable/burnable based on proposal outcome.
+    /// @param proposalId Proposal to signal.
+    /// @param amount Amount of DigilCoin to burn as signal.
     function signalProposal(uint256 proposalId, uint256 amount) external {
         ProposalState currentState = state(proposalId);
         
