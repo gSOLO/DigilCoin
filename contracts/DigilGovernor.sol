@@ -79,6 +79,9 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         Abstain
     }
 
+    // @dev Minimum proposal threshold in raw voting units
+    uint256 private _proposalThreshold = 10000e18;
+
     // Events
     /// @notice Emitted when a proposal is vetoed/canceled by a VETO_ROLE holder.
     event ProposalVetoed(uint256 proposalId);
@@ -94,6 +97,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     event Claim(uint256 indexed proposalId, address indexed user, uint256 amount);
     /// @notice Emitted when stakes are batch-burned on failure; keeper receives bounty.
     event Burn(uint256 indexed proposalId, address indexed keeper, uint256 amountBurned, uint256 bountyPaid);
+    /// @notice Emitted when the proposal threshold is set.
+    event ProposalThresholdSet(uint256 oldProposalThreshold, uint256 newProposalThreshold);
 
     // Errors
     /// @notice Thrown when vote params are missing (tokenId is required for NFT-gated voting).
@@ -135,6 +140,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         nftGate = IERC721(_nftGate);
     }
 
+    // --- CLOCK SETTINGS ---
+
     /// @notice ERC6372 clock passthrough to the IVotes token.
     /// @dev Ensures this Governor and token share the same timepoint system (timestamp vs blocknumber).
     function clock() public view override(Governor, GovernorVotes) returns (uint48) {
@@ -146,20 +153,28 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         return token().CLOCK_MODE();
     }
 
+    // --- GOVERNOR SETTINGS ---
+
     /// @notice Voting delay (time from proposal creation until voting starts).
-    function votingDelay() public pure override returns (uint256) {
-        return 1 days; 
+    function votingDelay() public view virtual override returns (uint256) {
+        return 1 days;
     }
 
     /// @notice Voting period (time between vote start and vote end).
-    function votingPeriod() public pure override returns (uint256) {
+    function votingPeriod() public view virtual override returns (uint256) {
         return 1 weeks;
     }
 
     /// @notice Minimum proposal threshold in raw voting units (token base units).
-    /// @dev This is checked by OpenZeppelin Governor during proposal creation.
-    function proposalThreshold() public pure override returns (uint256) {
-        return 10000e18;
+    function proposalThreshold() public view virtual override returns (uint256) {
+        return _proposalThreshold;
+    }
+
+    /// @dev Update the proposal threshold. This operation can only be performed through a governance proposal.
+    ///      Emits a {ProposalThresholdSet} event.
+    function setProposalThreshold(uint256 newProposalThreshold) public virtual onlyGovernance {
+        emit ProposalThresholdSet(_proposalThreshold, newProposalThreshold);
+        _proposalThreshold = newProposalThreshold;
     }
 
     // --- VOTE LOGIC ---
