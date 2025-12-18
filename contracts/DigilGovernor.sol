@@ -60,6 +60,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     }
 
     // Events
+    event ProposalVetoed(uint256 proposalId);
     event Lock(address indexed user, uint256 amount, uint48 expiry);
     event Unlock(address indexed user);
     event Signal(uint256 indexed proposalId, address indexed user, uint256 amount);
@@ -225,6 +226,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     }
 
     function veto(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) public onlyRole(VETO_ROLE) {
+        uint256 proposalId = getProposalId(targets, values, calldatas, descriptionHash);
+        emit ProposalVetoed(proposalId);
         _cancel(targets, values, calldatas, descriptionHash);
     }
 
