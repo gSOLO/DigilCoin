@@ -60,6 +60,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     }
 
     // Events
+    event Lock(address indexed user, uint256 amount, uint48 expiry);
+    event Unlock(address indexed user);
     event Signal(uint256 indexed proposalId, address indexed user, uint256 amount);
     event Stake(uint256 indexed proposalId, address indexed user, uint256 amount);
     event Claim(uint256 indexed proposalId, address indexed user, uint256 amount);
@@ -73,7 +75,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     error InvalidVoteType();
     error VoteWithParamsRequired();
     error TransferFailed(address from, address to, uint256 amount);
-    error ZeroLockAmount();
+    error NoLockAction();
     error LockDurationOutOfBounds(uint256 duration);
     error LockNotExpired(uint256 expiry);
     error NoLockedTokens();
@@ -262,26 +264,36 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     // Locking Tokens
 
     function lockTokens(uint256 amount, uint256 duration) external {
-        if (amount == 0) revert ZeroLockAmount();
-        
+        // VALIDATION: Duration must always be valid to prevent accidental short-locks
         if (duration < MIN_LOCK_DURATION || duration > MAX_LOCK_DURATION) {
             revert LockDurationOutOfBounds(duration);
         }
 
-        address sender = _msgSender();
+        // 1. HANDLE AMOUNT (Only if adding tokens)
+        if (amount > 0) {
+            _transferFrom(msg.sender, address(this), amount);
 
-        _transferFrom(sender, address(this), amount);
-
-        uint208 currentAmount = _userLockedAmounts[sender].latest();
-        uint208 newAmount = currentAmount + uint208(amount);
-        _userLockedAmounts[sender].push(clock(), newAmount);
-
-        uint48 currentExpiry = uint48(_userLockExpiries[sender].latest());
-        uint48 newExpiry = clock() + uint48(duration);
-        
-        if (newExpiry > currentExpiry) {
-            _userLockExpiries[sender].push(clock(), newExpiry);
+            uint208 currentAmount = _userLockedAmounts[msg.sender].latest();
+            uint208 newAmount = currentAmount + uint208(amount);
+            _userLockedAmounts[msg.sender].push(clock(), newAmount);
         }
+
+        // 2. HANDLE DURATION (Extend if new duration is longer than current)
+        uint48 currentExpiry = uint48(_userLockExpiries[msg.sender].latest());
+        uint48 newExpiry = uint48(block.timestamp + duration);
+        
+        bool isExtension = newExpiry > currentExpiry;
+        if (isExtension) {
+            _userLockExpiries[msg.sender].push(clock(), newExpiry);
+        }
+
+        // 3. FINAL CHECK: Must do at least one thing
+        if (amount == 0 && !isExtension) {
+            revert NoLockAction();
+        }
+
+        // Note: Event now handles 0 amount gracefully
+        emit Lock(msg.sender, amount, newExpiry);
     }
 
     function unlockTokens() external {
@@ -297,6 +309,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         _userLockExpiries[sender].push(clock(), 0);
 
         _transfer(sender, amount);
+
+        emit Unlock(msg.sender);
     }
 
     // Signaling and Staking
