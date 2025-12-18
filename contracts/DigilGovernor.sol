@@ -79,7 +79,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     error NoLockAction();
     error LockDurationOutOfBounds(uint256 duration);
     error LockNotExpired(uint256 expiry);
-    error NoLockedTokens();
+    error NoLockedCoins();
     error InvalidProposalState(ProposalState state);
     error NoStake();
 
@@ -123,6 +123,33 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         revert VoteWithParamsRequired();
     }
 
+    function _getVotes(address account, uint256 timepoint, bytes memory /*params*/) internal view override(Governor, GovernorVotes) returns (uint256) {
+        // 1. Get Liquid Balance (Delegated) from Token
+        uint256 rawWeight = token().getPastVotes(account, timepoint);
+
+        // 2. Get Locked Balance + Bonus from Internal State
+        // Note: Using uint48 casting because checkpoints store uint48 keys
+        uint48 snapshot = uint48(timepoint);
+        
+        uint256 lockedAmount = _userLockedAmounts[account].upperLookup(snapshot);
+        uint256 lockedExpiry = _userLockExpiries[account].upperLookup(snapshot);
+
+        // If lock existed and was valid at the snapshot
+        if (lockedAmount > 0 && lockedExpiry > snapshot) {
+            uint256 timeRemaining = lockedExpiry - snapshot;
+            if (timeRemaining > MAX_LOCK_DURATION) {
+                timeRemaining = MAX_LOCK_DURATION;
+            }
+            
+            // Bonus Model: LockedAmount + (LockedAmount * Time / MaxTime)
+            uint256 timeBonus = (lockedAmount * timeRemaining) / MAX_LOCK_DURATION;
+            
+            rawWeight += (lockedAmount + timeBonus);
+        }
+
+        return rawWeight;
+    }
+
     function _countVote(uint256 proposalId, address account, uint8 support, uint256 weight, bytes memory params) internal virtual override returns (uint256) {
         if (params.length == 0) revert InvalidParams();
         uint256 tokenId = abi.decode(params, (uint256));
@@ -145,34 +172,10 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
             }
         }
 
-        // 3. COMBINED WEIGHT CALCULATION
-        uint256 finalWeight;
-        {
-            uint48 snapshot = uint48(proposalSnapshot(proposalId));
-            uint256 lockedAmount = _userLockedAmounts[account].upperLookup(snapshot);
-            uint256 lockedExpiry = _userLockExpiries[account].upperLookup(snapshot);
-
-            // Start with Liquid Weight (from params)
-            uint256 totalRawWeight = weight;
-
-            // Add Locked Weight (if valid)
-            if (lockedAmount > 0 && lockedExpiry > snapshot) {
-                uint256 timeRemaining = lockedExpiry - snapshot;
-                if (timeRemaining > MAX_LOCK_DURATION) {
-                    timeRemaining = MAX_LOCK_DURATION;
-                }
-                
-                // INCENTIVE FIX: Bonus Model
-                // Power = Amount + (Amount * Time / MaxTime)
-                // Result: 100 Tokens locked for 0 time = 100 Power (Same as liquid)
-                // Result: 100 Tokens locked for 4 years = 200 Power (2x Bonus)
-                uint256 timeBonus = (lockedAmount * timeRemaining) / MAX_LOCK_DURATION;
-                totalRawWeight += (lockedAmount + timeBonus);
-            }
-
-            // Apply Quadratic Root to the Sum
-            finalWeight = Math.sqrt(totalRawWeight);
-        }
+        // 3. QUADRATIC MATH
+        // 'weight' is passed in from _getVotes(), so it already includes Liquid + Locked + Bonus.
+        // We simply apply the square root here.
+        uint256 finalWeight = Math.sqrt(weight);
 
         // 4. CAP & TALLY
         {
@@ -264,57 +267,50 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         return super.supportsInterface(interfaceId);
     }
 
-    // Locking Tokens
+    // Locking Coins
 
-    function lockTokens(uint256 amount, uint256 duration) external {
+    function lockCoins(uint256 amount, uint256 duration) external {
+        address sender = _msgSender();
+
         // VALIDATION: Duration must always be valid to prevent accidental short-locks
         if (duration < MIN_LOCK_DURATION || duration > MAX_LOCK_DURATION) {
             revert LockDurationOutOfBounds(duration);
         }
 
-        // 1. HANDLE AMOUNT (Only if adding tokens)
+        // Read current state
+        uint48 nowTs = clock();
+        uint208 currentAmount = _userLockedAmounts[sender].latest();
+        uint48 currentExpiry = uint48(_userLockExpiries[sender].latest());
+
+        // Decide new state (no external calls yet)
+        uint208 newAmount = currentAmount;
         if (amount > 0) {
-            _transferFrom(msg.sender, address(this), amount);
-
-            uint208 currentAmount = _userLockedAmounts[msg.sender].latest();
-            uint208 newAmount = currentAmount + uint208(amount);
-            _userLockedAmounts[msg.sender].push(clock(), newAmount);
+            newAmount = currentAmount + uint208(amount);
         }
 
-        // 2. HANDLE DURATION (Extend if new duration is longer than current)
-        uint48 currentExpiry = uint48(_userLockExpiries[msg.sender].latest());
-        uint48 newExpiry = uint48(block.timestamp + duration);
-        
-        bool isExtension = newExpiry > currentExpiry;
-        if (isExtension) {
-            _userLockExpiries[msg.sender].push(clock(), newExpiry);
-        }
+        uint48 proposedExpiry = uint48(nowTs + uint48(duration));
+        bool isExtension = proposedExpiry > currentExpiry;
 
-        // 3. FINAL CHECK: Must do at least one thing
         if (amount == 0 && !isExtension) {
             revert NoLockAction();
         }
 
-        // Note: Event now handles 0 amount gracefully
-        emit Lock(msg.sender, amount, newExpiry);
+        // --- EFFECTS ---
+        if (amount > 0) {
+            _userLockedAmounts[sender].push(nowTs, newAmount);
+        }
+        if (isExtension) {
+            _userLockExpiries[sender].push(nowTs, proposedExpiry);
+        }
+
+        // --- INTERACTION ---
+        if (amount > 0) {
+            _transferFrom(sender, address(this), amount);
+        }
+
+        emit Lock(sender, amount, isExtension ? proposedExpiry : currentExpiry);
     }
 
-    function unlockTokens() external {
-        address sender = _msgSender();
-
-        uint48 expiry = uint48(_userLockExpiries[sender].latest());
-        uint208 amount = _userLockedAmounts[sender].latest();
-
-        if (clock() < expiry) revert LockNotExpired(expiry);
-        if (amount == 0) revert NoLockedTokens();
-
-        _userLockedAmounts[sender].push(clock(), 0);
-        _userLockExpiries[sender].push(clock(), 0);
-
-        _transfer(sender, amount);
-
-        emit Unlock(msg.sender);
-    }
 
     // Signaling and Staking
 
@@ -340,7 +336,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
 
     function stakeOnProposal(uint256 proposalId, uint256 amount) external {
         ProposalState currentState = state(proposalId);
-        
+
         // Rule: Can only stake if Pending or Active
         if (currentState != ProposalState.Pending && currentState != ProposalState.Active) {
             revert InvalidProposalState(currentState);
@@ -348,13 +344,16 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
 
         address sender = _msgSender();
 
-        _transferFrom(sender, address(this), amount);
-
+        // --- EFFECTS ---
         proposalStakes[proposalId][sender] += amount;
         proposalTotalStaked[proposalId] += amount;
 
+        // --- INTERACTION ---
+        _transferFrom(sender, address(this), amount);
+
         emit Stake(proposalId, sender, amount);
     }
+
 
     function claimStake(uint256 proposalId) external {
         ProposalState currentState = state(proposalId);
