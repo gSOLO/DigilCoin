@@ -48,6 +48,7 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 - **Digital Sigils** – The name of the ERC-721 collection and contract that implements the dynamic NFT logic described in this document.
 - **Digil / Digils** – One NFT is called **a Digil** (a single Digital Sigil); the plural is **Digils**. Informally: “I charged three of my Digils today.”
 - **Digil Coin (ERC-20)** – The system’s ERC-20 currency, ticker **DIGIL**, used as “coins” inside the protocol for charging, fees, buffs, and rewards.
+- **Digil Governor** – The on-chain governance contract for DigilCoin proposals and timelocked execution (quadratic counting + optional NFT-gated voting).
 - **Digital Sigils (ERC-721)** – The NFT collection itself, referenced by the ticker **DIGILS**. In social contexts you might say: “Picked up two more $DIGILS using $DIGIL.”
 - **ETH vs Coins** – **ETH** represents intrinsic value or “material sacrifice” locked into a Digil; **coins (DIGIL)** represent energy or “gnosis” used to drive the system’s mechanics (charging, linking, buffing).
 
@@ -60,7 +61,47 @@ This terminology keeps the branding consistent: **$DIGIL** is the liquid currenc
 ### Digil Coin | ERC-20
 **Symbol**: DIGIL • **Address**: TBD
 
-Used for **charge units**, feature fees (linking, metadata updates, opt-out), and **bonuses**. In the context of the system, these coins represent **Gnosis** or kinetic energy. They are the fuel required to power the ritual. Internally the contract normalizes coin math with a **coin multiplier**: `10**decimals`. Where we say “coins,” we mean base units at this precision.
+Used for **charge units**, feature fees (linking, metadata updates, buffs, etc.), and **governance**.
+
+**DigilCoin.sol highlights**
+- OpenZeppelin-based ERC-20 with:
+  - `ERC20Burnable` (holders can burn)
+  - `ERC20Pausable` (role-gated pause/unpause)
+  - `ERC20Permit` (EIP-2612 “permit” approvals)
+  - `ERC20Votes` (delegation + historical vote checkpoints)
+  - `AccessControl` roles: `DEFAULT_ADMIN_ROLE`, `MINTER_ROLE`, `PAUSER_ROLE`
+- Timestamp-based ERC-6372 clock for Governor compatibility:
+  - `clock()` returns `block.timestamp`
+  - `CLOCK_MODE()` returns `mode=timestamp`
+- `mint(to, amount)` is restricted to `MINTER_ROLE`.
+
+DigilCoin has **18 decimals** (same as ETH). Where we say “coins,” we mean base units at this precision.
+
+### Digil Governor | OpenZeppelin Governor
+**Address**: TBD
+
+Governance contract for DigilCoin that executes approved proposals through a **TimelockController** and uses DigilCoin’s timestamp-based ERC-6372 `clock()` / `CLOCK_MODE()` timepoints.
+
+**Core governance settings**
+- `votingDelay()` = **1 day**
+- `votingPeriod()` = **1 week**
+- `proposalThreshold()` = **10,000e18** by default (adjustable via `setProposalThreshold()` through governance)
+- `quorum(timepoint)` = **4% × sqrt(pastTotalSupplyAtTimepoint)**
+
+**Counting & gating**
+- Quadratic vote weight: counted weight = `sqrt(rawWeight)`
+- Voting requires params encoding an **ERC-721 `tokenId`** (standard `castVote*` without params reverts)
+- Voter must be the owner or an approved operator for the specified `tokenId`
+- Per-proposal replay protection: an address can vote once per proposal, and each `tokenId` can only be used once per proposal
+
+**Locking / staking / signaling (optional mechanics)**
+- `lockCoins(amount, duration)` records checkpointed locked balances and adds a linear time bonus to voting power (up to **+100%** at max duration).  
+  *Note: in this version, locked coins are held by the Governor and are not withdrawn via a public “unlock” function.*
+- `stakeOnProposal` / `claimStake` implement refundable staking for Pending/Active proposals; `burnAllStakes` finalizes failed proposals (Defeated/Expired) by burning the pooled stake and paying a **5% keeper bounty**
+- `signalProposal` burns coins immediately as a non-refundable “signal”
+
+**Veto**
+- Addresses with `VETO_ROLE` can cancel proposals via `veto(...)`.
 
 ### Digital Sigils | ERC-721
 **Symbol**: DIGILS • **Address**: TBD
@@ -145,14 +186,14 @@ bits 8..27    → cosmetics      (20 bits, 5 × 4-bit slots)
 bits 28..51   → mainRgb        (24 bits, RRGGBB)
 bits 52..83   → colorStart     (32 bits, RRGGBBAA)
 bits 84..115  → colorEnd       (32 bits, RRGGBBAA)
-bits 116..119 → reserved
+bits 116..119 → themeId       (4 bits, 0..15)
 ```
 
 - `styleId` selects a visual style.
 - `cosmetics` holds up to five small cosmetic modifiers.
 - `mainRgb` is a background/base color.
 - `colorStart` / `colorEnd` define an optional gradient.
-- Reserved bits are available for future expansion.
+- Bits `116..119` are used as `themeId` (`0..15`) to select a visual theme/palette.
 
 
 **Economics**
