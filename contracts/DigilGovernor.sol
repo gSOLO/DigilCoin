@@ -45,7 +45,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     uint256 private constant QUORUM_PERCENT = 4; // 4%
 
     // --- SIGNALING & STAKING STORAGE ---
-    uint256 private constant STAKE_KEEPER_FEE =   500; // 5%
+    uint256 private constant STAKE_KEEPER_FEE =  500; // 5%
     uint256 private constant BPS_DENOMINATOR = 10000;
 
     mapping(uint256 => mapping(address => uint256)) internal proposalStakes;
@@ -177,14 +177,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // We simply apply the square root here.
         uint256 finalWeight = Math.sqrt(weight);
 
-        // 4. CAP & TALLY
-        {
-            uint256 voteCap = quorum(proposalSnapshot(proposalId));
-            if (finalWeight > voteCap) {
-                finalWeight = voteCap;
-            }
-        }
-
+        // 4. TALLY
         if (support == uint8(VoteType.Against)) {
             proposalVote.againstVotes += finalWeight;
         } else if (support == uint8(VoteType.For)) {
