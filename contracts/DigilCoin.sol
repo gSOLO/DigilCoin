@@ -160,10 +160,13 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     event SpenderWeightSet(address indexed spender, uint16 weightBps);
 
     /// @notice Emitted when a user claims rewards for an epoch.
-    event Claimed(address indexed account, uint32 indexed epochId, uint256 amount, uint256 userEff, uint256 totalEff);
+    event Claim(address indexed account, uint32 indexed epochId, uint256 amount, uint256 userEff, uint256 totalEff);
+
+    /// @notice Emitted when the epoch is fast forwarded.
+    event EpochFastForward(uint32 indexed fromEpochId, uint32 indexed toEpochId, uint256 sweptEth);
 
     /// @notice Emitted when the epoch advances.
-    event EpochAdvanced(uint32 indexed newEpochId, uint32 newStartTime);
+    event EpochAdvance(uint32 indexed newEpochId, uint32 newStartTime);
 
     /// @notice Emitted when unclaimable ETH is swept forward into the current epoch.
     event SweptUnclaimable(uint32 indexed expiredEpochId, uint256 amountSwept, uint32 indexed intoEpochId);
@@ -175,7 +178,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     event SyncedUntrackedEth(uint256 amountAdded, uint32 indexed intoEpochId);
 
     /// @notice Emitted when reward parameters are updated.
-    event ParametersUpdated(uint256 minDailySpend, uint256 dailyCap, uint256 epochCap, uint16 dayBonusBps, uint8 maxActiveDays);
+    event ParametersUpdate(uint256 minDailySpend, uint256 dailyCap, uint256 epochCap, uint16 dayBonusBps, uint8 maxActiveDays);
 
     // Errors
 
@@ -278,7 +281,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         dayBonusBps = _dayBonusBps;
         maxActiveDays = _maxActiveDays;
 
-        emit ParametersUpdated(_minDailySpend, _dailyCap, _epochCap, _dayBonusBps, _maxActiveDays);
+        emit ParametersUpdate(_minDailySpend, _dailyCap, _epochCap, _dayBonusBps, _maxActiveDays);
     }
 
     // Donations (ETH funding)
@@ -371,14 +374,14 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         ue.flags |= 0x01;
 
         if (pool == 0 || totalEff == 0) {
-            emit Claimed(msg.sender, epochId, 0, 0, totalEff);
+            emit Claim(msg.sender, epochId, 0, 0, totalEff);
             return;
         }
 
         // User effective points = points * (BASE + activeDays*dayBonusBps)
         uint256 userEff = ue.points * (uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(ep.dayBonusBps));
         if (userEff == 0) {
-            emit Claimed(msg.sender, epochId, 0, 0, totalEff);
+            emit Claim(msg.sender, epochId, 0, 0, totalEff);
             return;
         }
 
@@ -398,7 +401,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
             if (!ok) revert ClaimTransferFailed();
         }
 
-        emit Claimed(msg.sender, epochId, payout, userEff, totalEff);
+        emit Claim(msg.sender, epochId, payout, userEff, totalEff);
     }
 
     /// @notice Claims multiple epochs in one call.
@@ -433,13 +436,13 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         uint256 pool = ep.poolEth;
         uint256 totalEff = ep.totalEff;
         if (pool == 0 || totalEff == 0) {
-            emit Claimed(msg.sender, epochId, 0, 0, totalEff);
+            emit Claim(msg.sender, epochId, 0, 0, totalEff);
             return;
         }
 
         uint256 userEff = ue.points * (uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(ep.dayBonusBps));
         if (userEff == 0) {
-            emit Claimed(msg.sender, epochId, 0, 0, totalEff);
+            emit Claim(msg.sender, epochId, 0, 0, totalEff);
             return;
         }
 
@@ -455,7 +458,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
             if (!ok) revert ClaimTransferFailed();
         }
 
-        emit Claimed(msg.sender, epochId, payout, userEff, totalEff);
+        emit Claim(msg.sender, epochId, payout, userEff, totalEff);
     }
 
     // Rewards tracking (override ERC20 hook)
@@ -587,10 +590,93 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @dev Advances epochs as needed so `currentEpochId`/`currentEpochStart` match `block.timestamp`.
     ///      Handles long inactivity by advancing multiple epochs in a single call.
     function _syncEpoch() internal {
-        // Advance repeatedly until we're within the current epoch window.
-        while (block.timestamp >= uint256(currentEpochStart) + uint256(EPOCH_LENGTH)) {
-            _advanceEpoch();
+        // How many full epochs have elapsed since currentEpochStart?
+        uint256 elapsed = block.timestamp - uint256(currentEpochStart);
+        uint32 steps = uint32(elapsed / uint256(EPOCH_LENGTH));
+        if (steps == 0) return;
+
+        // If the gap is "reasonable", advance normally (preserves detailed sweep events).
+        // If it's huge, do an O(STORED_EPOCHS) fast-forward.
+        //
+        // Threshold choice: once steps is greater than STORED_EPOCHS + CLAIMABLE_EPOCHS,
+        // every stored epoch is certainly unclaimable and intermediate simulation is unnecessary.
+        if (steps <= uint32(STORED_EPOCHS + CLAIMABLE_EPOCHS)) {
+            for (uint32 i = 0; i < steps; i++) _advanceEpoch();
+        } else {
+            _fastForwardEpochs(steps);
         }
+    }
+
+    /// @dev Fast-forwards epoch state when the contract has been inactive for a long period, avoiding an
+    ///      unbounded `_advanceEpoch()` loop that could exceed the block gas limit.
+    ///      This function is intended for *large* time gaps where simulating each intermediate epoch is unnecessary
+    ///      because any stored epochs are far outside the claim window and therefore unclaimable.
+    ///      Safety/Correctness properties:
+    ///      - Preserves the "no trapped ETH" invariant by sweeping any remaining ETH from all currently stored
+    ///        epoch snapshots into the new current epoch's pool.
+    ///      - Resets the ring buffer to represent the most recent `STORED_EPOCHS` epochs ending at the computed
+    ///        new current epoch, ensuring `epochId % STORED_EPOCHS` slot mapping remains valid.
+    ///      - Clears per-epoch totals (`poolEth`, `claimedEth`, `totalEff`) for reinitialized epochs; per-user
+    ///        epoch data becomes stale automatically via `UserEpoch.epochId` mismatch (lazy reset on next activity).
+    ///      - Snapshots epoch-level reward parameters (e.g., `dayBonusBps`, `maxActiveDays`) into each new epoch,
+    ///        ensuring claim math remains consistent within an epoch.
+    ///      Gas complexity is O(STORED_EPOCHS) with bounded storage writes, preventing DoS due to long inactivity.
+    /// @param steps Number of full epochs elapsed since `currentEpochStart` (must be > 0).
+    function _fastForwardEpochs(uint32 steps) internal {
+        uint32 fromId = currentEpochId;
+
+        // Compute the new "current" epoch based on time jump.
+        uint32 toId = fromId + steps;
+        uint32 toStart = currentEpochStart + uint32(uint256(steps) * uint256(EPOCH_LENGTH));
+
+        // 1) Sweep ALL remaining ETH from currently stored epoch slots.
+        // These epochs are far beyond the claim window in a huge jump scenario,
+        // so rolling/sweeping intermediate epochs individually is unnecessary.
+        uint256 swept;
+        for (uint256 i = 0; i < STORED_EPOCHS; i++) {
+            EpochSnap storage ep = _epochs[i];
+
+            // Only sweep if this slot is populated (epochId set) and has remaining ETH.
+            // (If you initialize epochId for all slots always, the extra check is harmless.)
+            uint256 rem = ep.poolEth > ep.claimedEth ? (ep.poolEth - ep.claimedEth) : 0;
+            if (rem != 0) {
+                swept += rem;
+                // Mark remaining as swept so it can’t be double-counted.
+                ep.poolEth = ep.claimedEth;
+            }
+        }
+
+        // 2) Reinitialize ring buffer to represent the last STORED_EPOCHS epochs ending at `toId`.
+        // Important: epochId must match slot = epochId % STORED_EPOCHS, so claims and lookups work.
+        // We overwrite all 12 slots (bounded cost).
+        for (uint32 k = 0; k < STORED_EPOCHS; k++) {
+            uint32 eid = toId - k;
+            uint8 slot = _epochSlot(eid);
+
+            EpochSnap storage ep = _epochs[slot];
+            ep.epochId = eid;
+            ep.startTime = toStart - uint32(uint256(k) * uint256(EPOCH_LENGTH));
+
+            // Snapshot the epoch parameters (per your previous critical fix).
+            ep.dayBonusBps = dayBonusBps;
+            ep.maxActiveDays = maxActiveDays;
+
+            // Clear accounting. (Old userEpoch structs become stale via epochId mismatch.)
+            ep.poolEth = 0;
+            ep.claimedEth = 0;
+            ep.totalEff = 0;
+        }
+
+        // 3) Update pointers to the new current epoch.
+        currentEpochId = toId;
+        currentEpochStart = toStart;
+
+        // 4) Credit swept ETH into the new current epoch pool.
+        if (swept != 0) {
+            _epochs[_epochSlot(toId)].poolEth += swept;
+        }
+
+        emit EpochFastForward(fromId, toId, swept);
     }
 
     /// @dev Advances the epoch by 1 and performs sweep-forward policies:
@@ -621,7 +707,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         cur.claimedEth = 0;
         cur.totalEff = 0;
 
-        emit EpochAdvanced(newId, newStart);
+        emit EpochAdvance(newId, newStart);
 
         // --- Policy 1: ended epoch with no participants -> roll forward ---
         // If totalEff==0, nobody can ever claim from that epoch, so we roll it forward immediately.
