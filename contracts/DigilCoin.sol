@@ -32,9 +32,7 @@ import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
 /// capped daily and per-epoch to limit gaming. Remaining ETH is swept forward so it never becomes unclaimable.
 /// @custom:security-contact security@digil.co.in
 contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20Permit, ERC20Votes {
-
     // Roles
-
 
     /// @notice Can pause token transfers.
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
@@ -45,9 +43,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @notice Can configure rewards settings (spender weights, caps, thresholds, multipliers).
     bytes32 public constant CONFIG_ROLE = keccak256("CONFIG_ROLE");
 
-
     // Rewards parameters (units & defaults are configurable)
-
 
     /// @notice Fixed denominator for basis-point math (100.00% = 10,000 bps).
     uint16 public constant BASE_BPS = 10_000;
@@ -83,9 +79,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     ///      Keeping weights configurable allows steering incentives over time.
     mapping(address => uint16) public spendWeightBps;
 
-
     // Rewards storage (bounded ring buffer)
-
 
     /// @notice Snapshot of a single epoch.
     /// @dev Stored in a ring buffer slot keyed by `epochId % STORED_EPOCHS`.
@@ -94,6 +88,9 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         uint32 epochId;
         /// @notice Epoch start timestamp.
         uint32 startTime;
+        // Reward parameter snapshots for this epoch (critical for math correctness).
+        uint16 dayBonusBps;
+        uint8  maxActiveDays;
         /// @notice Total ETH allocated to this epoch (donations + sweeps).
         uint256 poolEth;
         /// @notice ETH already paid out for this epoch (sum of user claims).
@@ -154,9 +151,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @notice Total ETH ever claimed by users.
     uint256 public totalClaimedEth;
 
-
     // Events
-
 
     /// @notice Emitted when ETH is donated into the current epoch pool.
     event Donation(address indexed donor, uint256 amount, uint32 indexed epochId);
@@ -182,9 +177,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @notice Emitted when reward parameters are updated.
     event ParametersUpdated(uint256 minDailySpend, uint256 dailyCap, uint256 epochCap, uint16 dayBonusBps, uint8 maxActiveDays);
 
-
     // Errors
-
 
     error EpochNotFound();
     error EpochNotClaimable();
@@ -193,9 +186,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     error ClaimTransferFailed();
     error BadParameters();
 
-
     // Constructor
-
 
     /// @notice Creates DigilCoin and initializes roles and the first epoch.
     /// @param defaultAdmin Address granted DEFAULT_ADMIN_ROLE, PAUSER_ROLE, MINTER_ROLE, and REWARDS_ROLE.
@@ -222,11 +213,11 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         EpochSnap storage e0 = _epochs[0];
         e0.epochId = 0;
         e0.startTime = currentEpochStart;
+        e0.dayBonusBps = dayBonusBps;
+        e0.maxActiveDays = maxActiveDays;
     }
 
-
     // Admin / role-gated functions (existing features, restored NatSpec)
-
 
     /// @notice Pauses token transfers.
     /// @dev While paused, transfers, mints, and burns revert (ERC20Pausable).
@@ -247,9 +238,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         _mint(to, amount);
     }
 
-
     // Rewards configuration
-
 
     /// @notice Sets the reward weight (in bps) for an eligible spender contract.
     /// @dev
@@ -281,6 +270,8 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
         if (_dailyCap == 0 || _epochCap == 0 || _dailyCap > _epochCap) revert BadParameters();
 
+        _syncEpoch(); // ensure we are configuring for future epochs, not a stale "current" one
+
         minDailySpend = _minDailySpend;
         dailyCap = _dailyCap;
         epochCap = _epochCap;
@@ -290,9 +281,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         emit ParametersUpdated(_minDailySpend, _dailyCap, _epochCap, _dayBonusBps, _maxActiveDays);
     }
 
-
     // Donations (ETH funding)
-
 
     /// @notice Donates ETH into the current epoch reward pool.
     /// @dev Calls `_syncEpoch()` first so donations always land in the correct epoch.
@@ -347,9 +336,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         emit Donation(address(0), diff, currentEpochId);
     }
 
-
     // Claiming
-
 
     /// @notice Claims ETH rewards for a completed, claimable epoch.
     /// @dev
@@ -389,7 +376,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         }
 
         // User effective points = points * (BASE + activeDays*dayBonusBps)
-        uint256 userEff = ue.points * (uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(dayBonusBps));
+        uint256 userEff = ue.points * (uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(ep.dayBonusBps));
         if (userEff == 0) {
             emit Claimed(msg.sender, epochId, 0, 0, totalEff);
             return;
@@ -450,7 +437,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
             return;
         }
 
-        uint256 userEff = ue.points * (uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(dayBonusBps));
+        uint256 userEff = ue.points * (uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(ep.dayBonusBps));
         if (userEff == 0) {
             emit Claimed(msg.sender, epochId, 0, 0, totalEff);
             return;
@@ -471,9 +458,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         emit Claimed(msg.sender, epochId, payout, userEff, totalEff);
     }
 
-
     // Rewards tracking (override ERC20 hook)
-
 
     /// @notice Central token movement hook (mint, burn, transfer).
     /// @dev Required override because ERC20Pausable and ERC20Votes both extend the transfer lifecycle.
@@ -519,6 +504,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         uint8 slot = _epochSlot(eid);
 
         // Load user state for this epoch slot; if stale, reset for current epoch.
+        EpochSnap storage ep = _epochs[slot];
         UserEpoch storage ue = _userEpoch[slot][user];
         if (ue.epochId != eid) {
             // Reset per-epoch counters for this user (new epoch or slot reuse).
@@ -552,7 +538,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
             ue.rawDaySpend = uint128(newRaw);
 
             // If raw spend crosses minDailySpend, mark this day active once.
-            if (uint256(ue.rawDaySpend) >= minDailySpend && ue.activeDays < maxActiveDays) {
+            if (uint256(ue.rawDaySpend) >= minDailySpend && ue.activeDays < ep.maxActiveDays) {
                 uint32 mask = uint32(1) << dayIndex;
                 if ((ue.activeBitmap & mask) == 0) {
                     ue.activeBitmap |= mask;
@@ -563,7 +549,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
                     // We increment epoch.totalEff by (existingPoints * dayBonusBps) to reflect that delta,
                     // without iterating or recomputing over the user's history.
                     if (ue.points != 0) {
-                        _epochs[slot].totalEff += ue.points * uint256(dayBonusBps);
+                        ep.totalEff += ue.points * uint256(ep.dayBonusBps);
                     }
                 }
             }
@@ -586,10 +572,9 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         ue.points += deltaPoints;
 
         // Increase epoch total effective points by deltaPoints * current multiplier.
-        uint256 multBps = uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(dayBonusBps);
-        _epochs[slot].totalEff += deltaPoints * multBps;
+        uint256 multBps = uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(ep.dayBonusBps);
+        ep.totalEff += deltaPoints * multBps;
     }
-
 
     // Epoch sync + sweep-forward logic (no trapped ETH)
 
@@ -629,6 +614,9 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         EpochSnap storage cur = _epochs[newSlot];
         cur.epochId = newId;
         cur.startTime = newStart;
+        // Snapshot current global reward parameters into this epoch.
+        cur.dayBonusBps = dayBonusBps;
+        cur.maxActiveDays = maxActiveDays;
         cur.poolEth = 0;
         cur.claimedEth = 0;
         cur.totalEff = 0;
@@ -679,9 +667,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         return m < c ? m : c;
     }
 
-
     // Read-only helpers (useful for UI/analytics)
-
 
     /// @notice Returns the stored snapshot for `epochId`.
     /// @dev Reverts if the epoch is not stored in the current ring buffer window.
@@ -720,7 +706,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         uint256 totalEff = ep.totalEff;
         if (pool == 0 || totalEff == 0) return 0;
 
-        uint256 userEff = ue.points * (uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(dayBonusBps));
+        uint256 userEff = ue.points * (uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(ep.dayBonusBps));
         if (userEff == 0) return 0;
 
         uint256 payout = (pool * userEff) / totalEff;
@@ -731,9 +717,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         return payout;
     }
 
-
     // ERC6372 clock (Votes/Governor compatibility)
-
 
     /// @notice ERC6372 clock used by ERC20Votes/Governor for snapshots.
     /// @dev Timestamp-based clock ensures Governor proposals/votes operate in time units.
@@ -747,9 +731,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         return "mode=timestamp";
     }
 
-
     // Required overrides
-
 
     /// @notice Returns the current nonce for `owner` used by ERC2612 permit signatures.
     /// @dev Required override because both ERC20Permit and Nonces define `nonces`.
