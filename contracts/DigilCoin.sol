@@ -42,8 +42,8 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @notice Can mint new tokens.
     bytes32 public constant MINTER_ROLE = keccak256("MINTER_ROLE");
 
-    /// @notice Can configure spend weights and reward parameters.
-    bytes32 public constant REWARDS_ROLE = keccak256("REWARDS_ROLE");
+    /// @notice Can configure rewards settings (spender weights, caps, thresholds, multipliers).
+    bytes32 public constant CONFIG_ROLE = keccak256("CONFIG_ROLE");
 
 
     // Rewards parameters (units & defaults are configurable)
@@ -179,16 +179,19 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @notice Emitted when forced/untracked ETH is absorbed into the current epoch pool.
     event SyncedUntrackedEth(uint256 amountAdded, uint32 indexed intoEpochId);
 
+    /// @notice Emitted when reward parameters are updated.
+    event ParametersUpdated(uint256 minDailySpend, uint256 dailyCap, uint256 epochCap, uint16 dayBonusBps, uint8 maxActiveDays);
+
 
     // Errors
 
 
-    error RewardsEpochNotFound();
-    error RewardsEpochNotClaimable();
-    error RewardsAlreadyClaimed();
-    error RewardsNothingToClaim();
-    error RewardsTransferFailed();
-    error RewardsBadParams();
+    error EpochNotFound();
+    error EpochNotClaimable();
+    error AlreadyClaimed();
+    error NothingToClaim();
+    error ClaimTransferFailed();
+    error BadParameters();
 
 
     // Constructor
@@ -201,7 +204,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);
         _grantRole(PAUSER_ROLE, defaultAdmin);
         _grantRole(MINTER_ROLE, defaultAdmin);
-        _grantRole(REWARDS_ROLE, defaultAdmin);
+        _grantRole(CONFIG_ROLE, defaultAdmin);
 
         // Recommended starting defaults (tune as desired)
         // - minDailySpend below 100 (aligns with your DigilToken daily coin amounts)
@@ -255,8 +258,8 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// - Eligibility *also* requires `msg.sender == spender` so arbitrary user transfers do not earn points.
     /// @param spender The contract address that will be eligible to earn rewards for users who spend into it.
     /// @param weightBps Weight in basis points, must be <= 10,000.
-    function setSpendWeight(address spender, uint16 weightBps) external onlyRole(REWARDS_ROLE) {
-        if (weightBps > BASE_BPS) revert RewardsBadParams();
+    function setSpendWeight(address spender, uint16 weightBps) external onlyRole(CONFIG_ROLE) {
+        if (spender == address(0) || weightBps > BASE_BPS) revert BadParameters();
         spendWeightBps[spender] = weightBps;
         emit SpenderWeightSet(spender, weightBps);
     }
@@ -268,23 +271,23 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @param _epochCap Max counted spend per epoch used for point accrual.
     /// @param _dayBonusBps Bonus bps added per active day (e.g., 100 = +1%).
     /// @param _maxActiveDays Maximum number of active days counted for multiplier.
-    function setRewardParams(
-        uint256 _minDailySpend,
-        uint256 _dailyCap,
-        uint256 _epochCap,
-        uint16 _dayBonusBps,
-        uint8 _maxActiveDays
-    ) external onlyRole(REWARDS_ROLE) {
-        // Reasonable safety bounds to prevent accidental extreme configs.
-        if (_maxActiveDays == 0 || _maxActiveDays > 30) revert RewardsBadParams();
-        if (_dayBonusBps > 1_000) revert RewardsBadParams(); // <= +10% per day
-        if (_dailyCap == 0 || _epochCap == 0 || _dailyCap > _epochCap) revert RewardsBadParams();
+    function setRewardParameters(uint256 _minDailySpend, uint256 _dailyCap, uint256 _epochCap, uint16 _dayBonusBps, uint8 _maxActiveDays) external onlyRole(CONFIG_ROLE) {
+        // Bound active-day settings so multiplier math stays sane and cannot overflow
+        // in extreme admin misconfiguration scenarios.
+        if (_maxActiveDays == 0 || _maxActiveDays > 30) revert BadParameters();
+        if (_dayBonusBps > 1_000) revert BadParameters(); // <= +10% per active day
+        uint256 maxMultBps = uint256(BASE_BPS) + uint256(_maxActiveDays) * uint256(_dayBonusBps);
+        if (maxMultBps > 50_000) revert BadParameters(); // hard cap: 5.0x effective multiplier
+
+        if (_dailyCap == 0 || _epochCap == 0 || _dailyCap > _epochCap) revert BadParameters();
 
         minDailySpend = _minDailySpend;
         dailyCap = _dailyCap;
         epochCap = _epochCap;
         dayBonusBps = _dayBonusBps;
         maxActiveDays = _maxActiveDays;
+
+        emit ParametersUpdated(_minDailySpend, _dailyCap, _epochCap, _dayBonusBps, _maxActiveDays);
     }
 
 
@@ -359,20 +362,20 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         _syncEpoch();
 
         // Must be a completed epoch.
-        if (epochId >= currentEpochId) revert RewardsEpochNotClaimable();
+        if (epochId >= currentEpochId) revert EpochNotClaimable();
 
         // Enforce claim window: [currentEpochId-CLAIMABLE_EPOCHS, currentEpochId-1]
         if (currentEpochId > uint32(CLAIMABLE_EPOCHS)) {
-            if (epochId < currentEpochId - uint32(CLAIMABLE_EPOCHS)) revert RewardsEpochNotClaimable();
+            if (epochId < currentEpochId - uint32(CLAIMABLE_EPOCHS)) revert EpochNotClaimable();
         }
 
         uint8 slot = _epochSlot(epochId);
         EpochSnap storage ep = _epochs[slot];
-        if (ep.epochId != epochId) revert RewardsEpochNotFound();
+        if (ep.epochId != epochId) revert EpochNotFound();
 
         UserEpoch storage ue = _userEpoch[slot][msg.sender];
-        if (ue.epochId != epochId) revert RewardsNothingToClaim();
-        if ((ue.flags & 0x01) != 0) revert RewardsAlreadyClaimed();
+        if (ue.epochId != epochId) revert NothingToClaim();
+        if ((ue.flags & 0x01) != 0) revert AlreadyClaimed();
 
         uint256 pool = ep.poolEth;
         uint256 totalEff = ep.totalEff;
@@ -405,7 +408,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
         if (payout != 0) {
             (bool ok,) = payable(msg.sender).call{value: payout}("");
-            if (!ok) revert RewardsTransferFailed();
+            if (!ok) revert ClaimTransferFailed();
         }
 
         emit Claimed(msg.sender, epochId, payout, userEff, totalEff);
@@ -425,18 +428,18 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
     /// @dev Internal claim used by `claimMany` to avoid repeated `_syncEpoch()` cost.
     function _claimNoSync(uint32 epochId) internal {
-        if (epochId >= currentEpochId) revert RewardsEpochNotClaimable();
+        if (epochId >= currentEpochId) revert EpochNotClaimable();
         if (currentEpochId > uint32(CLAIMABLE_EPOCHS)) {
-            if (epochId < currentEpochId - uint32(CLAIMABLE_EPOCHS)) revert RewardsEpochNotClaimable();
+            if (epochId < currentEpochId - uint32(CLAIMABLE_EPOCHS)) revert EpochNotClaimable();
         }
 
         uint8 slot = _epochSlot(epochId);
         EpochSnap storage ep = _epochs[slot];
-        if (ep.epochId != epochId) revert RewardsEpochNotFound();
+        if (ep.epochId != epochId) revert EpochNotFound();
 
         UserEpoch storage ue = _userEpoch[slot][msg.sender];
-        if (ue.epochId != epochId) revert RewardsNothingToClaim();
-        if ((ue.flags & 0x01) != 0) revert RewardsAlreadyClaimed();
+        if (ue.epochId != epochId) revert NothingToClaim();
+        if ((ue.flags & 0x01) != 0) revert AlreadyClaimed();
 
         ue.flags |= 0x01;
 
@@ -462,7 +465,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
         if (payout != 0) {
             (bool ok,) = payable(msg.sender).call{value: payout}("");
-            if (!ok) revert RewardsTransferFailed();
+            if (!ok) revert ClaimTransferFailed();
         }
 
         emit Claimed(msg.sender, epochId, payout, userEff, totalEff);
@@ -590,6 +593,11 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
     // Epoch sync + sweep-forward logic (no trapped ETH)
 
+    /// @notice Advances epochs and performs sweep-forward logic if enough time has elapsed.
+    /// @dev Permissionless maintenance function. Very cheap; safe to call anytime.
+    function syncEpoch() external {
+        _syncEpoch();
+    }
 
     /// @dev Advances epochs as needed so `currentEpochId`/`currentEpochStart` match `block.timestamp`.
     ///      Handles long inactivity by advancing multiple epochs in a single call.
@@ -681,7 +689,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     function getEpoch(uint32 epochId) external view returns (EpochSnap memory) {
         uint8 slot = _epochSlot(epochId);
         EpochSnap memory ep = _epochs[slot];
-        if (ep.epochId != epochId) revert RewardsEpochNotFound();
+        if (ep.epochId != epochId) revert EpochNotFound();
         return ep;
     }
 
@@ -692,7 +700,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     function getUserEpoch(address user, uint32 epochId) external view returns (UserEpoch memory) {
         uint8 slot = _epochSlot(epochId);
         UserEpoch memory ue = _userEpoch[slot][user];
-        if (ue.epochId != epochId) revert RewardsNothingToClaim();
+        if (ue.epochId != epochId) revert NothingToClaim();
         return ue;
     }
 
