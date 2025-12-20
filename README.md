@@ -47,8 +47,8 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 - **Digil Project** – The broader ecosystem, including the on-chain protocol and frontends at `digil.app`, `digil.co.in`, and related domains.
 - **Digital Sigils** – The name of the ERC-721 collection and contract that implements the dynamic NFT logic described in this document.
 - **Digil / Digils** – One NFT is called **a Digil** (a single Digital Sigil); the plural is **Digils**. Informally: “I charged three of my Digils today.”
-- **Digil Coin (ERC-20)** – The system’s ERC-20 currency, ticker **DIGIL**, used as “coins” inside the protocol for charging, fees, buffs, and rewards.
-- **Digil Governor** – The on-chain governance contract for DigilCoin proposals and timelocked execution (quadratic counting + optional NFT-gated voting).
+- **Digil Coin (ERC-20)** – The system’s ERC-20 currency, ticker **DIGIL**, used as “coins” inside the protocol for charging, fees, buffs, governance, and **donor-funded ETH rewards** earned via eligible *spend* (not holding).
+- **Digil Governor** – The on-chain governance contract for DigilCoin proposals and timelocked execution, with **quadratic counting** and **NFT-gated voting** (votes must supply an ERC-721 `tokenId`).
 - **Digital Sigils (ERC-721)** – The NFT collection itself, referenced by the ticker **DIGILS**. In social contexts you might say: “Picked up two more $DIGILS using $DIGIL.”
 - **ETH vs Coins** – **ETH** represents intrinsic value or “material sacrifice” locked into a Digil; **coins (DIGIL)** represent energy or “gnosis” used to drive the system’s mechanics (charging, linking, buffing).
 
@@ -61,7 +61,7 @@ This terminology keeps the branding consistent: **$DIGIL** is the liquid currenc
 ### Digil Coin | ERC-20
 **Symbol**: DIGIL • **Address**: TBD
 
-Used for **charge units**, feature fees (linking, metadata updates, buffs, etc.), and **governance**.
+Used for **charge units**, feature fees (linking, metadata updates, buffs, etc.), and **governance**. DigilCoin also implements **donor-funded ETH rewards** that are intentionally **not holding-based**.
 
 **DigilCoin.sol highlights**
 - OpenZeppelin-based ERC-20 with:
@@ -69,11 +69,27 @@ Used for **charge units**, feature fees (linking, metadata updates, buffs, etc.)
   - `ERC20Pausable` (role-gated pause/unpause)
   - `ERC20Permit` (EIP-2612 “permit” approvals)
   - `ERC20Votes` (delegation + historical vote checkpoints)
-  - `AccessControl` roles: `DEFAULT_ADMIN_ROLE`, `MINTER_ROLE`, `PAUSER_ROLE`
+  - `AccessControl` roles: `DEFAULT_ADMIN_ROLE`, `MINTER_ROLE`, `PAUSER_ROLE`, `CONFIG_ROLE`
 - Timestamp-based ERC-6372 clock for Governor compatibility:
   - `clock()` returns `block.timestamp`
   - `CLOCK_MODE()` returns `mode=timestamp`
 - `mint(to, amount)` is restricted to `MINTER_ROLE`.
+
+**Donor-funded ETH rewards (spend-to-earn)**
+- **Funding**: Anyone can fund rewards via `donate()` or plain ETH transfers to the contract (`receive()`), which are allocated into the **current epoch** pool.
+- **Earning (no holding requirement)**: Users earn points when an **allowlisted spender contract** pulls DIGIL using `transferFrom` (tracked in `DigilCoin._update`), i.e.:
+  - The recipient `to` has a non-zero `spendWeightBps[to]`.
+  - The call is a **pull** initiated by the spender (`msg.sender == to`).
+  - This is a standard transfer (not mint/burn).
+- **Steering**: `setSpendWeight(spender, weightBps)` lets `CONFIG_ROLE` assign weights (bps) per spender to steer incentives across contracts.
+- **Anti-gaming caps**: Points are capped per-user per day and per epoch (see `setRewardParameters(...)`), with raw vs counted spend tracked to support multipliers while limiting payout gaming.
+- **Days-active multiplier**: Claims apply a days-active bonus multiplier based on how many distinct days the user was “active” in the epoch (capped by `maxActiveDays`), using the epoch’s **snapshotted** parameters.
+- **Epochs & claiming**:
+  - Epoch length is **30 days**.
+  - The contract stores the most recent **12 epochs** (ring buffer) and keeps **3 epochs** claimable.
+  - Unclaimed / unclaimable ETH is **swept forward** so ETH does not become trapped.
+  - `syncEpoch()` is public so anyone can force epoch advancement/sweeps if activity is low.
+- **UX helpers**: `previewClaim(epochId, user)` estimates a claim without changing state; `claimMany(...)` batches claims across multiple epochs.
 
 DigilCoin has **18 decimals** (same as ETH). Where we say “coins,” we mean base units at this precision.
 
@@ -88,20 +104,25 @@ Governance contract for DigilCoin that executes approved proposals through a **T
 - `proposalThreshold()` = **10,000e18** by default (adjustable via `setProposalThreshold()` through governance)
 - `quorum(timepoint)` = **4% × sqrt(pastTotalSupplyAtTimepoint)**
 
-**Counting & gating**
+**Counting & NFT gating**
 - Quadratic vote weight: counted weight = `sqrt(rawWeight)`
-- Voting requires params encoding an **ERC-721 `tokenId`** (standard `castVote*` without params reverts)
-- Voter must be the owner or an approved operator for the specified `tokenId`
-- Per-proposal replay protection: an address can vote once per proposal, and each `tokenId` can only be used once per proposal
+- Voting is **NFT-gated**: standard `castVote*` variants revert with `VoteWithParamsRequired()`.
+- Voters must use Governor’s params-based vote functions (e.g., `castVoteWithReasonAndParams`) and encode an **ERC-721 `tokenId`** in `params`.
+- Voter must be the owner or an approved operator for the specified `tokenId`.
+- Per-proposal replay protection:
+  - an address can vote once per proposal, and
+  - each `tokenId` can only be used once per proposal.
 
 **Locking / staking / signaling (optional mechanics)**
 - `lockCoins(amount, duration)` records checkpointed locked balances and adds a linear time bonus to voting power (up to **+100%** at max duration).  
   *Note: in this version, locked coins are held by the Governor and are not withdrawn via a public “unlock” function.*
-- `stakeOnProposal` / `claimStake` implement refundable staking for Pending/Active proposals; `burnAllStakes` finalizes failed proposals (Defeated/Expired) by burning the pooled stake and paying a **5% keeper bounty**
-- `signalProposal` burns coins immediately as a non-refundable “signal”
+- `stakeOnProposal` / `claimStake` implement refundable staking for Pending/Active proposals; stakes are claimable if the proposal ends **Succeeded/Queued/Executed/Canceled**.
+- `burnAllStakes` finalizes failed proposals (Defeated/Expired) by burning the pooled stake and paying a **5% keeper bounty**.
+- `signalProposal` burns coins immediately as a non-refundable “signal” during Pending/Active.
 
 **Veto**
 - Addresses with `VETO_ROLE` can cancel proposals via `veto(...)`.
+
 
 ### Digital Sigils | ERC-721
 **Symbol**: DIGILS • **Address**: TBD
