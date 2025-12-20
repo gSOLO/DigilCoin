@@ -807,10 +807,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Calculate required minimum funds for opting in/out.
         // This ties the opt decision to the current economic scale of the system.
         uint256 required = _incrementalValue * _coinRate / _coinMultiplier;        
-        if (msg.value < required) revert InsufficientFunds(required);
+        if (msg.value != required) revert InsufficientFunds(required);
         
         // Add the sent value to the contract’s distribution (not to any specific token).
-        _addValue(msg.value);
+        _addValue(required);
 
         // Update the accounts blacklist status.
         _blacklisted[account] = optOut;
@@ -876,10 +876,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Penalty: require at least one incremental unit of ETH.
         // Use the greater of the token's incrementalValue or the global minimum
         uint256 required = t.incrementalValue > _incrementalValue ? t.incrementalValue : _incrementalValue;
-        if (msg.value < required) revert InsufficientFunds(required);
+        if (msg.value != required) revert InsufficientFunds(required);
 
         // Route the penalty into the system’s value pool.
-        _addValue(msg.value);
+        _addValue(required);
 
         TokenContribution storage c = t.contributions[addr];
         _touchContribution(t, c);
@@ -1492,10 +1492,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if (incrementalValue > minimumValue) minimumValue = incrementalValue;
             if (_incrementalValue > minimumValue) minimumValue = _incrementalValue;
         }
-        if (msg.value < minimumValue) revert InsufficientFunds(minimumValue);
+        if (msg.value != minimumValue) revert InsufficientFunds(minimumValue);
 
         // Add any sent Ether to the contract's distribution (not directly to this token).
-        _addValue(msg.value);
+        _addValue(minimumValue);
 
         // Update token parameters.
         t.incrementalValue = incrementalValue;
@@ -2048,15 +2048,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // Determine the required minimum value for discharge, scaled by number of links.
             // This scales the "fee" with the complexity of the token's graph.
             uint256 required = (_incrementalValue > t.incrementalValue ? _incrementalValue : t.incrementalValue) * (t.links.length > 0 ? t.links.length : 1);
-            if (msg.value < required) revert InsufficientFunds(required);
+            if (msg.value != required) revert InsufficientFunds(required);
+             _addValue(msg.value);
+        } else {
+            if (msg.value != 0) revert InsufficientFunds(0);
         }
         
         // Update last activity
         t.lastActivity = block.timestamp;
-
-        if (msg.value > 0) {
-            _addValue(msg.value);
-        }
 
         // Mark the token as being in a discharge operation.
         t.discharging = true;
@@ -2867,13 +2866,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Premium cost: 2x the normal ETH-per-coin-unit rate.
         // `coins` is in "coin units" (scaled by _coinMultiplier), so we normalize by _coinMultiplier.
         uint256 required = (iv * coins * AFFINITY_BOOST) / _coinMultiplier;
-        if (msg.value < required) revert InsufficientFunds(required);
+        if (msg.value != required) revert InsufficientFunds(required);
 
         // Update last activity timestamp.
         t.lastActivity = block.timestamp;
 
-        // All ETH becomes contract-level value / system fuel.
-        _addValue(msg.value);
+        // Required ETH becomes contract-level value / system fuel.
+        _addValue(required);
 
         // Grant raw activeCharge to the token.
         t.activeCharge += coins;
