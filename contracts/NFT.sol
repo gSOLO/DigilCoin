@@ -13,7 +13,7 @@ contract NFT is ERC721, IERC721Receiver {
         _mint(to, tokenId);
     }
 
-    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external returns (bytes4) {
+    function onERC721Received(address /*operator*/, address /*from*/, uint256 /*tokenId*/, bytes calldata /*data*/) external pure returns (bytes4) {
         return this.onERC721Received.selector;
     }
 }
