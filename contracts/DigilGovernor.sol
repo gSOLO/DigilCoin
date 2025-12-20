@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.31;
+pragma solidity ^0.8.33;
 
 import {Governor} from "@openzeppelin/contracts/governance/Governor.sol";
 import {GovernorStorage} from "@openzeppelin/contracts/governance/extensions/GovernorStorage.sol";
