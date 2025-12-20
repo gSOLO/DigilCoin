@@ -33,7 +33,7 @@ contract DigilCoinTest is DigilCoin {
 
     function testTokenMinting() public {
         Assert.equal(balanceOf(acc0), 0 , "token balance should be 0 initially");
-        mint(acc0, 10000);
+        _mint(acc0, 10000);
         Assert.equal(balanceOf(acc0), 10000, "token balance did not match");
     }
 
