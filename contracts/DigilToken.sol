@@ -1306,25 +1306,37 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  data Optional arbitrary data to store with the token.
     /// @return tokenId The ID of the newly created token.
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable nonReentrant returns(uint256) {
-        // Require minimum incremental value
-        if (incrementalValue > 0) {
-            require(incrementalValue >= _incrementalValue, "DIGIL: Invalid Incremental Value");
+        // 1. INPUT VALIDATION
+        // Ensure if they set a value, it isn't below the global floor (unless it's 0).
+        if (incrementalValue > 0 && incrementalValue < _incrementalValue) {
+            // Use a short string or custom error to save bytes
+            revert("DIGIL: Invalid Incremental Value");
         }
+
+        // 2. CALCULATE DEPOSIT REQUIREMENT
+        // Start with the Global Floor (Sybil Defense)
+        uint256 required = _incrementalValue;
+
+        // If Restricted, we must match the Token's Incremental Value if it is higher than the floor.
+        // This preserves your original logic: max(incrementalValue, _incrementalValue)
+        if (restricted && incrementalValue > required) {
+            required = incrementalValue;
+        }
+
+        // 3. CHECK FUNDS
+        if (msg.value < required) revert InsufficientFunds(required);
         
-        // Create a new token with the given parameters.
+        // 4. CREATE TOKEN & SET STATE
         uint256 tokenId = _createToken(_msgSender(), incrementalValue, activationThreshold, data);
         Token storage t = _tokens[tokenId];
 
-        // If the token is to be restricted, ensure the caller sends the required funds.
         if (restricted) {
-            uint256 required = incrementalValue > _incrementalValue ? incrementalValue : _incrementalValue;
-            if (msg.value < required) revert InsufficientFunds(required);
-
             t.restricted = true;
             emit Restrict(tokenId);
         }
 
-        // If any Ether is sent, add it as token value.
+        // 5. ACCRUE VALUE
+        // We add the ENTIRE msg.value to the token. 
         _createValue(tokenId, msg.value);
 
         // If a plane is specified (plane > 0), process the coin fee and link the token to the plane.
