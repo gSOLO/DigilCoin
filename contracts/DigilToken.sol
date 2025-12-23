@@ -710,7 +710,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function createValue(uint256 tokenId, uint256 value) external payable onlyOwner {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        _requireNoBatch(t);
 
         _addValue(msg.value);
 
@@ -874,7 +874,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Token must be inactive and not mid-batch.
         require(!t.active, "DIGIL: Cannot Reclaim On Active Token");
-        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        _requireNoBatch(t);
 
         // Enforce inactivity window before contributors can reclaim their contribution.
         require(block.timestamp >= t.lastActivity + INACTIVITY_PERIOD, "DIGIL: Token Cannot Be Reclaimed");
@@ -1023,7 +1023,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         Token storage t = _tokens[tokenId];
 
-        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        _requireNoBatch(t);
 
         // Safety check: enforce that the supplied account matches the attached contract.
         require(account == t.contractTokenAddress, "DIGIL: Invalid Contract Account");
@@ -1379,6 +1379,16 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return tokenId;
     }
 
+    /// @dev    Internal helper to enforce that no batch operation (activation or discharge)
+    ///         is currently in progress for the given token.
+    ///         Reverts with "DIGIL: Batch Operation In Progress" if `distributionIndex > 0`.
+    /// @param  t The storage reference to the Token being checked.
+    function _requireNoBatch(Token storage t) internal view {
+        if (t.distributionIndex != 0) {
+            revert("DIGIL: Batch Operation In Progress");
+        }
+    }
+
     /// @notice Adds addresses to a token's whitelist.
     ///         Once an address has been whitelisted, it cannot be removed.
     ///         If no whitelisted addresses are supplied, the token's whitelist is disabled.
@@ -1391,7 +1401,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 value = msg.value;
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        _requireNoBatch(t);
 
         // Determine if the token should be restricted based on provided addresses.
         bool restrict = whitelisted.length > 0;
@@ -1468,7 +1478,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        _requireNoBatch(t);
 
         // If token already has charge, its incremental value and activation threshold cannot be modified.
         if (t.charge > 0) {
@@ -2291,7 +2301,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
         require(t.active && t.charge == 0, "DIGIL: Token Cannot Be Deactivated");
         // Make sure the token isn't currently being discharged or activated
-        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        _requireNoBatch(t);
 
         // Update last activity
         t.lastActivity = block.timestamp;
@@ -2374,7 +2384,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _checkTokenExists(linkId);
 
         Token storage t = _tokens[tokenId];
-        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        _requireNoBatch(t);
         require(t.links.length < MAX_LINKS, "DIGIL: Too Many Links");
 
         // Existing link state
@@ -2590,7 +2600,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _checkTokenExists(linkId);
         
         Token storage t = _tokens[tokenId];
-        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        _requireNoBatch(t);
 
         // Disallow unlinking foundational planes (IDs 0..PLANAR_MAX_ID)
         // so the token's elemental identity cannot be removed.
@@ -2676,7 +2686,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
 
         require(t.active, "DIGIL: Token Not Active");
-        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
+        _requireNoBatch(t);
 
         // Sanitize input: Only allow user flags (remove Stabilized/Primed if user tried to sneak them in)
         uint16 requestedFlags = flags & DigilFlags.USER_FLAGS_MASK;
@@ -2861,8 +2871,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
 
         // Do not interfere with batch operations or activation/discharge flows.
-        require(t.distributionIndex == 0, "DIGIL: Batch Operation In Progress");
-        require(!t.activating && !t.discharging, "DIGIL: Lifecycle In Progress");
+        _requireNoBatch(t);
         require(t.active, "DIGIL: Token Not Active");
 
         // Use the greater of the token's incremental value or the global minimum.
