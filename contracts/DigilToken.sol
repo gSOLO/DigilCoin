@@ -384,6 +384,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _tokens[0].restricted = true;
     }
 
+    // Simple Math Helper
+    function max(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a > b ? a : b;
+    }
+
     /// @inheritdoc ERC721
     /// @dev    For planar tokens, only the contract owner or this contract itself
     ///         is authorized to operate. Operator approvals and per-token approvals
@@ -876,7 +881,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Penalty: require at least one incremental unit of ETH.
         // Use the greater of the token's incrementalValue or the global minimum
-        uint256 required = t.incrementalValue > _incrementalValue ? t.incrementalValue : _incrementalValue;
+        uint256 required = max(t.incrementalValue, _incrementalValue);
         if (msg.value != required) revert InsufficientFunds(required);
 
         // Route the penalty into the system’s value pool.
@@ -1396,7 +1401,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if (restrict) {
                 // Switching into restricted mode requires paying at least the higher
                 // of token.incrementalValue or the global minimum.
-                uint256 required = t.incrementalValue > _incrementalValue ? t.incrementalValue : _incrementalValue;
+                uint256 required = max(t.incrementalValue, _incrementalValue);
                 if (value < required) revert InsufficientFunds(required);
                 emit Restrict(tokenId);
             }
@@ -1503,9 +1508,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 minimumValue = 0;
         if (overwriteData || overwriteUri) {
             // base = max(old, new, _incrementalValue)
-            minimumValue = t.incrementalValue;
-            if (incrementalValue > minimumValue) minimumValue = incrementalValue;
-            if (_incrementalValue > minimumValue) minimumValue = _incrementalValue;
+            minimumValue = max(t.incrementalValue, max(incrementalValue, _incrementalValue));
         }
         if (msg.value != minimumValue) revert InsufficientFunds(minimumValue);
 
@@ -2066,7 +2069,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (!t.discharging) {
             // Determine the required minimum value for discharge, scaled by number of links.
             // This scales the "fee" with the complexity of the token's graph.
-            uint256 required = (_incrementalValue > t.incrementalValue ? _incrementalValue : t.incrementalValue) * (t.links.length > 0 ? t.links.length : 1);
+            uint256 required = max(t.incrementalValue, _incrementalValue) * max(t.links.length, 1);
             if (msg.value != required) revert InsufficientFunds(required);
              _addValue(msg.value);
         } else {
@@ -2536,46 +2539,29 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     function _updateLinkAffinity(Token storage t, Token storage d, uint256 linkId, uint8 efficiency) internal {
-        // Create fixed-size arrays to hold candidate IDs (0 = empty)
-        uint256[2] memory sIds; // Source Candidates
-        uint256[2] memory dIds; // Destination Candidates
+        // 1. Get Source Candidates
+        uint256 s1 = (t.links.length > 0 && t.links[0] <= PLANAR_MAX_ID) ? t.links[0] : 0;
+        // Check attunement/expiry
+        uint256 s2 = (t.buff.attunement > 0 && block.timestamp < t.buff.expiresAt) ? t.buff.attunement : 0;
 
-        // 1. Populate Source Candidates
-        if (t.links.length > 0 && t.links[0] <= PLANAR_MAX_ID) {
-            sIds[0] = t.links[0];
-        }
-        if (t.buff.attunement > 0 && block.timestamp < t.buff.expiresAt) {
-            sIds[1] = t.buff.attunement;
-        }
-
-        // 2. Populate Destination Candidates
-        if (d.links.length > 0 && d.links[0] <= PLANAR_MAX_ID) {
-            dIds[0] = d.links[0];
-        }
-        if (d.buff.attunement > 0 && block.timestamp < d.buff.expiresAt) {
-            dIds[1] = d.buff.attunement;
-        }
+        // 2. Get Destination Candidates
+        uint256 d1 = (d.links.length > 0 && d.links[0] <= PLANAR_MAX_ID) ? d.links[0] : 0;
+        uint256 d2 = (d.buff.attunement > 0 && block.timestamp < d.buff.expiresAt) ? d.buff.attunement : 0;
 
         uint256 bestBonus;
 
-        // 3. Compact Matrix Comparison
-        // Using a loop reduces bytecode size compared to writing 4 separate if-blocks
-        for (uint256 i = 0; i < 2; i++) {
-            uint256 s = sIds[i];
-            if (s == 0) continue;
-
-            for (uint256 j = 0; j < 2; j++) {
-                uint256 target = dIds[j];
-                if (target == 0) continue;
-
-                uint256 b = _affinityBonus(s, target, efficiency);
-                if (b > bestBonus) {
-                    bestBonus = b;
-                }
-            }
+        // 3. Manual Unroll (Cheaper than memory allocation + loop overhead)
+        // Compare s1 against d1/d2
+        if (s1 != 0) {
+            if (d1 != 0) bestBonus = max(bestBonus, _affinityBonus(s1, d1, efficiency));
+            if (d2 != 0) bestBonus = max(bestBonus, _affinityBonus(s1, d2, efficiency));
+        }
+        // Compare s2 against d1/d2
+        if (s2 != 0) {
+            if (d1 != 0) bestBonus = max(bestBonus, _affinityBonus(s2, d1, efficiency));
+            if (d2 != 0) bestBonus = max(bestBonus, _affinityBonus(s2, d2, efficiency));
         }
 
-        // 4. Apply Result
         if (bestBonus > t.linkEfficiency[linkId].affinityBonus) {
             t.linkEfficiency[linkId].affinityBonus = bestBonus;
         }
@@ -2830,7 +2816,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 floor = 10 * _coinRate;
         uint256 calculatedCost = ac / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
         
-        uint256 cost = calculatedCost > floor ? calculatedCost : floor;
+        uint256 cost = max(calculatedCost, floor);
 
         // Apply Discount if Buff is active
         uint8 bonus = _activeBuffBonus(t);
