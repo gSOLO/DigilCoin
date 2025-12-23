@@ -1150,8 +1150,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         may represent pre-reset state until a write operation occurs for that contributor.
     /// @param  tokenId The ID of the token to query.
     /// @param  contributor The address whose contribution details are being requested.
-    /// @return charge The amount of coin units this address has contributed to the token's charge.
-    /// @return discharge The amount of coin units this address has contributed to the token's charge.
+    /// @return charge The amount of coin units this address has contributed to the token's charge, including affinity bonuses.
+    /// @return discharge The amount of coin units this address has contributed to the token's charge, excluding affinity bonuses.
     /// @return value The amount of native value (in wei) attributed to this contributor on this token.
     /// @return exists True if a contribution record currently exists for this contributor.
     /// @return distributed True if this contributor has already been processed in the current distribution epoch.
