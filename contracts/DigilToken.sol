@@ -384,8 +384,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _tokens[0].restricted = true;
     }
 
-    // Simple Math Helper
-    function max(uint256 a, uint256 b) internal pure returns (uint256) {
+    /// @dev    Internal helper to return the greater of two values.
+    ///         Used to enforce floors on costs and incremental values.
+    /// @param  a The first value.
+    /// @param  b The second value.
+    /// @return The greater of the two values.
+    function _max(uint256 a, uint256 b) internal pure returns (uint256) {
         return a > b ? a : b;
     }
 
@@ -881,7 +885,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Penalty: require at least one incremental unit of ETH.
         // Use the greater of the token's incrementalValue or the global minimum
-        uint256 required = max(t.incrementalValue, _incrementalValue);
+        uint256 required = _max(t.incrementalValue, _incrementalValue);
         if (msg.value != required) revert InsufficientFunds(required);
 
         // Route the penalty into the system’s value pool.
@@ -1411,7 +1415,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if (restrict) {
                 // Switching into restricted mode requires paying at least the higher
                 // of token.incrementalValue or the global minimum.
-                uint256 required = max(t.incrementalValue, _incrementalValue);
+                uint256 required = _max(t.incrementalValue, _incrementalValue);
                 if (value < required) revert InsufficientFunds(required);
                 emit Restrict(tokenId);
             }
@@ -1518,7 +1522,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 minimumValue = 0;
         if (overwriteData || overwriteUri) {
             // base = max(old, new, _incrementalValue)
-            minimumValue = max(t.incrementalValue, max(incrementalValue, _incrementalValue));
+            minimumValue = _max(t.incrementalValue, _max(incrementalValue, _incrementalValue));
         }
         if (msg.value != minimumValue) revert InsufficientFunds(minimumValue);
 
@@ -2079,7 +2083,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (!t.discharging) {
             // Determine the required minimum value for discharge, scaled by number of links.
             // This scales the "fee" with the complexity of the token's graph.
-            uint256 required = max(t.incrementalValue, _incrementalValue) * max(t.links.length, 1);
+            uint256 required = _max(t.incrementalValue, _incrementalValue) * _max(t.links.length, 1);
             if (msg.value != required) revert InsufficientFunds(required);
              _addValue(msg.value);
         } else {
@@ -2563,13 +2567,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // 3. Manual Unroll (Cheaper than memory allocation + loop overhead)
         // Compare s1 against d1/d2
         if (s1 != 0) {
-            if (d1 != 0) bestBonus = max(bestBonus, _affinityBonus(s1, d1, efficiency));
-            if (d2 != 0) bestBonus = max(bestBonus, _affinityBonus(s1, d2, efficiency));
+            if (d1 != 0) bestBonus = _max(bestBonus, _affinityBonus(s1, d1, efficiency));
+            if (d2 != 0) bestBonus = _max(bestBonus, _affinityBonus(s1, d2, efficiency));
         }
         // Compare s2 against d1/d2
         if (s2 != 0) {
-            if (d1 != 0) bestBonus = max(bestBonus, _affinityBonus(s2, d1, efficiency));
-            if (d2 != 0) bestBonus = max(bestBonus, _affinityBonus(s2, d2, efficiency));
+            if (d1 != 0) bestBonus = _max(bestBonus, _affinityBonus(s2, d1, efficiency));
+            if (d2 != 0) bestBonus = _max(bestBonus, _affinityBonus(s2, d2, efficiency));
         }
 
         if (bestBonus > t.linkEfficiency[linkId].affinityBonus) {
@@ -2826,7 +2830,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 floor = 10 * _coinRate;
         uint256 calculatedCost = ac / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
         
-        uint256 cost = max(calculatedCost, floor);
+        uint256 cost = _max(calculatedCost, floor);
 
         // Apply Discount if Buff is active
         uint8 bonus = _activeBuffBonus(t);
