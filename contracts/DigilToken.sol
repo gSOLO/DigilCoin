@@ -80,7 +80,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @dev Structure to represent the efficiency of a link between two tokens
     struct TokenContribution {
-        uint256 charge;     // Coins contributed to the token's charge
+        uint256 charge;     // Coins contributed to the token's charge, including coins from affinity bonus
+        uint256 discharge;  // Coins contributed to the token's charge, excluding coins from affinity bonus
         uint256 value;      // Ether value contributed
         uint256 epoch;      // Logical contribution epoch for the token
         bool exists;        // True if the contributor exists (has contributed)
@@ -905,6 +906,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Clear this epoch’s contribution record
         c.value = 0;
         c.charge = 0;
+        c.discharge = 0;
         c.distributed = true;
 
         emit Reclaim(addr, tokenId, value);
@@ -1140,17 +1142,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token to query.
     /// @param  contributor The address whose contribution details are being requested.
     /// @return charge The amount of coin units this address has contributed to the token's charge.
+    /// @return discharge The amount of coin units this address has contributed to the token's charge.
     /// @return value The amount of native value (in wei) attributed to this contributor on this token.
     /// @return exists True if a contribution record currently exists for this contributor.
     /// @return distributed True if this contributor has already been processed in the current distribution epoch.
     /// @return whitelisted True if this contributor is whitelisted for this token (relevant when the token is restricted).
     /// @return epoch The logical contribution epoch this record belongs to.
-    function tokenContribution(uint256 tokenId, address contributor) external view returns (uint256 charge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch) {
+    function tokenContribution(uint256 tokenId, address contributor) external view returns (uint256 charge, uint256 discharge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch) {
         _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
         TokenContribution storage c = t.contributions[contributor];
-        return (c.charge, c.value, c.exists, c.distributed, c.whitelisted, c.epoch);
+        return (c.charge, c.discharge, c.value, c.exists, c.distributed, c.whitelisted, c.epoch);
     }
 
     /// @notice Retrieves link information for a token at a specific index.
@@ -1661,6 +1664,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (c.epoch != t.contributionEpoch) {
             c.epoch = t.contributionEpoch;
             c.charge = 0;
+            c.discharge = 0;
             c.value = 0;
             c.exists = false;
             c.distributed = false;
@@ -1709,6 +1713,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 minimumValue = incrementalValue * coins / _coinMultiplier;
 
         // Determine minimum coins required; if incrementalValue is nonzero, derive from provided value.
+        uint256 realCoins = coins;
         uint256 minimumCoins = coins;
         if (incrementalValue > 0) {
             minimumCoins = value < incrementalValue || value == 0 ? coins : value / incrementalValue * _coinMultiplier;
@@ -1776,11 +1781,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 // Existing contributor already received a distribution in this epoch, reset
                 c.distributed = false;
                 c.charge = 0;
+                c.discharge = 0;
                 c.value = 0;
             }    
 
             // Coins + required value are tied together at the Charge level
             c.charge += coins;
+            c.discharge += realCoins;
             t.charge += coins;
             c.value += minimumValue;
             emit Charge(contributor, tokenId, coins, minimumValue);
@@ -1908,7 +1915,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
             if (discharge) {
                 // For discharge, return contributed value back to the contributor.
-                _addValue(contributor, contribution.value, contribution.charge);
+                _addValue(contributor, contribution.value, contribution.discharge);
             } else {
                 // Otherwise, accumulate distribution for the token owner.
                 distribution += contribution.value;
