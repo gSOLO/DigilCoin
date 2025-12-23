@@ -13,6 +13,8 @@ import "../contracts/IDigilToken.sol";
 import "../contracts/DigilTestLibrary.sol";
 import "../contracts/DigilFlags.sol";
 
+import "hardhat/console.sol";
+
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
 contract IndiaTestSuite {
     IERC20 public coins;
@@ -38,7 +40,7 @@ contract IndiaTestSuite {
         uint256 balanceCoins = coins.balanceOf(address(this));
         Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
 
-        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
         Assert.equal(withdrawlCoins, 1 * 10 ** 18, "First withdrawl should be 1 coin");
@@ -52,10 +54,10 @@ contract IndiaTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10 * 10 ** 18, "Coins from distribution should be 10 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
+        Assert.equal(withdrawlCoins, 11 * 10 ** 18, "Coins from distribution should be 11 bonus for value");
+        Assert.equal(withdrawlValue, 1045000000000000, "Distributed value shopuld be 95% of 1000000000000000 + 95% of 100000000000000");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -64,10 +66,10 @@ contract IndiaTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "Coins from distribution should be 100 bonus for value");
-        Assert.equal(withdrawlValue, 9500000000000000, "Distributed value should be 95% of 10000000000000000");
+        Assert.equal(withdrawlCoins, 101 * 10 ** 18, "Coins from distribution should be 101 bonus for value");
+        Assert.equal(withdrawlValue, 9595000000000000, "Distributed value should be 95% of 10000000000000000 + 95% of 100000000000000");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -76,8 +78,8 @@ contract IndiaTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10000 * 10 ** 18, "Coins from distribution should be 10000 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000000, "Distributed value should be 95% of 1000000000000000000");
+        Assert.equal(withdrawlCoins, 10001 * 10 ** 18, "Coins from distribution should be 10001 bonus for value");
+        Assert.equal(withdrawlValue, 950095000000000000, "Distributed value should be 95% of 1000000000000000000 + 95% of 100000000000000");
     }
 
     /// #sender: account-8
@@ -90,7 +92,7 @@ contract IndiaTestSuite {
         bool approved = coins.approve(address(digil), 515 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        activeTokenId = digil.createToken(incrementalValue, 0, false, 0, "Source Plane");
+        activeTokenId = digil.createToken{value: 100000000000000}(incrementalValue, 0, false, 0, "Source Plane");
 
         for (uint256 accountIndex; accountIndex < 15; accountIndex++) {
             digil.chargeTokenAs{value: incrementalValue}(TestsAccounts.getAccount(accountIndex), activeTokenId, coinMultiplier);
@@ -106,7 +108,7 @@ contract IndiaTestSuite {
         (uint256 newCharge, uint256 newActiveCharge, uint256 newValue, , ) = digil.tokenCharge(activeTokenId);
         Assert.ok(newCharge >= coinMultiplier * 512, "Token charge did not increase appropriately");
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
-        Assert.ok(newValue == 0, "Token value should not increase");
+        Assert.ok(newValue == 100000000000000, "Token value should not increase");
 
         (bool isActive, bool isActivating, bool isDischarging, , , , , , ) = digil.tokenData(activeTokenId);
         Assert.ok(!isActive, "Token activation in invalid state (active)");
@@ -145,7 +147,7 @@ contract IndiaTestSuite {
         Assert.equal(activeCharge, coinMultiplier * 512, "Invalid initial Source active charge");
         Assert.equal(value, 0, "Invalid initial Source value");
 
-        uint256 fireTokenId = digil.createToken(0, 0, false, 4, "Fire Destination Plane");
+        uint256 fireTokenId = digil.createToken{value: 100000000000000}(0, 0, false, 4, "Fire Destination Plane");
 
         digil.linkToken{value: 100000000000000}(activeTokenId, fireTokenId, 10);
         (, , , , links, , , , ) = digil.tokenData(activeTokenId);
@@ -153,7 +155,7 @@ contract IndiaTestSuite {
         (charge, activeCharge, value, , ) = digil.tokenCharge(fireTokenId);
         Assert.equal(charge, 0, "Invalid initial Fire Destination charge");
         Assert.equal(activeCharge, 0, "Invalid Fire Destination active charge");
-        Assert.equal(value, 50000000000000, "Invalid initial Fire Destination value");
+        Assert.equal(value, 150000000000000, "Invalid initial Fire Destination value");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid new Source charge");

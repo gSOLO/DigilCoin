@@ -12,6 +12,8 @@ import "remix_accounts.sol";
 import "../contracts/IDigilToken.sol";
 import "../contracts/DigilTestLibrary.sol";
 
+import "hardhat/console.sol";
+
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
 contract GammaTestSuite {
     IERC20 public coins;
@@ -36,7 +38,7 @@ contract GammaTestSuite {
         uint256 balanceCoins = coins.balanceOf(address(this));
         Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
 
-        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
         Assert.equal(withdrawlCoins, 1 * 10 ** 18, "First withdrawl should be 1 coin");
@@ -50,10 +52,10 @@ contract GammaTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10 * 10 ** 18, "Coins from distribution should be 10 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
+        Assert.equal(withdrawlCoins, 11 * 10 ** 18, "Coins from distribution should be 11 bonus for value");
+        Assert.equal(withdrawlValue, 1045000000000000, "Distributed value shopuld be 95% of 1000000000000000 + 95% of 100000000000000");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -62,10 +64,10 @@ contract GammaTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "Coins from distribution should be 100 bonus for value");
-        Assert.equal(withdrawlValue, 9500000000000000, "Distributed value should be 95% of 10000000000000000");
+        Assert.equal(withdrawlCoins, 101 * 10 ** 18, "Coins from distribution should be 101 bonus for value");
+        Assert.equal(withdrawlValue, 9595000000000000, "Distributed value should be 95% of 10000000000000000 + 95% of 100000000000000");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -74,8 +76,8 @@ contract GammaTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10000 * 10 ** 18, "Coins from distribution should be 10000 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000000, "Distributed value should be 95% of 1000000000000000000");
+        Assert.equal(withdrawlCoins, 10001 * 10 ** 18, "Coins from distribution should be 10001 bonus for value");
+        Assert.equal(withdrawlValue, 950095000000000000, "Distributed value should be 95% of 1000000000000000000 + 95% of 100000000000000");
     }
 
     /// #sender: account-7
@@ -87,23 +89,23 @@ contract GammaTestSuite {
         bool approved = coins.approve(address(digil), 9694 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(0, 0, false, 4, "Source Plane");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(0, 0, false, 4, "Source Plane");
         (, , , , uint256 links, , , , ) = digil.tokenData(tokenId);
         Assert.equal(links, 1, "Invalid Link Count (!=1)");
         (uint256 charge, uint256 activeCharge, uint256 value, , ) = digil.tokenCharge(tokenId);
         Assert.equal(charge, 0, "Invalid initial Source charge");
         Assert.equal(activeCharge, 0, "Invalid initial Source active charge");
-        Assert.equal(value, 0, "Invalid initial Source value");
+        Assert.equal(value, 100000000000000, "Invalid initial Source value");
 
         (uint256 linkId, uint8 base, uint256 affinityBonus) = digil.tokenLinkAt(tokenId, links - 1);
         Assert.equal(linkId, 4, "Invalid planar link ID");
         Assert.equal(base, 100, "Invalid planar link base efficiency");
         Assert.equal(affinityBonus, 0, "Invalid planar link affinity bonus");
 
-        uint256 fireTokenId = digil.createToken(0, 0, false, 4, "Fire Destination Plane");
-        uint256 airTokenId = digil.createToken(0, 0, false, 5, "Air Destination Plane");
-        uint256 earthTokenId = digil.createToken(100000000000000, 0, false, 6, "Earth Destination Plane");
-        uint256 waterTokenId = digil.createToken(0, 0, false, 7, "Water Destination Plane");
+        uint256 fireTokenId = digil.createToken{value: 100000000000000}(0, 0, false, 4, "Fire Destination Plane");
+        uint256 airTokenId = digil.createToken{value: 100000000000000}(0, 0, false, 5, "Air Destination Plane");
+        uint256 earthTokenId = digil.createToken{value: 100000000000000}(100000000000000, 0, false, 6, "Earth Destination Plane");
+        uint256 waterTokenId = digil.createToken{value: 100000000000000}(0, 0, false, 7, "Water Destination Plane");
 
         digil.linkToken(tokenId, fireTokenId, 10);                           // coins: 1000 base: 10 bonus: 10
         (, , , , links, , , , ) = digil.tokenData(tokenId);
@@ -111,7 +113,7 @@ contract GammaTestSuite {
         (charge, activeCharge, value, , ) = digil.tokenCharge(fireTokenId);
         Assert.equal(charge, 0, "Invalid initial Fire Destination charge");
         Assert.equal(activeCharge, 0, "Invalid Fire Destination active charge");
-        Assert.equal(value, 0, "Invalid initial Fire Destination value");
+        Assert.equal(value, 100000000000000, "Invalid initial Fire Destination value");
 
         (linkId, base, affinityBonus) = digil.tokenLinkAt(tokenId, links - 1);
         Assert.equal(linkId, fireTokenId, "Invalid fire link ID");
@@ -124,7 +126,7 @@ contract GammaTestSuite {
         (charge, activeCharge, value, , ) = digil.tokenCharge(airTokenId);
         Assert.equal(charge, 0, "Invalid initial Air Destination charge");
         Assert.equal(activeCharge, 0, "Invalid initial Air Destination active charge");
-        Assert.equal(value, 0, "Invalid initial Air Destination value");
+        Assert.equal(value, 100000000000000, "Invalid initial Air Destination value");
 
         (linkId, base, affinityBonus) = digil.tokenLinkAt(tokenId, links - 1);
         Assert.equal(linkId, airTokenId, "Invalid air link ID");
@@ -137,7 +139,7 @@ contract GammaTestSuite {
         (charge, activeCharge, value, , ) = digil.tokenCharge(earthTokenId);
         Assert.equal(charge, 0, "Invalid initial Earth Destination charge");
         Assert.equal(activeCharge, 0, "Invalid initial Earth Destination active charge");
-        Assert.equal(value, 50000000000000, "Invalid initial Earth Destination value");
+        Assert.equal(value, 150000000000000, "Invalid initial Earth Destination value");
 
         (linkId, base, affinityBonus) = digil.tokenLinkAt(tokenId, links - 1);
         Assert.equal(linkId, earthTokenId, "Invalid earth link ID");
@@ -150,7 +152,7 @@ contract GammaTestSuite {
         (charge, activeCharge, value, , ) = digil.tokenCharge(waterTokenId);
         Assert.equal(charge, 0, "Invalid initial Water Destination charge");
         Assert.equal(activeCharge, 0, "Invalid initial Water Destination active charge");
-        Assert.equal(value, 0, "Invalid initial Water Destination value");
+        Assert.equal(value, 100000000000000, "Invalid initial Water Destination value");
 
         (linkId, base, affinityBonus) = digil.tokenLinkAt(tokenId, links - 1);
         Assert.equal(linkId, waterTokenId, "Invalid water link ID");
@@ -168,7 +170,7 @@ contract GammaTestSuite {
         bool approved = coins.approve(address(digil), 10 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge With Value");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge With Value");
 
         digil.chargeToken{value: incrementalValue}(tokenId, coinMultiplier);
 
@@ -200,7 +202,7 @@ contract GammaTestSuite {
         bool approved = coins.approve(address(digil), 20 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge With Value");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge With Value");
 
         digil.chargeToken{value: incrementalValue}(tokenId, coinMultiplier);
 

@@ -12,6 +12,8 @@ import "remix_accounts.sol";
 import "../contracts/IDigilToken.sol";
 import "../contracts/DigilTestLibrary.sol";
 
+import "hardhat/console.sol";
+
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
 contract CharlieTestSuite {
     IERC20 public coins;
@@ -36,7 +38,7 @@ contract CharlieTestSuite {
         uint256 balanceCoins = coins.balanceOf(address(this));
         Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
 
-        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
         Assert.equal(withdrawlCoins, 1 * 10 ** 18, "First withdrawl should be 1 coin");
@@ -50,10 +52,10 @@ contract CharlieTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10 * 10 ** 18, "Coins from distribution should be 10 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
+        Assert.equal(withdrawlCoins, 11 * 10 ** 18, "Coins from distribution should be 11 bonus for value");
+        Assert.equal(withdrawlValue, 1045000000000000, "Distributed value shopuld be 95% of 1000000000000000 + 95% of 100000000000000");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -62,10 +64,10 @@ contract CharlieTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "Coins from distribution should be 100 bonus for value");
-        Assert.equal(withdrawlValue, 9500000000000000, "Distributed value should be 95% of 10000000000000000");
+        Assert.equal(withdrawlCoins, 101 * 10 ** 18, "Coins from distribution should be 101 bonus for value");
+        Assert.equal(withdrawlValue, 9595000000000000, "Distributed value should be 95% of 10000000000000000 + 95% of 100000000000000");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -74,8 +76,8 @@ contract CharlieTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 300000 * 10 ** 18, "Coins from distribution should be 300000 bonus for value");
-        Assert.equal(withdrawlValue, 28500000000000000000, "Distributed value should be 95% of 30000000000000000000");
+        Assert.equal(withdrawlCoins, 300001 * 10 ** 18, "Coins from distribution should be 300001 bonus for value");
+        Assert.equal(withdrawlValue, 28500095000000000000, "Distributed value should be 95% of 30000000000000000000 + 95% of 100000000000000");
     }
 
     /// #sender: account-2
@@ -86,7 +88,7 @@ contract CharlieTestSuite {
         Assert.ok(approved, "Coin approval failed");
 
         // Create a token with initial parameters
-        uint256 tokenId = digil.createToken(100000000000000, 1000000000000000000, false, 4, "Update Test");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(100000000000000, 1000000000000000000, false, 4, "Update Test");
 
         // Update token parameters
         digil.updateToken{value: 200000000000000}(tokenId, 200000000000000, 2000000000000000000, "New Data", "New URI");

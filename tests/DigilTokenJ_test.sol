@@ -14,6 +14,8 @@ import "../contracts/DigilTestLibrary.sol";
 import "../contracts/DigilFlags.sol";
 import "../contracts/DigilAppearance.sol";
 
+import "hardhat/console.sol";
+
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
 contract JuiletTestSuite {
     IERC20 public coins;
@@ -38,7 +40,7 @@ contract JuiletTestSuite {
         uint256 balanceCoins = coins.balanceOf(address(this));
         Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
 
-        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
         Assert.equal(withdrawlCoins, 1 * 10 ** 18, "First withdrawl should be 1 coin");
@@ -52,10 +54,10 @@ contract JuiletTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10 * 10 ** 18, "Coins from distribution should be 10 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
+        Assert.equal(withdrawlCoins, 11 * 10 ** 18, "Coins from distribution should be 11 bonus for value");
+        Assert.equal(withdrawlValue, 1045000000000000, "Distributed value shopuld be 95% of 1000000000000000 + 95% of 100000000000000");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -64,10 +66,10 @@ contract JuiletTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "Coins from distribution should be 100 bonus for value");
-        Assert.equal(withdrawlValue, 9500000000000000, "Distributed value should be 95% of 10000000000000000");
+        Assert.equal(withdrawlCoins, 101 * 10 ** 18, "Coins from distribution should be 101 bonus for value");
+        Assert.equal(withdrawlValue, 9595000000000000, "Distributed value should be 95% of 10000000000000000 + 95% of 100000000000000");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -76,8 +78,8 @@ contract JuiletTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10000 * 10 ** 18, "Coins from distribution should be 10000 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000000, "Distributed value should be 95% of 1000000000000000000");
+        Assert.equal(withdrawlCoins, 10001 * 10 ** 18, "Coins from distribution should be 10001 bonus for value");
+        Assert.equal(withdrawlValue, 950095000000000000, "Distributed value should be 95% of 1000000000000000000 + 95% of 100000000000000");
     }
 
     /// #sender: account-9
@@ -90,7 +92,7 @@ contract JuiletTestSuite {
         bool approved = coins.approve(address(digil), 515 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        activeTokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Source Plane");
+        activeTokenId = digil.createToken{value: 100000000000000}(incrementalValue, 10 * coinMultiplier, false, 4, "Source Plane");
 
         digil.primeToken(activeTokenId);
 
@@ -122,7 +124,7 @@ contract JuiletTestSuite {
         bool approved = coins.approve(address(digil), 9694 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        linkTokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 9, "Lightning Destination Plane");
+        linkTokenId = digil.createToken{value: 100000000000000}(incrementalValue, 10 * coinMultiplier, false, 9, "Lightning Destination Plane");
 
         digil.linkToken{value: 200000000000000}(activeTokenId, linkTokenId, 10);
 
@@ -168,7 +170,7 @@ contract JuiletTestSuite {
         uint256 coinMultiplier = 10 ** 18;
 
         // 1. Create a simple token (no plane, no threshold, unrestricted).
-        uint256 tokenId = digil.createToken(0, 0, false, 0, "");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(0, 0, false, 0, "");
 
         // Activate so that subsequent charges go into activeCharge.
         bool activated = digil.activateToken(tokenId);

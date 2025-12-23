@@ -12,6 +12,8 @@ import "remix_accounts.sol";
 import "../contracts/IDigilToken.sol";
 import "../contracts/DigilTestLibrary.sol";
 
+import "hardhat/console.sol";
+
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
 contract AlphaTestSuite {
     IERC20 public coins;
@@ -36,7 +38,7 @@ contract AlphaTestSuite {
         uint256 balanceCoins = coins.balanceOf(address(this));
         Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
 
-        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
         Assert.equal(withdrawlCoins, 1 * 10 ** 18, "First withdrawl should be 1 coin");
@@ -53,13 +55,13 @@ contract AlphaTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10 * 10 ** 18, "Coins from distribution should be 10 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
+        Assert.equal(withdrawlCoins, 11000000000000000000, "Coins from distribution should be 11 bonus for value");
+        Assert.equal(withdrawlValue, 1045000000000000, "Distributed value shopuld be 95% of 1000000000000000 + 95% of 100000000000000");
 
         balanceCoins = coins.balanceOf(address(this));
-        Assert.equal(balanceCoins, 10 * 10 ** 18, "Coin balance should be 10 coins");
+        Assert.equal(balanceCoins, 11 * 10 ** 18, "Coin balance should be 11 coins");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -68,8 +70,8 @@ contract AlphaTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10000 * 10 ** 18, "Coins from distribution should be 10000 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000000, "Distributed value should be 95% of 1000000000000000000");
+        Assert.equal(withdrawlCoins, 10001 * 10 ** 18, "Coins from distribution should be 10001 bonus for value");
+        Assert.equal(withdrawlValue, 950095000000000000, "Distributed value should be 95% of 1000000000000000000 + 95% of 100000000000000");
     }
 
     /// #sender: account-0
@@ -82,7 +84,7 @@ contract AlphaTestSuite {
         uint256 balanceTokens = digil.balanceOf(address(this));
         Assert.equal(balanceTokens, 2, "Token balance should be 2"); // Form Withdraw
 
-        uint256 tokenId = digil.createToken(incrementalValue, activationThreshold, false, plane, data);
+        uint256 tokenId = digil.createToken{value: 100000000000000}(incrementalValue, activationThreshold, false, plane, data);
 
         balanceTokens = digil.balanceOf(address(this));
         Assert.equal(balanceTokens, 3, "Token balance should be 3");
@@ -107,7 +109,7 @@ contract AlphaTestSuite {
         bool approved = coins.approve(address(digil), 10 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(0, 10 * coinMultiplier, false, 4, "Test Charge");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(0, 10 * coinMultiplier, false, 4, "Test Charge");
 
         (uint256 initialCharge, , , , ) = digil.tokenCharge(tokenId);
 
@@ -126,7 +128,7 @@ contract AlphaTestSuite {
         (uint256 charge, uint256 activeCharge, uint256 value, uint256 incrementalValue, uint256 activationThreshold) = digil.tokenCharge(tokenId);
         Assert.ok(charge == fullCharge, "Token should be at full charge");
         Assert.ok(activeCharge == 0, "Active charge should be 0");
-        Assert.ok(value == 100000000000000 * 9, "Value should be 100000000000000 * 9");
+        Assert.ok(value == 100000000000000 * 10, "Value should be 100000000000000 * 10");
         Assert.ok(incrementalValue == 0, "Incremental value should be 0");
         Assert.ok(activationThreshold == fullCharge, "Token should be at activation threshold");
     }
@@ -141,7 +143,7 @@ contract AlphaTestSuite {
         bool approved = coins.approve(address(digil), 10 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge With Value");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge With Value");
 
         (uint256 initialCharge, , uint256 initialValue, , ) = digil.tokenCharge(tokenId);
 
@@ -170,7 +172,7 @@ contract AlphaTestSuite {
         bool approved = coins.approve(address(digil), 1 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge With Increased Value");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(incrementalValue, 10 * coinMultiplier, false, 4, "Test Charge With Increased Value");
 
         (uint256 initialCharge, , uint256 initialValue, , ) = digil.tokenCharge(tokenId);
 
@@ -191,7 +193,7 @@ contract AlphaTestSuite {
         bool approved = coins.approve(address(digil), 15 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Discharge");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(incrementalValue, 10 * coinMultiplier, false, 4, "Test Discharge");
 
         (uint256 initialCharge, , uint256 initialValue, , ) = digil.tokenCharge(tokenId);
 
@@ -218,7 +220,7 @@ contract AlphaTestSuite {
 
         (uint256 finalCharge, , uint256 finalValue, , ) = digil.tokenCharge(tokenId);
         Assert.ok(finalCharge == initialCharge, "Token charge did not decrease appropriately");
-        Assert.ok(finalValue == initialValue, "Token value should not change");
+        Assert.ok(finalValue == 0, "Token value should be 0");
     }
 
     // #sender: account-0
@@ -231,7 +233,7 @@ contract AlphaTestSuite {
         bool approved = coins.approve(address(digil), 45 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(incrementalValue, 10 * coinMultiplier, false, 4, "Test Activate");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(incrementalValue, 10 * coinMultiplier, false, 4, "Test Activate");
 
         for (uint256 accountIndex; accountIndex < 15; accountIndex++) {
             digil.chargeTokenAs{value: incrementalValue}(TestsAccounts.getAccount(accountIndex), tokenId, coinMultiplier);
@@ -247,14 +249,14 @@ contract AlphaTestSuite {
         (uint256 newCharge, uint256 newActiveCharge, uint256 newValue, , ) = digil.tokenCharge(tokenId);
         Assert.ok(newCharge >= coinMultiplier * 44, "Token charge did not increase appropriately");
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
-        Assert.ok(newValue == 0, "Token value should not increase");
+        Assert.ok(newValue == 100000000000000, "Token value should not increase");
 
         digil.chargeToken{value: incrementalValue * 6}(tokenId, coinMultiplier);
 
         (newCharge, newActiveCharge, newValue, , ) = digil.tokenCharge(tokenId);
         Assert.ok(newCharge >= coinMultiplier * 45, "Token charge did not increase appropriately");
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
-        Assert.ok(newValue == incrementalValue * 5, "Token value did not increase appropriately");
+        Assert.ok(newValue == incrementalValue * 6, "Token value did not increase appropriately");
 
         (bool isActive, bool isActivating, bool isDischarging, , , , , , ) = digil.tokenData(tokenId);
         Assert.ok(!isActive, "Token activation in invalid state (active)");
@@ -311,11 +313,11 @@ contract AlphaTestSuite {
         (charge, , , , ) = digil.tokenCharge(tokenId);
         Assert.ok(charge == coinMultiplier, "Whitelisted address should charge restricted token");
 
-        tokenId = digil.createToken(incrementalValue, 1 * coinMultiplier, false, 4, "Test Restrict");
+        tokenId = digil.createToken{value: 100000000000000}(incrementalValue, 1 * coinMultiplier, false, 4, "Test Restrict");
 
         (charge, , value, , ) = digil.tokenCharge(tokenId);
         Assert.ok(charge == 0, "New token should not be charged");
-        Assert.ok(value == 0, "Non-restricted token should have no value");
+        Assert.ok(value == 100000000000000, "Non-restricted token should have the incremental value at creation");
 
         try digil.chargeTokenAs{value: incrementalValue}(nonWhitelisted, tokenId, coinMultiplier) {
             Assert.ok(true, "Non-whitelisted address should charge non-restricted token");
@@ -328,7 +330,7 @@ contract AlphaTestSuite {
 
         digil.restrictToken{value: incrementalValue}(tokenId, whitelist);
         (, , value, , ) = digil.tokenCharge(tokenId);
-        Assert.ok(value == incrementalValue, "Restricted token should have value equal to incremental value");
+        Assert.ok(value == (incrementalValue + 100000000000000), "Restricted token should have value equal to incremental value plus value at creation");
 
         digil.chargeTokenAs{value: incrementalValue}(whitelisted, tokenId, coinMultiplier);
         (charge, , , , ) = digil.tokenCharge(tokenId);

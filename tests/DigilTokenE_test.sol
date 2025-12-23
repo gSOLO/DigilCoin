@@ -12,6 +12,8 @@ import "remix_accounts.sol";
 import "../contracts/IDigilToken.sol";
 import "../contracts/DigilTestLibrary.sol";
 
+import "hardhat/console.sol";
+
 // File name has to end with '_test.sol', this file can contain more than one testSuite contracts
 contract EchoTestSuite {
     IERC20 public coins;
@@ -36,7 +38,7 @@ contract EchoTestSuite {
         uint256 balanceCoins = coins.balanceOf(address(this));
         Assert.equal(balanceCoins, 0, "Coin balance should be 0 coins");
 
-        uint256 tokenId = digil.createToken(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(1000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         (uint256 withdrawlCoins, uint256 withdrawlValue) = digil.withdraw();
         Assert.equal(withdrawlCoins, 1 * 10 ** 18, "First withdrawl should be 1 coin");
@@ -50,10 +52,10 @@ contract EchoTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10 * 10 ** 18, "Coins from distribution should be 10 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000, "Distributed value shopuld be 95% of 1000000000000000");
+        Assert.equal(withdrawlCoins, 11 * 10 ** 18, "Coins from distribution should be 11 bonus for value");
+        Assert.equal(withdrawlValue, 1045000000000000, "Distributed value shopuld be 95% of 1000000000000000 + 95% of 100000000000000");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -62,10 +64,10 @@ contract EchoTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 100 * 10 ** 18, "Coins from distribution should be 100 bonus for value");
-        Assert.equal(withdrawlValue, 9500000000000000, "Distributed value should be 95% of 10000000000000000");
+        Assert.equal(withdrawlCoins, 101 * 10 ** 18, "Coins from distribution should be 101 bonus for value");
+        Assert.equal(withdrawlValue, 9595000000000000, "Distributed value should be 95% of 10000000000000000 + 95% of 100000000000000");
 
-        tokenId = digil.createToken(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
+        tokenId = digil.createToken{value: 100000000000000}(10000000000000000, 1000000000000000000, false, 4, "Test Withdraw");
 
         approved = coins.approve(address(digil), 1 * 10 ** 18);
         Assert.ok(approved, "Coin approval failed");
@@ -74,8 +76,8 @@ contract EchoTestSuite {
         digil.activateToken(tokenId);
 
         (withdrawlCoins, withdrawlValue) = digil.withdraw();
-        Assert.equal(withdrawlCoins, 10000 * 10 ** 18, "Coins from distribution should be 10000 bonus for value");
-        Assert.equal(withdrawlValue, 950000000000000000, "Distributed value should be 95% of 1000000000000000000");
+        Assert.equal(withdrawlCoins, 10001 * 10 ** 18, "Coins from distribution should be 10001 bonus for value");
+        Assert.equal(withdrawlValue, 950095000000000000, "Distributed value should be 95% of 1000000000000000000 + 95% of 100000000000000");
     }
 
     /// #sender: account-4
@@ -89,7 +91,7 @@ contract EchoTestSuite {
         Assert.ok(approved, "Coin approval failed");
 
         // Create source and restricted linked tokens
-        uint256 sourceTokenId = digil.createToken(0, 0, false, 4, "Source Token");
+        uint256 sourceTokenId = digil.createToken{value: 100000000000000}(0, 0, false, 4, "Source Token");
         uint256 restrictedTokenId = digil.createToken{value: incrementalValue}(incrementalValue, 0, true, 5, "Restricted Linked Token");
         
         // Link the tokens
@@ -132,12 +134,12 @@ contract EchoTestSuite {
         bool approved = coins.approve(address(digil), coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
-        uint256 tokenId = digil.createToken(0, 0, false, 4, "Opt Out Charge Test");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(0, 0, false, 4, "Opt Out Charge Test");
 
         digil.setOptStatus{value: incrementalValue * 100}(true);
 
         // Attempt to create a token (should fail)
-        try digil.createToken(0, 0, false, 4, "Create Token Fail") {
+        try digil.createToken{value: 100000000000000}(0, 0, false, 4, "Create Token Fail") {
             Assert.ok(false, "Opted out user should not be able to create a token");
         } catch {
             Assert.ok(true, "Opted out user should not be able to create a token");
@@ -153,7 +155,7 @@ contract EchoTestSuite {
         digil.setOptStatus{value: incrementalValue * 100}(false);
 
         // Attempt to create a token (should succeed)
-        try digil.createToken(0, 0, false, 4, "Create Token Success") {
+        try digil.createToken{value: 100000000000000}(0, 0, false, 4, "Create Token Success") {
             Assert.ok(true, "Opted in user should be able to create a token");
         } catch {
             Assert.ok(false, "Opted in user should be able to create a token");
@@ -175,7 +177,7 @@ contract EchoTestSuite {
         uint256 coinMultiplier = 10 ** 18;
         uint256 incrementalValue = 100000000000000;
 
-        uint256 tokenId = digil.createToken(incrementalValue, 0, false, 4, "Deactivate Test");
+        uint256 tokenId = digil.createToken{value: 100000000000000}(incrementalValue, 0, false, 4, "Deactivate Test");
     
         // Activate the token (assuming zero activation threshold allows immediate activation)
         digil.activateToken(tokenId);
