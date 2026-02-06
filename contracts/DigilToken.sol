@@ -806,7 +806,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Opt In / Opt Out
 
     /// @notice Allows the sender to opt out or opt in to token transfers.
-    ///         Requires sending a value equal to or greater than the current incremental value at the coin rate.
+    ///         Requires sending a value equal to the current incremental value at the coin rate.
     ///         For example at 0.0001ETH incremental value and 100 coin rate, requires .01ETH
     /// @param  optOut Send true to opt out, false to opt in
     function setOptStatus(bool optOut) external payable {
