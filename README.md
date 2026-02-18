@@ -17,7 +17,7 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 - [Brand & Terminology](#brand--terminology)
 - [Contracts](#contracts)
   - [Digil Coin | ERC-20](#digil-coin--erc-20)
-  - [Digil Governor | OpenZeppelin Governor](#digil-governor--openzeppelin-governor)
+  - [Digil Governor | Governance Contract](#digil-governor--governance-contract)
   - [Digil Timelock | TimelockController](#digil-timelock--timelockcontroller)
   - [Digital Sigils | ERC-721](#digital-sigils--erc-721)
 - [Planar Tokens & Base URI](#planar-tokens--base-uri)
@@ -68,7 +68,7 @@ This terminology keeps the branding consistent: **$DIGIL** is the liquid currenc
 Used for **charge units**, feature fees (linking, metadata updates, buffs, etc.), and **governance**. DigilCoin also implements **donor-funded ETH rewards** that are intentionally **not holding-based**.
 
 **DigilCoin.sol highlights**
-- OpenZeppelin-based ERC-20 with:
+- ERC-20 with:
   - `ERC20Burnable` (holders can burn)
   - `ERC20Pausable` (role-gated pause/unpause)
   - `ERC20Permit` (EIP-2612 “permit” approvals)
@@ -97,7 +97,7 @@ Used for **charge units**, feature fees (linking, metadata updates, buffs, etc.)
 
 DigilCoin has **18 decimals** (same as ETH). Where we say “coins,” we mean base units at this precision.
 
-### Digil Governor | OpenZeppelin Governor
+### Digil Governor | Governance Contract
 **Address**: TBD
 
 Governance contract for DigilCoin that executes approved proposals through a **TimelockController** and uses DigilCoin’s timestamp-based ERC-6372 `clock()` / `CLOCK_MODE()` timepoints.
@@ -130,7 +130,7 @@ Governance contract for DigilCoin that executes approved proposals through a **T
 ### Digil Timelock | TimelockController
 **Address**: TBD
 
-`DigilTimelock` is a thin wrapper around OpenZeppelin `TimelockController` used as the governance execution layer.
+`DigilTimelock` is a thin wrapper around a `TimelockController` used as the governance execution layer.
 
 - Constructor wires standard timelock roles/parameters: `minDelay`, `proposers`, `executors`, and `admin`.
 - Intended flow: Governor proposes/queues/executes through this timelock; privileged actions in managed contracts should be owned by the timelock.
