@@ -2507,10 +2507,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 magnitude = uint256(buff.magnitude);
 
         uint256 cost = _buffCost(magnitude, remainingMinutes, 1);
-        if (cost > 0) {
-            if (t.activeCharge < cost) revert InsufficientActiveCharge(cost);
-            t.activeCharge -= cost;
-        }
+        if (t.activeCharge < cost) revert InsufficientActiveCharge(cost);
+        t.activeCharge -= cost;
     }
 
     /// @dev    Internal function to calculate the affinity bonus when linking tokens.
