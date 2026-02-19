@@ -1651,11 +1651,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     }
                 }
 
-                // If nothing at all is going to this link, skip it.
-                if (linkedCoins == 0 && linkedBonusCoins == 0 && linkedValue == 0) {
-                    continue;
-                }
-
                 // Attempt to charge the linked token.
                 bool charged = _ownerOf(linkId) != address(0) && _chargeToken(contributor, linkId, linkedCoins, linkedBonusCoins, linkedValue, true);
                 if (charged) {
@@ -1674,7 +1669,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                             emit ActiveCharge(tokenId, echo);
                         }
                     }
-                } else {
+                } else if (linkedCoins != 0) {
                     // If linked token could not be charged, add the coins to the source's active charge.
                     t.activeCharge += linkedCoins;
                     emit ActiveCharge(tokenId, linkedCoins);
