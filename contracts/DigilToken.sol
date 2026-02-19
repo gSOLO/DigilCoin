@@ -956,6 +956,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external nonReentrant returns (bytes4) {
         _notOnBlacklist(operator);
         _notOnBlacklist(from);
+        require(balanceOf(from) > 0, "DIGIL: Must Own A Token To Vault");
 
         address account = _msgSender();
 
