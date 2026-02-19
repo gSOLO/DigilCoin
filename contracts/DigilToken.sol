@@ -625,14 +625,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
             if (bonus > 0) {
                 distribution.time = nowTs;
-            } else {
-                // No bonus this time; keep prior timestamp
-                distribution.time = oldTime;
             }
         } else {
             // Failure: restore original state (no bonus consumed).
             distribution.coins = baseCoins;
-            distribution.time = oldTime;
             coins = 0;
         }
 
