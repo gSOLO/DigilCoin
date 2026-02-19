@@ -144,7 +144,7 @@ Implements core NFT logic plus the esoteric machinery of the system:
 - **Economics**: per-token `charge` (potential energy), `activeCharge` (kinetic energy), and ETH `value` (material sacrifice); per-address contribution ledgers; pending distributions.
 - **Batched workflows**: `activateToken`, `dischargeToken` process contributors in pages using `distributionIndex` and a configurable `_batchSize`.
 - **Link graph**: up to 10 links per token with `LinkEfficiency`, optional **temporary buffs**, and plane-driven bonuses. This forms the "Ley Lines" connecting your intentions.
-- **Vaulting**: accepts external ERC-721s via `onERC721Received` and exposes `recallToken`.
+- **Vaulting**: accepts external ERC-721s via `onERC721Received`, requires a **DIGIL coin transfer fee** (`10 × _coinRate`) from the sender, and exposes `recallToken`.
 - **Access & safety**: blacklist gating; planar invariants; `nonReentrant` on sensitive paths; robust event surface; custom errors.
 
 In short, it’s both the **scoreboard** and the **settlement engine** for your digital workings.
@@ -769,16 +769,18 @@ ERC721(externalCollection).safeTransferFrom(
 The callback `onERC721Received`:
 
 1. Verifies the Digil contract now owns `externalTokenId`.
-2. Ensures this `(collection, externalTokenId)` pair was not previously vaulted.
-3. Mints a **new Digil** to `from` with:
+2. Charges the vaulting sender (`from`) a **coin fee of `10 × _coinRate`** using `transferFrom` on the DigilCoin token (the sender must pre-approve this contract).
+3. Ensures this `(collection, externalTokenId)` pair was not previously vaulted.
+4. Mints a **new Digil** to `from` with:
    - `incrementalValue = globalMin` (the minimum non-zero incremental value)
    - `activationThreshold = 0`
-4. Appends query parameters to the new token’s URI:  
-   `?account=<collection>&tokenId=<externalTokenId>`
-5. Records:
+5. Appends a vault marker to the new token’s URI:  
+   `?ct=1`
+6. Records:
    - `_contractTokens[collection][digilId].tokenId = externalTokenId`
    - `token.contractTokenAddress = collection`
-   - Adds `collection` as the initial entry in `contributors[]`.
+
+The minted Digil keeps provenance of the attached NFT contract/token pair while the NFT remains escrowed in DigilToken.
 
 This Digil now represents the vaulted NFT. It is a shell or "spirit vessel" constructed around the original artifact.
 
@@ -1122,6 +1124,13 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
     - Does **not** refund coins; reclaim is value-only and coin-sacrificing by design.
 
 **Vault recall**
+
+- `onERC721Received` (vault deposit)
+  - ETH:
+    - No ETH cost.
+  - Coins:
+    - Requires a DigilCoin transfer of `10 × _coinRate` from `from` to `DigilToken`.
+    - Sender must approve DigilToken for this ERC-20 spend before depositing the NFT.
 
 - `recallToken`
   - ETH:
