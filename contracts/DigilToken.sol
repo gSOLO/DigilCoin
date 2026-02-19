@@ -670,20 +670,27 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  addr The address to credit the distribution.
     /// @param  value The amount of native value (in wei) to add.
     function _addDistributedValue(address addr, uint256 value) internal {
-        // 1. Calculate the contract's fee based on the total value.
-        // We multiply first to maintain precision before dividing.
-        // This correctly calculates the fee even if `value` is less than `_incrementalValue`.
-        // Formula: fee = value * ((_incrementalValue - _transferValue) / _incrementalValue)
-        uint256 contractFee = (value * (_incrementalValue - _transferValue)) / _incrementalValue;
+        uint256 contractFee;
+        uint256 userValue;
+        uint256 bonusCoins;
 
-        // 2. Calculate the value that goes to the user.
-        // This is simply the original value minus the fee we just calculated.
-        uint256 userValue = value - contractFee;
+        unchecked {
 
-        // 3. Calculate bonus coins based on full `_incrementalValue` steps in the original `value`.
-        // Only complete increments earn rewards; partial increments are ignored by design.
-        uint256 fullIncrements = value / _incrementalValue;
-        uint256 bonusCoins = (_coinRate / BONUS_RATE_DIVISOR) * fullIncrements;
+            // 1. Calculate the contract's fee based on the total value.
+            // We multiply first to maintain precision before dividing.
+            // This correctly calculates the fee even if `value` is less than `_incrementalValue`.
+            // Formula: fee = value * ((_incrementalValue - _transferValue) / _incrementalValue)
+            contractFee = (value * (_incrementalValue - _transferValue)) / _incrementalValue;
+
+            // 2. Calculate the value that goes to the user.
+            // This is simply the original value minus the fee we just calculated.
+            userValue = value - contractFee;
+
+            // 3. Calculate bonus coins based on full `_incrementalValue` steps in the original `value`.
+            // Only complete increments earn rewards; partial increments are ignored by design.
+            bonusCoins = (_coinRate / BONUS_RATE_DIVISOR) * (value / _incrementalValue);
+
+        }
         
         // 4. Add the calculated amounts to their respective distributions.
         // The contract gets its fee.
@@ -1551,13 +1558,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  t The source token storage reference.
     /// @return effectiveBase The effective base efficiency for this link, including any active buff, capped at uint8::max (255).
     function _effectiveBaseEfficiency(uint256 linkId, Token storage t) internal view returns (uint256 effectiveBase) {
-        uint8 base = t.linkEfficiency[linkId].base;
-
-        uint8 bonus = _activeBuffBonus(t);
-
-        uint256 boosted = uint256(base) + uint256(bonus);
-
-        return boosted > type(uint8).max ? type(uint8).max : boosted;
+        unchecked {
+            uint256 boosted = uint256(t.linkEfficiency[linkId].base) + _activeBuffBonus(t);
+            return boosted > type(uint8).max ? type(uint8).max : boosted;
+        }
     }
 
     /// @dev Computes the REVERBERATED echo amount from a single link.
@@ -1566,14 +1570,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///      - Returns the final echo amount after dividing by AFFINITY_REDUCTION.
     ///      If both linkedCoins and bonusCoins are zero, returns 0.
     function _reverbEcho(uint256 linkedCoins, uint256 bonusCoins) internal pure returns (uint256) {
-        // Cap bonusCoins at 4× linkedCoins for controlled “planar drama”
-        uint256 maxBonus = linkedCoins * (AFFINITY_BOOST  * AFFINITY_BOOST);
-        if (bonusCoins > maxBonus) {
-            bonusCoins = maxBonus;
+        unchecked {
+            // Cap bonusCoins at 4× linkedCoins for controlled “planar drama”
+            uint256 maxBonus = linkedCoins * (AFFINITY_BOOST  * AFFINITY_BOOST);
+            if (bonusCoins > maxBonus) {
+                bonusCoins = maxBonus;
+            }
+            return (linkedCoins + bonusCoins) / AFFINITY_REDUCTION;
         }
-
-        uint256 total = linkedCoins + bonusCoins;
-        return total / AFFINITY_REDUCTION;
     }
 
     /// @dev Internal function to charge an active token.
@@ -2474,7 +2478,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  linkCount The number of outgoing links affected.
     /// @return cost The activeCharge cost in coin units.
     function _buffCost(uint256 bonus, uint256 duration, uint256 linkCount) internal view returns (uint256 cost) {
-        cost = bonus * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR;
+        unchecked {
+            cost = bonus * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR;
+        }
 
         // Enforce "minimum cost = _coinRate" rule for any buff.
         if (cost < _coinRate) {
