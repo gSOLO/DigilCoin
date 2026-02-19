@@ -949,10 +949,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///  - A full discharge cycle (see {dischargeToken}) **does not** make a token
     ///    recallable; in fact, it explicitly clears `recallable` after distribution,
     ///    while leaving the external token still vaulted until recall.
-    function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external nonReentrant returns (bytes4) {
-        _notOnBlacklist(operator);
+    function onERC721Received(address, address from, uint256 tokenId, bytes calldata data) external nonReentrant returns (bytes4) {
         _notOnBlacklist(from);
-        require(balanceOf(from) > 0, "DIGIL: Must Own A Token To Vault");
+        
+        uint256 vaultFee = _coinRate * 10;
+        if (!_transferCoinsFrom(from, address(this), vaultFee)) revert CoinTransferFailed(vaultFee);
 
         address account = _msgSender();
 
