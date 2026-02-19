@@ -1555,11 +1555,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint8 bonus = _activeBuffBonus(t);
 
         uint256 boosted = uint256(base) + uint256(bonus);
-        if (boosted > type(uint8).max) {
-            boosted = type(uint8).max;
-        }
 
-        return boosted;
+        return boosted > type(uint8).max ? type(uint8).max : boosted;
     }
 
     /// @dev Computes the REVERBERATED echo amount from a single link.
