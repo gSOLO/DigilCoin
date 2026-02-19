@@ -1630,11 +1630,25 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             for (uint256 linkIndex; linkIndex < linksLength; linkIndex++) {                
                 uint256 linkId = links[linkIndex];
 
+                // Set linkedCoins to the maximum allowed.
                 // Calculate linkedCoins based on base efficiency applied to the coins split evenly amongst the links
                 // Effective base efficiency (including any temporary buff)
-                uint256 linkedCoins = (coins * _effectiveBaseEfficiency(linkId, t)) / linksLength / 100;
+                uint256 linkedCoins = coins / linksLength;
                 // Calculate bonus coins based on affinity bonus applied to the full coins
                 uint256 linkedBonusCoins = (coins * t.linkEfficiency[linkId].affinityBonus) / 100;
+
+                {
+                    uint256 computedCoins = (coins * _effectiveBaseEfficiency(linkId, t)) / linksLength / 100;
+                    
+                    if (computedCoins > linkedCoins) {
+                        // Exceeds the max! Shift the excess into bonus coins.
+                        // linkedCoins is already set to the max, so we leave it alone.
+                        linkedBonusCoins += (computedCoins - linkedCoins);
+                    } else {
+                        // Within limits, update linkedCoins to the actual computed value.
+                        linkedCoins = computedCoins;
+                    }
+                }
 
                 // If nothing at all is going to this link, skip it.
                 if (linkedCoins == 0 && linkedBonusCoins == 0 && linkedValue == 0) {
