@@ -136,8 +136,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 lastActivity;       // Timestamp of the last significant action
 
         // --- SLOT 10: State Flags & Buffs (Packed) ---
-        // 4 bytes (bools) + 12 bytes (BuffState) = 16 bytes total.
-        // 16 bytes REMAINING in this slot.
+        // 4 bytes (bools) + 27 bytes (BuffState) = 31 bytes total.
         bool active;                // True if the token has been activated
         bool activating;            // A lock flag, true if the token is currently in the process of being activated
         bool discharging;           // A lock flag, true if the token is currently in the process of being discharged
