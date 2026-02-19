@@ -931,6 +931,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @inheritdoc IERC721Receiver
     /// @notice Vaults an external ERC721 token into a newly-minted Digil token.
+    ///         Requires the caller (`from`) to pay a vaulting fee equal to 10x the current coin rate.
+    ///         The caller must have previously approved this contract to spend their ERC20 Digil Coins.
     /// @dev
     ///  Lifecycle for the attached contract token:
     ///  - When this function succeeds:
