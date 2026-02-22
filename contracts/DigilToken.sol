@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.33;
+pragma solidity ^0.8.34;
 
 // Import OpenZeppelin contracts for standard ERC721 functionality, ownership, safe transfers, counters, ERC20 interfacing, and reentrancy protection.
 import {ERC721} from "@openzeppelin/contracts/token/ERC721/ERC721.sol";
