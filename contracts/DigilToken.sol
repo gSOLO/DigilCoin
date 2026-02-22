@@ -325,7 +325,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // 0:   identifier
         // 1:   strong affinity
         // 2:   strong affinity
-        // 3:   weak affinity
+        // 3:   moderate affinity
         // 4:   delimiter
         // 5-9: simplified name
         bytes[21] memory data;
@@ -1612,8 +1612,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             BuffState storage buff = t.buff;
             if (buff.amplification > 0 && block.timestamp < buff.expiresAt) {
                 // Calculate bonus: (Total * Multiplier) / 100
-                uint256 boost = (totalIncoming * t.buff.amplification) / 100;
-                totalIncoming += boost;
+                totalIncoming += (totalIncoming * t.buff.amplification) / 100;
             }
             
             t.activeCharge += totalIncoming;
@@ -1717,7 +1716,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Proxy contributions require a value contribution
         if (!link && contributor != _msgSender()) {
             // Determine the minimum required value for a proxy contribution.
-            uint256 requiredValue = t.incrementalValue > 0 ? t.incrementalValue : _incrementalValue;
+            uint256 requiredValue = _max(t.incrementalValue, _incrementalValue);
 
             // For direct proxy calls, we revert if funds are insufficient.
             if (value < requiredValue) revert InsufficientFunds(requiredValue);
@@ -2101,8 +2100,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.discharging = true;
         
         // Run the distribution phase based on mode (may require multiple calls).
-        bool distributionComplete = _distribute(tokenId, !t.active);
-        if (!distributionComplete) {
+        if (!_distribute(tokenId, !t.active)) {
             return false;
         }
 
@@ -2239,9 +2237,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         
         // Set flag at start
         t.activating = true;
-        bool distributionComplete = _distribute(tokenId, false);
         
-        if (!distributionComplete) {
+        if (!_distribute(tokenId, false)) {
             return false;
         }
         
@@ -2339,26 +2336,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///              the underlying ERC20 decimals), after applying early-link
     ///              discounts and any active buff discount.
     function _linkCoinCost(uint8 efficiency, uint256 linkCount, bool isNewLink, uint8 buffBonus) internal view returns (uint256 cost) {
-        // Existing scaling logic: efficiency plus triangular escalation.
+        // Scaling logic: efficiency plus triangular escalation.
         uint256 linkScale = 200 / linkCount;
         uint256 e = efficiency > linkScale ? efficiency - linkScale : 0;
-        uint256 baseCost = (uint256(efficiency) + (e * (e + 1) / 2)) * _coinRate;
+        cost = (uint256(efficiency) + (e * (e + 1) / 2)) * _coinRate;
 
         // Apply buff discount first
         if (buffBonus > 0) {
-            baseCost = baseCost * 100 / (100 + uint256(buffBonus));
+            cost = cost * 100 / (100 + uint256(buffBonus));
         }
 
-        cost = baseCost;
-
-        if (isNewLink) {
-            // How many links already existed *before* adding this one?
-            uint256 existingCount = linkCount - 1;
-
+        if (isNewLink && linkCount <= 2) {
             // First and second user-defined links are 50% off, regardless of planar status.
-            if (existingCount <= 1) {
-                cost = baseCost /  AFFINITY_REDUCTION;
-            }
+            cost = cost / AFFINITY_REDUCTION;
         }
     }
 
@@ -2533,8 +2523,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // or the source is an ethereal plane (aether, world), provide a bonus of 1x the efficiency.
             _bonus = efficiencyBase;
         } else if (s[3] == target) {
-            // If the source has weak affinity with the destination, provide a bonus of .5x the efficiency.
+            // If the source has moderate affinity with the destination, provide a bonus of .5x the efficiency.
             _bonus = efficiencyBase / AFFINITY_REDUCTION;
+        } else if (s[4] == target) {
+            // If the source has weak affinity with the destination, provide a bonus of .25x the efficiency.
+            _bonus = efficiencyBase / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
         }
 
         // Base Bonus Multipliers
@@ -2884,7 +2877,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(t.active, "DIGIL: Token Not Active");
 
         // Use the greater of the token's incremental value or the global minimum.
-        uint256 iv = t.incrementalValue > 0 ? t.incrementalValue : _incrementalValue;
+        uint256 iv = _max(t.incrementalValue, _incrementalValue);
 
         // Premium cost: 2x the normal ETH-per-coin-unit rate.
         // `coins` is in "coin units" (scaled by _coinMultiplier), so we normalize by _coinMultiplier.
