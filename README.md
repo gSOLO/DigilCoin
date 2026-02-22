@@ -578,7 +578,7 @@ Returns information about vaulted external ERC721 tokens:
 ```
 - If `contractTokenAddress` is non-zero, this Digil wrapped an external NFT.
 - `recallable` indicates if `recallToken` can currently be called.
-- If `vaulted` if false, but `contractTokenAddress`/`externalTokenId` are non-zero, the external token has been recalled.
+- If `vaulted` is false, but `contractTokenAddress`/`externalTokenId` are non-zero, the external token has been recalled.
 
 ---
 
