@@ -322,34 +322,35 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Define planar affinity data for each plane. This is used for calculating link bonuses
         // The format encodes strong and weak affinities for compact storage
-        // 0:   identifier
-        // 1:   strong affinity
-        // 2:   strong affinity
-        // 3:   moderate affinity
-        // 4:   delimiter
-        // 5-9: simplified name
+        // 0:       identifier
+        // 1:       strong affinity
+        // 2:       strong affinity
+        // 3:       moderate affinity
+        // 4:       weak affinity
+        // 5:       delimiter
+        // 6-10:    simplified name
         bytes[21] memory data;
-        data[0] =  bytes("    |     ");      // null
-        data[1] =  bytes("xrot|X    ");     // void
-        data[2] =  bytes("roxy|K.N  ");  // karma
-        data[3] =  bytes("orxy|K.S  ");   // kaos
-        data[4] =  bytes("faly|X.S  ");   // fire
-        data[5] =  bytes("afly|X.E  ");   // air
-        data[6] =  bytes("ewny|X.N  ");   // earth
-        data[7] =  bytes("weny|X.W  ");   // water
-        data[8] =  bytes("im-y|X.NW ");  // ice
-        data[9] =  bytes("lfay|X.NE ");  // lightning
-        data[10] = bytes("mi-y|X.NNE"); // metal
-        data[11] = bytes("newy|X.NNW"); // nature
-        data[12] = bytes("hrdy|X.SE ");  // harmony
-        data[13] = bytes("dohy|X.SW ");  // discord
-        data[14] = bytes("podt|K.W  ");   // entropy
-        data[15] = bytes("grht|K.E  ");   // negentropy/exergy
-        data[16] = bytes("kpgt|K    ");     // magick/kosmos
-        data[17] = bytes("txy-|K.X  ");   // aether
-        data[18] = bytes("yxt-|X.R  ");   // external reality/world
-        data[19] = bytes("----|.XR  ");   // extended reality
-        data[20] = bytes("----|.ILXR"); // digil reality
+        data[0] =  bytes("     |     "); // null
+        data[1] =  bytes("xrotk|X    "); // void
+        data[2] =  bytes("roxyh|K.N  "); // karma
+        data[3] =  bytes("orxyd|K.S  "); // kaos
+        data[4] =  bytes("falym|X.S  "); // fire
+        data[5] =  bytes("aflyn|X.E  "); // air
+        data[6] =  bytes("ewnyf|X.N  "); // earth
+        data[7] =  bytes("wenyi|X.W  "); // water
+        data[8] =  bytes("im-yw|X.NW "); // ice
+        data[9] =  bytes("lfaye|X.NE "); // lightning
+        data[10] = bytes("mi-yl|X.NNE"); // metal
+        data[11] = bytes("newya|X.NNW"); // nature
+        data[12] = bytes("hrdyg|X.SE "); // harmony
+        data[13] = bytes("dohyp|X.SW "); // discord
+        data[14] = bytes("podto|K.W  "); // entropy
+        data[15] = bytes("grhtr|K.E  "); // negentropy/exergy
+        data[16] = bytes("kpgtx|K    "); // magick/kosmos
+        data[17] = bytes("txy--|K.X  "); // aether
+        data[18] = bytes("yxt--|X.R  "); // external reality/world
+        data[19] = bytes("-----|.XR  "); // extended reality
+        data[20] = bytes("-----|.ILXR"); // digil reality
         
         // Mint the initial 21 "Plane" tokens (IDs 0-20)
         // Unchecked block used to mint the initial tokens without overflow checks (safe here due to known bounds)
