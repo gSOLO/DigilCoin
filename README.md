@@ -578,7 +578,7 @@ Returns information about vaulted external ERC721 tokens:
 ```
 - If `contractTokenAddress` is non-zero, this Digil wrapped an external NFT.
 - `recallable` indicates if `recallToken` can currently be called.
-- If `vaulted` if false, but `contractTokenAddress`/`externalTokenId` are non-zero, the external token has been recalled.
+- If `vaulted` is false, but `contractTokenAddress`/`externalTokenId` are non-zero, the external token has been recalled.
 
 ---
 
@@ -603,19 +603,34 @@ This is the creation of **Sympathetic Magic** between nodes. By linking Digils, 
 - Access:
   - If destination token is `restricted`, the **caller** must be whitelisted on the destination token.
 - Affinity bonus:
-  - Looks at the tokens’ **foundational planes** (the first link entry if present) and reads their compact `data` bytes.
-  - Strong match (`s[1] == d[0]` or `s[2] == d[0]`): base bonus `= 2 × efficiency`.
-  - Same plane or ethereal source (IDs > 16): base bonus `= 1 × efficiency`.
-  - Weak match (`s[3] == d[0]`): base bonus `= efficiency / 2`.
-  - No base bonus → final bonus is 0.
-  - Multipliers:
-    - Ethereal source (`sourceId > 16`): bonus × 4.
-    - Energy source (`12–16`) or destination = World (18): bonus × 2.
-  - Charge comparison:
-    - If destination’s `activeCharge` > source’s, reduce bonus by half (`/ AFFINITY_REDUCTION`), favoring flows from stronger to weaker planes.
+  - Looks at the tokens’ **foundational planes** (first entry in each token’s `links[]`, when that entry is planar) and compares compact affinity bytes stored in planar token `data`.
+  - The implementation computes a **percent-like bonus integer** (`affinityBonus`) that is later applied during active propagation as:
+
+    ```text
+    linkedBonusCoins = coins * affinityBonus / 100
+    ```
+
+  - Base affinity tiers from `_affinityBonus(sourcePlane, destinationPlane, efficiency)`:
+    - **Strong affinity** (`s[1] == d[0]` or `s[2] == d[0]`): `base = efficiency × 2`.
+    - **Moderate affinity** (`s[3] == d[0]`): `base = efficiency / 2`.
+    - **Weak affinity** (`s[4] == d[0]`): `base = efficiency / 4`.
+    - **Neutral/same-plane fallback** (`sourceId == destinationId`) and **ethereal baseline** (`sourceId > 16`): `base = efficiency`.
+    - Otherwise: `base = 0`.
+  - Multipliers applied after base tiering:
+    - Ethereal source (`sourceId > 16`): `bonus × 4`.
+    - Energy source (`12–16`) **or** destination is World (`destinationId == 18`): `bonus × 2`.
+  - Charge-balance dampener:
+    - If destination `activeCharge` is greater than source `activeCharge`, final bonus is halved (`bonus / 2`).
+  - Important implementation note:
+    - `_updateLinkAffinity` only **raises** stored affinity (`max(oldBonus, newlyComputedBonus)`), so re-linking/upgrading cannot decrease a previously discovered stronger resonance.
 - **Attunement**:
-  - If the source token has an active **Attunement Buff** (mimicking a specific plane), the contract calculates the affinity bonus twice: once using the natural plane, and once using the attunement plane.
-  - The **larger** of the two bonuses is applied. This ensures attunement is always beneficial or neutral, never detrimental.
+  - If either side has an active **Attunement Buff**, affinity checks can substitute the natural foundational plane with the attuned plane.
+  - The contract evaluates up to four combinations and keeps the best result:
+    - source natural → destination natural
+    - source natural → destination attuned
+    - source attuned → destination natural
+    - source attuned → destination attuned
+  - The **largest** computed bonus is retained, so attunement is monotonic (beneficial or neutral, not harmful).
 - Final link parameters:
   - `linkEfficiency[linkId].base = efficiency`
   - `linkEfficiency[linkId].affinityBonus = max(existingAffinityBonus, computedBonus)`
