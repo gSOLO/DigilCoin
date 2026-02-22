@@ -196,11 +196,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token that was updated
     event Update(uint256 indexed tokenId);
 
-    /// @notice Emitted when a token is in the process of being activated or discharged.
-    /// @dev    Check with tokenData to get an idea of its completion progress
-    /// @param  tokenId The ID of the token that was or is being activated
-    event Batch(uint256 indexed tokenId);
-
     /// @notice Emitted when a token is activated.
     /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being activated
@@ -334,26 +329,26 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // 4:   delimiter
         // 5-9: simplified name
         bytes[21] memory data;
-        data[0] =  bytes("    |");      // null
-        data[1] =  bytes("xrot|X");     // void
-        data[2] =  bytes("roxy|K.N ");  // karma
-        data[3] =  bytes("orxy|K.S");   // kaos
-        data[4] =  bytes("faly|X.S");   // fire
-        data[5] =  bytes("afly|X.E");   // air
-        data[6] =  bytes("ewny|X.N");   // earth
-        data[7] =  bytes("weny|X.W");   // water
-        data[8] =  bytes("im-y|X.NW");  // ice
-        data[9] =  bytes("lfay|X.NE");  // lightning
+        data[0] =  bytes("    |     ");      // null
+        data[1] =  bytes("xrot|X    ");     // void
+        data[2] =  bytes("roxy|K.N  ");  // karma
+        data[3] =  bytes("orxy|K.S  ");   // kaos
+        data[4] =  bytes("faly|X.S  ");   // fire
+        data[5] =  bytes("afly|X.E  ");   // air
+        data[6] =  bytes("ewny|X.N  ");   // earth
+        data[7] =  bytes("weny|X.W  ");   // water
+        data[8] =  bytes("im-y|X.NW ");  // ice
+        data[9] =  bytes("lfay|X.NE ");  // lightning
         data[10] = bytes("mi-y|X.NNE"); // metal
         data[11] = bytes("newy|X.NNW"); // nature
-        data[12] = bytes("hrdy|X.SE");  // harmony
-        data[13] = bytes("dohy|X.SW");  // discord
-        data[14] = bytes("podt|K.W");   // entropy
-        data[15] = bytes("grht|K.E");   // negentropy/exergy
-        data[16] = bytes("kpgt|K");     // magick/kosmos
-        data[17] = bytes("txy-|K.X");   // aether
-        data[18] = bytes("yxt-|X.R");   // external reality/world
-        data[19] = bytes("----|.XR");   // extended reality
+        data[12] = bytes("hrdy|X.SE ");  // harmony
+        data[13] = bytes("dohy|X.SW ");  // discord
+        data[14] = bytes("podt|K.W  ");   // entropy
+        data[15] = bytes("grht|K.E  ");   // negentropy/exergy
+        data[16] = bytes("kpgt|K    ");     // magick/kosmos
+        data[17] = bytes("txy-|K.X  ");   // aether
+        data[18] = bytes("yxt-|X.R  ");   // external reality/world
+        data[19] = bytes("----|.XR  ");   // extended reality
         data[20] = bytes("----|.ILXR"); // digil reality
         
         // Mint the initial 21 "Plane" tokens (IDs 0-20)
@@ -2527,18 +2522,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Cache the destination byte to avoid repeated storage reads
         bytes1 target = d[0];
+        uint256 efficiencyBase = uint256(efficiency);
 
         // Base Bonus Calculation
         if (s[1] == target || s[2] == target) {
             // If the source has strong affinity with the destination, provide a bonus of 2x the efficiency.
-            _bonus = uint256(efficiency) * AFFINITY_BOOST;
+            _bonus = efficiencyBase * AFFINITY_BOOST;
         } else if (sourceId == destinationId || sourceId > 16) {
             // If the source is the same as the destination,
             // or the source is an ethereal plane (aether, world), provide a bonus of 1x the efficiency.
-            _bonus = uint256(efficiency);
+            _bonus = efficiencyBase;
         } else if (s[3] == target) {
             // If the source has weak affinity with the destination, provide a bonus of .5x the efficiency.
-            _bonus = uint256(efficiency) / AFFINITY_REDUCTION;
+            _bonus = efficiencyBase / AFFINITY_REDUCTION;
         }
 
         // Base Bonus Multipliers
