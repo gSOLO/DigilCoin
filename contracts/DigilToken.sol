@@ -85,7 +85,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 value;      // Ether value contributed
         uint256 epoch;      // Logical contribution epoch for the token
         bool exists;        // True if the contributor exists (has contributed)
-        bool distributed;   // True if the contribution has been processed during an activation/discharge
         bool whitelisted;   // True if the contributor is whitelisted
     }
 
@@ -914,7 +913,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         c.value = 0;
         c.charge = 0;
         c.discharge = 0;
-        c.distributed = true;
 
         emit Reclaim(addr, tokenId, value);
 
@@ -1156,15 +1154,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return discharge The amount of coin units this address has contributed to the token's charge, excluding affinity bonuses.
     /// @return value The amount of native value (in wei) attributed to this contributor on this token.
     /// @return exists True if a contribution record currently exists for this contributor.
-    /// @return distributed True if this contributor has already been processed in the current distribution epoch.
     /// @return whitelisted True if this contributor is whitelisted for this token (relevant when the token is restricted).
     /// @return epoch The logical contribution epoch this record belongs to.
-    function tokenContribution(uint256 tokenId, address contributor) external view returns (uint256 charge, uint256 discharge, uint256 value, bool exists, bool distributed, bool whitelisted, uint256 epoch) {
+    function tokenContribution(uint256 tokenId, address contributor) external view returns (uint256 charge, uint256 discharge, uint256 value, bool exists, bool whitelisted, uint256 epoch) {
         _checkTokenExists(tokenId);
         
         Token storage t = _tokens[tokenId];
         TokenContribution storage c = t.contributions[contributor];
-        return (c.charge, c.discharge, c.value, c.exists, c.distributed, c.whitelisted, c.epoch);
+        return (c.charge, c.discharge, c.value, c.exists, c.whitelisted, c.epoch);
     }
 
     /// @notice Retrieves link information for a token at a specific index.
@@ -1688,7 +1685,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             c.discharge = 0;
             c.value = 0;
             c.exists = false;
-            c.distributed = false;
             // NOTE: c.whitelisted is intentionally preserved across epochs.
         }
     }
@@ -1798,14 +1794,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 t.contributors.push(contributor);
             }
 
-            if (c.distributed) {
-                // Existing contributor already received a distribution in this epoch, reset
-                c.distributed = false;
-                c.charge = 0;
-                c.discharge = 0;
-                c.value = 0;
-            }    
-
             // Coins + required value are tied together at the Charge level
             c.charge += coins;
             c.discharge += realCoins;
@@ -1863,144 +1851,153 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Token Distribution and Discharge
 
     /// @dev Core batch distribution routine used by both {activateToken} and
-    ///      {dischargeToken}.
+    /// {dischargeToken}.
     ///
-    ///      High-level behavior:
-    ///      - Iterates over `t.contributors` in batches, up to `_batchSize` entries
-    ///        per call for discharge mode (`discharge = true`), or `_batchSize * 2`
-    ///        for activation-style distribution (`discharge = false`).
-    ///      - Uses `t.distributionIndex` as a cursor so long-running operations can
-    ///        be continued across multiple transactions.
-    ///      - On each contributor:
-    ///          * In discharge mode (`discharge = true`), their recorded `value` and
-    ///            `charge` are returned to them via the global distribution system
-    ///            ({_addValue}) and the token’s contribution state is logically
-    ///            unwound for this epoch.
-    ///          * In activation-style mode (`discharge = false`), contributors receive
-    ///            value distributions, and the token’s remaining `distributionCharge`
-    ///            is later converted into `activeCharge`.
-    ///      - When the final batch is processed (`cEndIndex == contributors.length`):
-    ///          * `distributionIndex`, `distributionCharge`, and `distributionValue` are
-    ///            reset to zero.
-    ///          * Any remaining `t.value` is swept into distributions for the
-    ///            token owner (and contributors, in non-discharge mode).
-    ///          * For non-discharge mode, any captured `distributionCharge` is moved
-    ///            into `t.activeCharge`.
+    /// High-level behavior (post-Fusaka optimized version):
+    /// - Captures the full remaining `charge` and `value` into `distributionCharge`
+    ///   and `distributionValue` **once per cycle** (on the very first call).
+    /// - Processes contributors in fixed-size batches using a memory snapshot
+    ///   to eliminate repeated cold SLOADs on the contributors array.
+    /// - Activation path: pays proportional value to each contributor and
+    ///   accumulates the remainder for the final owner distribution.
+    /// - Discharge path: returns the contributor’s full recorded value and
+    ///   discharge coins.
+    /// - Uses `distributionIndex` as a persistent cursor so the operation can
+    ///   safely span multiple transactions.
+    /// - When the final batch completes: resets all batch state, converts
+    ///   captured charge to `activeCharge` (activation), marks attached
+    ///   contract tokens recallable, and distributes remaining value.
+    /// - After a full cycle the caller clears the contributors array and
+    ///   bumps `contributionEpoch` (logical reset of all records).
     ///
-    ///      Attached contract token lifecycle:
-    ///      - At the *end* of a full distribution cycle with a `false` `discharge` flag,
-    ///        this function checks for an attached contract token:
-    ///          * If `t.contractTokenAddress != address(0)` and
-    ///            `_contractTokenExists[contractTokenAddress][externalTokenId]` is `true`
-    ///            (the external ERC721 is still vaulted), it sets
-    ///            `_contractTokens[contractTokenAddress][tokenId].recallable = true`.
-    ///      - This marks the external token as *recallable* for Digils that have
-    ///        just completed an activation-style distribution via {activateToken}.
-    function _distribute(uint256 tokenId, bool discharge) internal returns (bool) {
-        Token storage t = _tokens[tokenId];
+    /// @param tokenId The ID of the token whose contributions are being processed.
+    /// @param discharge True = discharge mode (full unwind to contributors),
+    ///                  false = activation mode (proportional value + activeCharge).
+    /// @return completed True if this call finished the entire distribution cycle,
+    ///                   false if more calls are required to process remaining contributors.
+    function _distribute(uint256 tokenId, bool discharge) internal returns (bool completed) {
+        Token storage token = _tokens[tokenId];
 
-        // Capture all remaining charge into distributionCharge once per cycle.
-        uint256 dCharge = t.distributionCharge;
-        if (t.charge >= dCharge) {
-            dCharge = t.distributionCharge = t.charge;
-            t.charge = 0;
+        // Capture full remaining charge/value at start of cycle (only once).
+        // This is safe because direct charges are blocked while distributionIndex > 0.
+        if (token.distributionCharge == 0) {
+            token.distributionCharge = token.charge;
+            token.charge = 0;
+        }
+        if (token.distributionValue == 0) {
+            token.distributionValue = token.value;
         }
 
-        // Capture all remaining value into distributionValue once per cycle.
-        uint256 dValue = t.distributionValue;
-        if (t.value >= dValue) {
-            dValue = t.distributionValue = t.value;
+        // Cache expensive external call once
+        address tokenOwner = ownerOf(tokenId);
+
+        uint256 distributionIndex = token.distributionIndex;
+        uint256 contributorsCount = token.contributors.length;
+
+        // Determine how many contributors to process in this batch
+        uint256 currentBatchSize = _batchSize;
+        if (distributionIndex + currentBatchSize > contributorsCount) {
+            currentBatchSize = contributorsCount - distributionIndex;
         }
 
-        // Full-precision ratio so we never over-distribute dValue.
-        uint256 incrementalValue = dCharge > 0 ? (dValue * _coinMultiplier) / dCharge : 0;
-
-        uint256 dIndex = t.distributionIndex;
-        uint256 distribution;
-
-        uint256 contributorsLength = t.contributors.length;
-        uint256 cEndIndex = dIndex + (discharge ? _batchSize : _batchSize * 2);
-        if (cEndIndex > contributorsLength) {
-            cEndIndex = contributorsLength;
+        // incrementalValue is only needed for the activation path
+        uint256 incrementalValuePerCharge = 0;
+        if (!discharge && token.distributionCharge > 0) {
+            incrementalValuePerCharge = (token.distributionValue * _coinMultiplier) / token.distributionCharge;
         }
 
-        for (; dIndex < cEndIndex; dIndex++) {
-            address contributor = t.contributors[dIndex];
+        // Process the batch via helper (separate stack frame → avoids stack too deep)
+        uint256 ownerDistributionAmount = _processBatch(token, distributionIndex, currentBatchSize, incrementalValuePerCharge, discharge);
 
-            TokenContribution storage contribution = t.contributions[contributor];
-            if (contribution.distributed) {
-                // Already processed in this epoch; skip.
-                continue;
-            }
-            contribution.distributed = true;
+        // Advance cursor for next call (if any)
+        distributionIndex += currentBatchSize;
+        token.distributionIndex = distributionIndex;
+
+        // === FINAL BATCH COMPLETED? ===
+        if (distributionIndex >= contributorsCount) {
+            // Reset all batch state
+            token.distributionIndex = 0;
+            uint256 capturedCharge = token.distributionCharge;
+            token.distributionCharge = 0;
+            token.distributionValue = 0;
+
+            uint256 remainingTokenValue = token.value;
+            token.value = 0;
 
             if (discharge) {
-                // For discharge, return contributed value back to the contributor.
-                _addValue(contributor, contribution.value, contribution.discharge);
+                _addDistributedValue(tokenOwner, remainingTokenValue);
             } else {
-                // Otherwise, accumulate distribution for the token owner.
-                distribution += contribution.value;
-
-                // A percentage of the token's intrinsic value is sent to the contributor.
-                uint256 distributableTokenValue =
-                    incrementalValue * contribution.charge / _coinMultiplier;
-
-                // Clamp to available t.value.
-                if (distributableTokenValue > t.value) {
-                    distributableTokenValue = t.value;
+                if (capturedCharge > 0) {
+                    token.activeCharge += capturedCharge;
+                    emit ActiveCharge(tokenId, capturedCharge);
                 }
+                _addDistributedValue(tokenOwner, ownerDistributionAmount + remainingTokenValue);
 
-                t.value -= distributableTokenValue;
-                _addDistributedValue(contributor, distributableTokenValue);
-            }
-        }
-
-        if (cEndIndex == contributorsLength) {
-            // Finalize distribution if all contributors have been processed.
-            t.distributionIndex = 0;
-            t.distributionCharge = 0;
-            t.distributionValue = 0;
-
-            uint256 tValue = t.value;
-            t.value = 0;
-
-            address owner_ = ownerOf(tokenId);
-
-            if (discharge) {
-                // For discharge, return any undistributed value to the token owner.
-                _addDistributedValue(owner_, tValue);
-            } else {
-                if (dCharge > 0) {
-                    t.activeCharge += dCharge;
-                    emit ActiveCharge(tokenId, dCharge);
-                }
-
-                // Create a distribution for the token owner and include remaining value.
-                _addDistributedValue(owner_, distribution + tValue);
-
-                // Mark attached contract token recallable once per full cycle ---
-                // Uses _contractTokenExists as the single source of truth for "still vaulted".
-                if (t.contractTokenAddress != address(0)) {
-                    ContractToken storage contractToken = _contractTokens[t.contractTokenAddress][tokenId];
-                    if (_contractTokenExists[t.contractTokenAddress][contractToken.tokenId]) {
-                        contractToken.recallable = true;
+                // Contract-token recallable logic
+                if (token.contractTokenAddress != address(0)) {
+                    ContractToken storage ct = _contractTokens[token.contractTokenAddress][tokenId];
+                    if (_contractTokenExists[token.contractTokenAddress][ct.tokenId]) {
+                        ct.recallable = true;
                     }
                 }
             }
-
-            return true;
+            return true;   // cycle complete
         }
 
-        // Partial progress: save index and optionally flush partial owner distribution.
-        t.distributionIndex = dIndex;
-
-        if (!discharge && distribution > 0) {
-            _addDistributedValue(ownerOf(tokenId), distribution);
+        // Partial progress (activation path only)
+        if (!discharge && ownerDistributionAmount > 0) {
+            _addDistributedValue(tokenOwner, ownerDistributionAmount);
         }
 
-        return false;
+        return false;   // more calls needed
     }
 
+    /// @dev Helper that performs the memory batch snapshot + hot loop.
+    /// Extracted solely to stay under the 16-slot EVM stack limit.
+    /// Returns the total amount that should be distributed to the owner
+    /// in activation mode (0 for discharge mode).
+    ///
+    /// @param token Storage reference to the Token being processed.
+    /// @param startIndex Starting index in the contributors array for this batch.
+    /// @param toProcess Number of contributors to process in this batch.
+    /// @param incrementalValuePerCharge Value per coin unit (activation path only).
+    /// @param discharge True = discharge mode, false = activation mode.
+    /// @return ownerDistributionAmount Total value accumulated for the token owner
+    ///                                 in activation mode (always 0 in discharge mode).
+    function _processBatch(Token storage token, uint256 startIndex, uint256 toProcess, uint256 incrementalValuePerCharge, bool discharge) private returns (uint256 ownerDistributionAmount) {
+        // We copy the addresses once into memory instead of doing a cold SLOAD
+        // on every iteration of the hot loop.
+        address[] memory batchContributors = new address[](toProcess);
+        for (uint256 i = 0; i < toProcess; ++i) {
+            batchContributors[i] = token.contributors[startIndex + i];
+        }
+
+        ownerDistributionAmount = 0;   // only used in activation path
+
+        // === HOT LOOP OVER MEMORY (no repeated storage reads) ===
+        for (uint256 i = 0; i < toProcess; ++i) {
+            address contributor = batchContributors[i];
+            TokenContribution storage contribution = token.contributions[contributor];
+
+            if (discharge) {
+                // Discharge: full unwind back to contributor
+                _addValue(contributor, contribution.value, contribution.discharge);
+            } else {
+                // Activation: accumulate for final owner payout
+                ownerDistributionAmount += contribution.value;
+
+                uint256 distributableValue =
+                    incrementalValuePerCharge * contribution.charge / _coinMultiplier;
+
+                if (distributableValue > token.value) {
+                    distributableValue = token.value;
+                }
+                unchecked { token.value -= distributableValue; }
+
+                _addDistributedValue(contributor, distributableValue);
+            }
+        }
+    }
 
     /// @notice Discharges a token, settling contributions and redistributing any remaining
     ///         active charge into its link graph.
