@@ -45,7 +45,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     bool private _planarTransferActive;                         // When true, a temporary transfer window is open to move planar tokens from the current owner to the new owner during `transferOwnership`.
 
     // Batch operations limiter
-    uint16 private constant DEFAULT_BATCH_SIZE = 256;           // Default number of items to process in a single batch operation
+    uint16 private constant DEFAULT_BATCH_SIZE = 128;           // Default number of items to process in a single batch operation
     uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Configurable batch size for distribution or discharge operations
     uint16 private constant MIN_BATCH_SIZE = 32;                // Minimum number of items to process in a single batch operation
     uint16 private constant MAX_BATCH_SIZE = 1024;              // Maximum number of items to process in a single batch operation
