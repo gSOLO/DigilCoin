@@ -1952,32 +1952,26 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return false;   // more calls needed
     }
 
-    /// @dev Helper that performs the memory batch snapshot + hot loop.
-    /// Extracted solely to stay under the 16-slot EVM stack limit.
-    /// Returns the total amount that should be distributed to the owner
-    /// in activation mode (0 for discharge mode).
-    ///
-    /// @param token Storage reference to the Token being processed.
+    /// @dev Processes one batch of contributors directly from storage.
+    /// @param t Storage reference to the Token being processed.
     /// @param startIndex Starting index in the contributors array for this batch.
     /// @param toProcess Number of contributors to process in this batch.
     /// @param incrementalValuePerCharge Value per coin unit (activation path only).
     /// @param discharge True = discharge mode, false = activation mode.
     /// @return ownerDistributionAmount Total value accumulated for the token owner
     ///                                 in activation mode (always 0 in discharge mode).
-    function _processBatch(Token storage token, uint256 startIndex, uint256 toProcess, uint256 incrementalValuePerCharge, bool discharge) private returns (uint256 ownerDistributionAmount) {
-        // We copy the addresses once into memory instead of doing a cold SLOAD
-        // on every iteration of the hot loop.
-        address[] memory batchContributors = new address[](toProcess);
-        for (uint256 i = 0; i < toProcess; ++i) {
-            batchContributors[i] = token.contributors[startIndex + i];
-        }
+    function _processBatch(Token storage t, uint256 startIndex, uint256 toProcess, uint256 incrementalValuePerCharge, bool discharge) private returns (uint256 ownerDistributionAmount) {
+        // Cache both storage references once at the function entry.
+        // This eliminates repeated slot derivations inside the hot loop.
+        address[] storage contributors = t.contributors;
+        mapping(address => TokenContribution) storage contributions = t.contributions;
 
         ownerDistributionAmount = 0;   // only used in activation path
 
-        // === HOT LOOP OVER MEMORY (no repeated storage reads) ===
+        // === HOT LOOP - DIRECT STORAGE READS (fully cached) ===
         for (uint256 i = 0; i < toProcess; ++i) {
-            address contributor = batchContributors[i];
-            TokenContribution storage contribution = token.contributions[contributor];
+            address contributor = contributors[startIndex + i];
+            TokenContribution storage contribution = contributions[contributor];
 
             if (discharge) {
                 // Discharge: full unwind back to contributor
@@ -1986,13 +1980,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 // Activation: accumulate for final owner payout
                 ownerDistributionAmount += contribution.value;
 
-                uint256 distributableValue =
-                    incrementalValuePerCharge * contribution.charge / _coinMultiplier;
+                uint256 distributableValue = incrementalValuePerCharge * contribution.charge / _coinMultiplier;
 
-                if (distributableValue > token.value) {
-                    distributableValue = token.value;
+                if (distributableValue > t.value) {
+                    distributableValue = t.value;
                 }
-                unchecked { token.value -= distributableValue; }
+                unchecked { t.value -= distributableValue; }
 
                 _addDistributedValue(contributor, distributableValue);
             }
