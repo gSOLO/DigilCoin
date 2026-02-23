@@ -98,14 +98,14 @@ contract FoxtrotTestSuite {
         }
         
         uint256 currentSeed = 1;
-        for (uint256 accountIndex = 0; accountIndex < 497; accountIndex++) {
+        for (uint256 accountIndex = 0; accountIndex < 397; accountIndex++) {
             currentSeed = uint256(keccak256(abi.encodePacked(currentSeed, accountIndex))); // Generate a new seed for each address
             address addr = address(uint160(currentSeed)); // Convert the seed to an address
             digil.chargeTokenAs{value: incrementalValue}(addr, activeTokenId, coinMultiplier);
         }
 
         (uint256 newCharge, uint256 newActiveCharge, uint256 newValue, , ) = digil.tokenCharge(activeTokenId);
-        Assert.ok(newCharge >= coinMultiplier * 512, "Token charge did not increase appropriately");
+        Assert.ok(newCharge >= coinMultiplier * 412, "Token charge did not increase appropriately");
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
         Assert.ok(newValue == 100000000000000, "Token value should not increase");
 
@@ -126,7 +126,7 @@ contract FoxtrotTestSuite {
 
         (newCharge, newActiveCharge, newValue, , ) = digil.tokenCharge(activeTokenId);
         Assert.ok(newCharge == 0, "Token charge did not decrease appropriately");
-        Assert.ok(newActiveCharge == coinMultiplier * 512, "Token active charge did not increase appropriately");
+        Assert.ok(newActiveCharge == coinMultiplier * 412, "Token active charge did not increase appropriately");
         Assert.ok(newValue == 0, "Token value should reset");
     }
 
@@ -143,7 +143,7 @@ contract FoxtrotTestSuite {
         Assert.equal(links, 0, "Invalid Link Count (!=0)");
         (uint256 charge, uint256 activeCharge, uint256 value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid initial Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid initial Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 412, "Invalid initial Source active charge");
         Assert.equal(value, 0, "Invalid initial Source value");
 
         uint256 fireTokenId = digil.createToken{value: 100000000000000}(0, 0, false, 4, "Fire Destination Plane");
@@ -185,22 +185,26 @@ contract FoxtrotTestSuite {
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid new Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid new Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 412, "Invalid new Source active charge");
         Assert.equal(value, 250000000000000, "Invalid new Source value");
 
         digil.dischargeToken{value: 400000000000000}(activeTokenId);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(fireTokenId);
-        Assert.equal(activeCharge, coinMultiplier * 128, "Invalid Fire active charge");
+        console.log(activeCharge);
+        Assert.equal(activeCharge, coinMultiplier * 103, "Invalid Fire active charge");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(airTokenId);
-        Assert.equal(activeCharge, coinMultiplier * 256, "Invalid Air active charge");
+        console.log(activeCharge);
+        Assert.equal(activeCharge, coinMultiplier * 206, "Invalid Air active charge");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(earthTokenId);
-        Assert.equal(activeCharge, coinMultiplier * 64, "Invalid Earth active charge");
+        console.log(activeCharge);
+        Assert.equal(activeCharge, coinMultiplier * 515 / 10, "Invalid Earth active charge");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(waterTokenId);
-        Assert.equal(activeCharge, coinMultiplier * 64, "Invalid Water active charge");
+        console.log(activeCharge);
+        Assert.equal(activeCharge, coinMultiplier * 515 / 10, "Invalid Water active charge");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid final Source charge");

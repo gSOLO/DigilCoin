@@ -176,14 +176,14 @@ contract GammaTestSuite {
 
         for (uint256 accountIndex; accountIndex < 9; accountIndex++) {
             address contributor = TestsAccounts.getAccount(accountIndex);
-            (uint256 charge, uint256 value, bool exists, , , ) = digil.tokenContribution(tokenId, contributor);
+            (uint256 charge, , uint256 value, bool exists, , ) = digil.tokenContribution(tokenId, contributor);
             Assert.equal(charge, 0, "Invalid initial charge");
             Assert.equal(value, 0, "Invalid initial value");
             Assert.equal(exists, false, "Invalid initial exists");
 
             digil.chargeTokenAs{value: incrementalValue}(contributor, tokenId, coinMultiplier);
 
-            (charge, value, exists, , , ) = digil.tokenContribution(tokenId, contributor);
+            (charge, , value, exists, , ) = digil.tokenContribution(tokenId, contributor);
             Assert.equal(charge, coinMultiplier, "Invalid new charge");
             Assert.equal(value, incrementalValue, "Invalid new value");
             Assert.equal(exists, true, "Invalid new exists");
@@ -208,14 +208,12 @@ contract GammaTestSuite {
 
         for (uint256 accountIndex; accountIndex < 9; accountIndex++) {
             address contributor = TestsAccounts.getAccount(accountIndex);
-            (, , , bool distributed, , uint256 epoch) = digil.tokenContribution(tokenId, contributor);
-            Assert.equal(distributed, false, "Invalid initial distributed");
+            (, , , , , uint256 epoch) = digil.tokenContribution(tokenId, contributor);
             Assert.equal(epoch, 0, "Invalid initial epoch");
 
             digil.chargeTokenAs{value: incrementalValue}(contributor, tokenId, coinMultiplier);
 
-            (, , , distributed, , epoch) = digil.tokenContribution(tokenId, contributor);
-            Assert.equal(distributed, false, "Invalid new distributed");
+            (, , , , , epoch) = digil.tokenContribution(tokenId, contributor);
             Assert.equal(epoch, 0, "Invalid new epoch");
         }
 
@@ -225,14 +223,12 @@ contract GammaTestSuite {
 
         for (uint256 accountIndex; accountIndex < 9; accountIndex++) {
             address contributor = TestsAccounts.getAccount(accountIndex);
-            (, , , bool distributed, , uint256 epoch) = digil.tokenContribution(tokenId, contributor);
-            Assert.equal(distributed, true, "Invalid active distributed");
+            (, , , , , uint256 epoch) = digil.tokenContribution(tokenId, contributor);
             Assert.equal(epoch, 0, "Invalid active epoch");
 
             digil.chargeTokenAs{value: incrementalValue}(contributor, tokenId, coinMultiplier);
 
-            (, , , distributed, , epoch) = digil.tokenContribution(tokenId, contributor);
-            Assert.equal(distributed, false, "Invalid final distributed");
+            (, , , , , epoch) = digil.tokenContribution(tokenId, contributor);
             Assert.equal(epoch, 2, "Invalid final epoch");
         }
     }
