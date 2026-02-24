@@ -561,6 +561,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(msg.value);
     }
 
+    /// @notice Rescues random ERC20 tokens accidentally sent to the contract.
+    function sweep(address token) external onlyOwner {
+        require(token != address(_coins), "DIGIL: Cannot sweep system coins");
+        uint256 balance = IERC20Mintable(token).balanceOf(address(this));
+        IERC20Mintable(token).transfer(owner(), balance);
+    }
+
     /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
     /// @dev    Bonus coins are calculated based on the time since the last distribution.
     /// @return coins The number of coin units transferred to the sender.
@@ -2036,6 +2043,16 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return (ownerDistributionAmount, batchVolume);
     }
 
+    function _clearContributors(Token storage t) internal {
+        address[] storage contributors = t.contributors;
+        assembly {
+            sstore(contributors.slot, 0)
+        }
+        // Advance the contribution epoch so all existing TokenContribution entries
+        // are treated as reset the next time they are touched. Logically wipes old contribution records.
+        t.contributionEpoch += 1;
+    }
+
     /// @notice Discharges a token, settling contributions and redistributing any remaining
     ///         active charge into its link graph.
     /// @dev    This is a multi-transaction batch operation with "owner starts, anyone can continue":
@@ -2190,15 +2207,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // At this point, all contributions for the current epoch have been fully processed.
         // Clear the contributor list and logically reset all contribution state via epoch bump.
-        address[] storage contributors = t.contributors;
-        // Reset the length to 0 using assembly
-        assembly {
-            sstore(contributors.slot, 0)
-        }
-
-        // Advance the contribution epoch so all existing TokenContribution entries
-        // are treated as reset the next time they are touched.
-        t.contributionEpoch += 1;
+        _clearContributors(t);
 
         // Clear any temporary buff state, but preserve persistent appearance (style/cosmetics/colors).
         uint120 persistedAppearance = t.buff.appearance;
@@ -2279,14 +2288,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         t.activating = false;
 
         // Clear the contributor list to prevent gas bloat ("Ghost Contributors")
-        address[] storage contributors = t.contributors;
-        // Reset the length to 0 using assembly
-        assembly {
-            sstore(contributors.slot, 0)
-        }
-
-        // Advance epoch to logically wipe old contribution records
-        t.contributionEpoch += 1;
+        _clearContributors(t);
 
         // Consume PRIMED after a successful activation, if present.
         if (primed) {
