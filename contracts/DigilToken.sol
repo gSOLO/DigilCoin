@@ -1447,6 +1447,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 emit Restrict(tokenId);
             }
             // If restricting is being disabled, no additional payment is required.
+
+            t.lastActivity = block.timestamp;
         }
 
         // Add any sent Ether as token value (even if toggle did not change).
