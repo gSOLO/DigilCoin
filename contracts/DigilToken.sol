@@ -562,8 +562,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Rescues random ERC20 tokens accidentally sent to the contract.
+    /// @dev    Transfers the full balance of the specified token to the contract owner.
+    ///         Explicitly prevents sweeping the system's native `_coins` token to protect
+    ///         protocol solvency.
+    /// @param  token The contract address of the ERC20 token to rescue.
     function sweep(address token) external onlyOwner {
-        require(token != address(_coins), "DIGIL: Cannot sweep system coins");
+        require(token != address(_coins), "DIGIL: Cannot Sweep System Coins");
         uint256 balance = IERC20Mintable(token).balanceOf(address(this));
         IERC20Mintable(token).transfer(owner(), balance);
     }
@@ -1406,6 +1410,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
+    /// @dev    Combined validation helper to reduce bytecode size.
+    ///         Checks that the caller is authorized (owner/operator) and that
+    ///         no batch operation (activation/discharge) is currently in progress.
+    ///         Reverts with "DIGIL: Not Approved" or "DIGIL: Batch Operation In Progress".
+    /// @param  tokenId The token ID to validate permissions for.
+    /// @param  t The storage reference to the Token struct.
     function _checkApprovedAndNoBatch(uint256 tokenId, Token storage t) internal view {
         _checkApproved(tokenId);
         _requireNoBatch(t);
@@ -1590,7 +1600,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
-    // @dev Centralizes active charge grants to save bytecode on event emissions.
+    /// @dev    Internal helper to increase a token's active charge and emit the event.
+    ///         Centralizing this logic saves significant bytecode by deduplicating
+    ///         the `LOG` opcodes and memory setup required for event emission.
+    /// @param  tokenId The ID of the token receiving charge.
+    /// @param  t The storage reference to the token.
+    /// @param  amount The amount of active charge to add.
     function _addActiveCharge(uint256 tokenId, Token storage t, uint256 amount) internal {
         t.activeCharge += amount;
         emit ActiveCharge(tokenId, amount);
@@ -2043,6 +2058,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return (ownerDistributionAmount, batchVolume);
     }
 
+    /// @dev    Resets the token's contributor array and advances the contribution epoch.
+    ///         Uses inline assembly to set the array length to 0, which avoids the
+    ///         gas cost of iterating over elements to delete them.
+    ///         Incrementing `contributionEpoch` logically invalidates all existing
+    ///         `TokenContribution` structs for this token without needing to zero them out.
+    /// @param  t The storage reference to the Token struct.
     function _clearContributors(Token storage t) internal {
         address[] storage contributors = t.contributors;
         assembly {
