@@ -1431,6 +1431,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
         _checkApprovedAndNoBatch(tokenId, t);
+        
+        // Update last activity
+        t.lastActivity = block.timestamp;
 
         uint256 value = msg.value;
 
@@ -1447,8 +1450,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 emit Restrict(tokenId);
             }
             // If restricting is being disabled, no additional payment is required.
-
-            t.lastActivity = block.timestamp;
         }
 
         // Add any sent Ether as token value (even if toggle did not change).
