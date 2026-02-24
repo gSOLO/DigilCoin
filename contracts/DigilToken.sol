@@ -45,10 +45,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     bool private _planarTransferActive;                         // When true, a temporary transfer window is open to move planar tokens from the current owner to the new owner during `transferOwnership`.
 
     // Batch operations limiter
-    uint16 private constant DEFAULT_BATCH_SIZE = 128;           // Default number of items to process in a single batch operation
-    uint16 private _batchSize = DEFAULT_BATCH_SIZE;             // Configurable batch size for distribution or discharge operations
-    uint16 private constant MIN_BATCH_SIZE = 32;                // Minimum number of items to process in a single batch operation
-    uint16 private constant MAX_BATCH_SIZE = 1024;              // Maximum number of items to process in a single batch operation
+    uint16 private _batchSize = 128;                            // Configurable batch size for distribution or discharge operations
+    uint256 private constant MIN_BATCH_SIZE = 32;               // Minimum number of items to process in a single batch operation
+    uint256 private constant MAX_BATCH_SIZE = 1024;             // Maximum number of items to process in a single batch operation
 
     // Define the inactivity period for reclaiming contributions
     uint256 private constant INACTIVITY_PERIOD = 90 days;       // A short timeout to reclaim contributions from tokens after inactivity
@@ -59,9 +58,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private constant AFFINITY_REDUCTION = 2;            // Divisor for weak affinity bonuses and charge-balancing penalties
 
     // Buff configuration
-    uint8  private constant MAX_BUFF_BONUS = 100;               // Maximum temporary bonus
-    uint16 private constant MAX_BUFF_DURATION_MIN = 7 * 24 * 60;// Maximum duration of buffs (7 days)
-    uint256 private constant LINK_BUFF_COST_FACTOR = 24 * 60;   // The cost per bonus-point-hour per link
+    uint256 private constant MAX_BUFF_BONUS = 100;               // Maximum temporary bonus
+    uint256 private constant MAX_BUFF_DURATION_MIN = 7 * 24 * 60;// Maximum duration of buffs (7 days)
+    uint256 private constant LINK_BUFF_COST_FACTOR = 24 * 60;    // The cost per bonus-point-hour per link
 
     // Mappings for token data, blacklisted addresses, distributions, and contract tokens
     mapping(uint256 => Token) private _tokens;                                      // Mapping from token ID to its detailed Token struct
