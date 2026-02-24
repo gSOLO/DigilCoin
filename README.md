@@ -143,6 +143,7 @@ Governance contract for DigilCoin that executes approved proposals through a **T
 Implements core NFT logic plus the esoteric machinery of the system:
 - **Economics**: per-token `charge` (potential energy), `activeCharge` (kinetic energy), and ETH `value` (material sacrifice); per-address contribution ledgers; pending distributions.
 - **Batched workflows**: `activateToken`, `dischargeToken` process contributors in pages using `distributionIndex` and a configurable `_batchSize`.
+- **Permissionless continuation + keeper incentive**: activation/discharge are owner-started but publicly continuable while in progress, and partial batch calls mint a **keeper bounty** (`batchVolume / 100`, i.e. 1% of processed volume) to the caller.
 - **Link graph**: up to 10 links per token with `LinkEfficiency`, optional **temporary buffs**, and plane-driven bonuses. This forms the "Ley Lines" connecting your intentions.
 - **Vaulting**: accepts external ERC-721s via `onERC721Received`, requires a **DIGIL coin transfer fee** (`10 × _coinRate`) from the sender, and exposes `recallToken`.
 - **Access & safety**: blacklist gating; planar invariants; `nonReentrant` on sensitive paths; robust event surface; custom errors.
@@ -325,6 +326,7 @@ activateToken(tokenId)
 
 This is the firing of the sigil. The accumulated potential energy is transmuted into active kinetic energy, and the material sacrifice (ETH) is settled.
 
+- First call requires owner/approved permissions; once `activating == true`, **any non-blacklisted address** can continue the batch.
 - Requires `active == false`.
 - **Primed Buff**: If the token has an active `PRIMED` (flag 4) buff, the required `activationThreshold` is temporarily halved. The sigil has been greased for easier release. Otherwise, requires `charge ≥ activationThreshold` (or already in `activating` mode).
 - Also requires `!discharging`.
@@ -336,7 +338,8 @@ This is the firing of the sigil. The accumulated potential energy is transmuted 
   - After all contributors:
     - `distributionCharge` is moved to `activeCharge`.
     - The owner receives **`distribution` plus any remaining rounding “dust”** from the token’s value. Internally this is passed through `_addDistributedValue(owner, distribution + tValue)`, so the standard fee split still applies but dust is treated as part of the owner’s payout rather than an extra contract-only pool.
-- Emits `Activate(tokenId, false)` while in progress and `Activate(tokenId, true)` on completion.
+- If not completed in one call, emits `Batch(tokenId, processed, total)` and awards the caller a **keeper bounty** of `batchVolume / 100` coins (1% of charge volume processed in that partial batch).
+- Emits `Activate(tokenId)` on completion.
 - The token is then marked `active = true`, and `activating = false`.
 
 #### Mathematics of Activation Payouts
@@ -351,13 +354,13 @@ Let:
 
 The contract computes a **per-unit value rate**:
 
-```text
+```solidity
 incrementalValue = (dValue * _coinMultiplier) / dCharge        // if dCharge > 0, else 0
 ```
 
 For each contributor `i` with `charge_i`:
 
-```text
+```solidity
 payout_i = incrementalValue * charge_i / _coinMultiplier
 ```
 
@@ -367,7 +370,7 @@ The important properties:
 - Because of integer division, the total of all `payout_i` is **≤ dValue`.  
   The difference:
 
-```text
+```solidity
 dust = dValue − Σ payout_i
 ```
 
@@ -418,12 +421,13 @@ dischargeToken(tokenId)
 
 The final release. The construct is dismantled, value is settled, and remaining energy is grounded or directed outward to its neighbors.
 
+- First call requires owner/approved permissions; once `discharging == true`, **any non-blacklisted address** can continue the batch.
 - Requires there is something meaningful to discharge:  
   `t.charge > 0 || t.value > 0 || t.activeCharge > 0 || t.discharging == true`.
 - Requires `!activating`.
 - On the first call of a discharge cycle, requires:
 
-```text
+```solidity
 msg.value == max(globalMin, token.incrementalValue) × max(1, links.length)
 ```
 
@@ -446,6 +450,8 @@ Two main modes:
      - Any remaining dust from `token.value` is folded into the owner’s payout: the owner is credited with `distribution + tValue` via `_addDistributedValue(owner, distribution + tValue)`, which still enforces the usual contract fee split.
    - After this **value settlement**, the token can still have `activeCharge`—but it is now treated as **surplus power to be pushed outward**.
 
+- In any **partial** discharge batch (same as activation), the caller receives a **keeper bounty** of `batchVolume / 100` coins and a `Batch(tokenId, processed, total)` event is emitted.
+
 After `_distribute` completes in either mode:
 
 - Any remaining `activeCharge` is **redistributed into the token’s links**:
@@ -456,9 +462,9 @@ After `_distribute` completes in either mode:
   - Any rounding remainder from integer division is effectively **lost** as dust.
 - The original token’s `activeCharge` is set to **0** (or the retained amount if Anchored).
 - `contributors[]` is cleared and `contributionEpoch` is incremented.
-- If a contract token is attached and still present, it becomes **non-recallable** and its address is reinserted as a placeholder contributor for future epochs.
+- If a contract token is attached and still present, recallability is updated based on mode inside `_distribute`: inactive discharge keeps it non-recallable, while active-style settlement (`discharge = false`) marks it recallable.
 - Any active **link buffs** are cleared.
-- `discharging = false` and `Discharge(tokenId, true)` is emitted.
+- `discharging = false` and `Discharge(tokenId)` is emitted.
 
 You can read this as: **discharging a sigil settles value, pushes its remaining power outward along its link graph based on base efficiencies, and wipes any temporary buff state**.
 
@@ -606,7 +612,7 @@ This is the creation of **Sympathetic Magic** between nodes. By linking Digils, 
   - Looks at the tokens’ **foundational planes** (first entry in each token’s `links[]`, when that entry is planar) and compares compact affinity bytes stored in planar token `data`.
   - The implementation computes a **percent-like bonus integer** (`affinityBonus`) that is later applied during active propagation as:
 
-    ```text
+    ```solidity
     linkedBonusCoins = coins * affinityBonus / 100
     ```
 
@@ -693,7 +699,7 @@ This function lets the owner **temporarily boost** an active token by spending `
 
 The buff cost is computed in **coin units** and paid entirely from `activeCharge`. The cost is determined by the **Magnitude** of the combined buffs:
 
-```text
+```solidity
 // conceptual shape
 cost ≈ magnitude × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
 ```
@@ -838,7 +844,7 @@ The fee is credited to the contract’s own distribution bucket; the user value 
 
 **Bonus coins**: For each **full multiple** of the **global** `_incrementalValue` contained in `value`, the recipient gets:  
 
-```text
+```solidity
 bonusCoins = (coinRate / BONUS_RATE_DIVISOR) × fullIncrements
 ```
 
@@ -859,18 +865,33 @@ lets any **non-blacklisted** address claim its pending ETH and coins.
 
 **Time-based bonus coins**
 
-If the address holds **any Digil** (`balanceOf(addr) > 0`) or any **coin balance** (`_coins.balanceOf(addr) > 0`), it also receives a **time-based coin bonus**:
+If the address holds **any Digil** (`balanceOf(addr) > 0`), it also receives a **time-based coin bonus**:
 
 - For each `BONUS_INTERVAL` (15 minutes) since the last bonus timestamp (`distribution.time`), the account earns `+coinMultiplier` coins.
 - The raw bonus is capped per call at `_coinRate`.
 - The contract computes:
 
-  ```text
+  ```solidity
   rawBonus = (now - lastBonusTime) / BONUS_INTERVAL × coinMultiplier
   bonus    = min(rawBonus, cap)
   ```
 
 - On successful `withdraw`, `distribution.time` is updated to the current timestamp and the user receives `bonus` in addition to any base `coins` in their distribution bucket.
+
+### Keeper bonus for activation/discharge continuation
+
+Both `activateToken` and `dischargeToken` share the same batch engine (`_distribute`) and keeper reward policy:
+
+- On calls that make **partial progress** (`distributionIndex` advances but contributors remain), the caller is credited:
+
+```solidity
+keeperBonus = batchVolume / KEEPER_BOUNTY_DIVISOR
+```
+
+with `KEEPER_BOUNTY_DIVISOR = 100` (1%).
+- `batchVolume` is the sum of the contributors' processed `charge` (activation path) or `discharge` amount (inactive discharge path) in that specific call.
+- The reward is credited to the caller’s pending coin distribution (withdrawn later through `withdraw()`), not transferred inline.
+- Third parties can spend gas to finish someone else’s batch and get compensated in DIGIL.
 
 ### Admin value creation
 
@@ -916,7 +937,7 @@ High-level behavior:
 
 - Requires:
 
-  ```text
+  ```solidity
   msg.value == (_incrementalValue × _coinRate / _coinMultiplier)
   ```
 
@@ -1035,7 +1056,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
   - ETH:
     - First call in a cycle must send:  
 
-      ```text
+      ```solidity
       msg.value == max(globalMin, token.incrementalValue) × max(1, links.length)
       ```
 
@@ -1052,7 +1073,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
   - ETH:
     - To update `data` and/or `uri`, must send at least:  
 
-      ```text
+      ```solidity
       msg.value ≥ max(token.incrementalValue, incrementalValue, globalMin)
       ```
 
@@ -1071,7 +1092,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
   - ETH:
     - Must send:  
 
-      ```text
+      ```solidity
       msg.value ≥ token.incrementalValue + dest.incrementalValue
       ```
 
@@ -1092,7 +1113,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
   - Coins / power:
     - Consumes `activeCharge` via:
 
-      ```text
+      ```solidity
       cost ≈ magnitude × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
       ```
 
@@ -1122,7 +1143,7 @@ This section summarizes how **coins** and **ETH** are consumed across the major 
   - ETH:
     - Must send:
 
-      ```text
+      ```solidity
       msg.value == (_incrementalValue × _coinRate / _coinMultiplier)
       ```
 
@@ -1261,7 +1282,7 @@ activateToken(tokenA);
 - On completion:
   - All `distributionCharge` is added to `tokenA.activeCharge`.
   - Owner receives `distribution + tValue` via `_addDistributedValue(owner, distribution + tValue)`.
-- `activateToken` emits `Activate(tokenA, true)` and marks `tokenA.active = true`.
+- `activateToken` emits `Activate(tokenA)` on completion and marks `tokenA.active = true`.
 
 ### 5) Linking and affinity effects
 
@@ -1279,8 +1300,8 @@ linkToken(
 - ETH is split **50/50** into `tokenA.value` and `tokenC.value`.
 - Base efficiency = 120%; affinity bonus is computed from their foundational planes (for example, Harmony ↔ Exergy may receive multipliers).
 - Because this is a **new** link:
-  - If it is the **first** link on `tokenA`, the coin fee is 25% of the base cost.
-  - If it is the **second**, the fee is 50% of the base cost.
+  - If it is the **first** link on `tokenA`, the coin fee is 50% of the base cost.
+  - If it is the **second**, the fee is also 50% of the base cost.
   - If `tokenA` already had ≥ 2 links, the fee is full cost.
 
 **Charge the active, linked source**
@@ -1423,7 +1444,7 @@ Assume:
 
 Total base efficiency:
 
-```text
+```solidity
 sumOfEfficiencies = 50 + 100 + 150 = 300
 ```
 
@@ -1464,7 +1485,7 @@ buffToken(
 
 `magnitude` is computed from weighted components (including the selected `REVERBERATED` flag), then charged via:
 
-```text
+```solidity
 cost ≈ magnitude × duration_minutes × linkCount × _coinRate / LINK_BUFF_COST_FACTOR
 ```
 
@@ -1478,7 +1499,7 @@ overchargeToken(tokenA, coins = 50 * 10**18);
 
 Cost calculation (assuming `_incrementalValue` is used):
 
-```text
+```solidity
 cost = (incrementalValue * coins * AFFINITY_BOOST) / _coinMultiplier
 cost = (incrementalValue * 50 * 10**18 * 2) / 10**18
 cost = 100 * incrementalValue
