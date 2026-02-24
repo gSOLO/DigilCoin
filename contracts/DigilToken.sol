@@ -1399,6 +1399,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
+    function _checkApprovedAndNoBatch(uint256 tokenId, Token storage t) internal view {
+        _checkApproved(tokenId);
+        _requireNoBatch(t);
+    }
+
     /// @notice Adds addresses to a token's whitelist.
     ///         Once an address has been whitelisted, it cannot be removed.
     ///         If no whitelisted addresses are supplied, the token's whitelist is disabled.
@@ -1406,12 +1411,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to update.
     /// @param  whitelisted An array of addresses to whitelist.
     function restrictToken(uint256 tokenId, address[] memory whitelisted) external payable {
-        _checkApproved(tokenId);
-
-        uint256 value = msg.value;
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        _requireNoBatch(t);
+        _checkApprovedAndNoBatch(tokenId, t);
+
+        uint256 value = msg.value;
 
         // Determine if the token should be restricted based on provided addresses.
         bool restrict = whitelisted.length > 0;
@@ -1484,11 +1488,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  data New token data (applied only if `data.length > 0`).
     /// @param  uri New token URI (applied only if `bytes(uri).length > 0`).
     function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable nonReentrant {
-        _checkApproved(tokenId);
-        
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        _requireNoBatch(t);
+        _checkApprovedAndNoBatch(tokenId, t);
 
         // If token already has charge, its incremental value and activation threshold cannot be modified.
         if (t.charge > 0) {
@@ -2332,12 +2334,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///           operation (`distributionIndex` must be zero).
     /// @param  tokenId The ID of the token to deactivate.
     function deactivateToken(uint256 tokenId) external {
-        _checkApproved(tokenId);
-
         Token storage t = _tokens[tokenId];
         require(t.active && t.charge == 0, "DIGIL: Token Cannot Be Deactivated");
         // Make sure the token isn't currently being discharged or activated
-        _requireNoBatch(t);
+        _checkApprovedAndNoBatch(tokenId, t);
 
         // Update last activity
         t.lastActivity = block.timestamp;
@@ -2406,14 +2406,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  linkId     The destination token ID to link to.
     /// @param  efficiency The efficiency of the link (percentage based).
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) external payable nonReentrant {
+        Token storage t = _tokens[tokenId];
         // _checkApproved calls ownerOf(tokenId).
         // ownerOf(tokenId) reverts if the token does not exist.
         //_checkTokenExists(tokenId);
-        _checkApproved(tokenId);
-        _checkTokenExists(linkId);
-
-        Token storage t = _tokens[tokenId];
-        _requireNoBatch(t);
+        _checkTokenExists(linkId);        
+        _checkApprovedAndNoBatch(tokenId, t);
         require(t.links.length < MAX_LINKS, "DIGIL: Too Many Links");
 
         // Existing link state
@@ -2626,14 +2624,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The source token ID initiating the unlink.
     /// @param  linkId The destination token ID to unlink. 
     function unlinkToken(uint256 tokenId, uint256 linkId) external {
+        Token storage t = _tokens[tokenId];
         // _checkApproved calls ownerOf(tokenId).
         // ownerOf(tokenId) reverts if the token does not exist.
         //_checkTokenExists(tokenId);
-        _checkApproved(tokenId);
+        _checkApprovedAndNoBatch(tokenId, t);
         _checkTokenExists(linkId);
-        
-        Token storage t = _tokens[tokenId];
-        _requireNoBatch(t);
 
         // Disallow unlinking foundational planes (IDs 0..PLANAR_MAX_ID)
         // so the token's elemental identity cannot be removed.
@@ -2714,12 +2710,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param appearance      Packed style/cosmetics/colors payload (uint120). 0 means “don’t change”.
     /// @param duration        Buff duration in whole minutes (1 .. 10080).
     function buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearance, uint256 duration) external {
-        _checkApproved(tokenId);
-
         Token storage t = _tokens[tokenId];
 
         require(t.active, "DIGIL: Token Not Active");
-        _requireNoBatch(t);
+        _checkApprovedAndNoBatch(tokenId, t);
 
         // Sanitize input: Only allow user flags (remove Stabilized/Primed if user tried to sneak them in)
         uint16 requestedFlags = flags & DigilFlags.USER_FLAGS_MASK;
@@ -2897,14 +2891,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token to overcharge.
     /// @param  coins   The amount of activeCharge to add, in coin units (scaled by `_coinMultiplier`).
     function overchargeToken(uint256 tokenId, uint256 coins) external payable {
-        _checkApproved(tokenId);
-
         require(coins >= _coinMultiplier, "DIGIL: Insufficient Charge");
 
         Token storage t = _tokens[tokenId];
 
         // Do not interfere with batch operations or activation/discharge flows.
-        _requireNoBatch(t);
+        _checkApprovedAndNoBatch(tokenId, t);
         require(t.active, "DIGIL: Token Not Active");
 
         // Use the greater of the token's incremental value or the global minimum.
