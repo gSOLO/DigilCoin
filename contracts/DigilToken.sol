@@ -1583,6 +1583,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
+    // @dev Centralizes active charge grants to save bytecode on event emissions.
+    function _addActiveCharge(uint256 tokenId, Token storage t, uint256 amount) internal {
+        t.activeCharge += amount;
+        emit ActiveCharge(tokenId, amount);
+    }
+
     /// @dev Internal function to charge an active token.
     ///      Propagation Behavior:
     ///      - When a user directly charges an active token (link == false), any sent charge is distributed
@@ -1622,8 +1628,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 totalIncoming += (totalIncoming * t.buff.amplification) / 100;
             }
             
-            t.activeCharge += totalIncoming;
-            emit ActiveCharge(tokenId, totalIncoming);
+            _addActiveCharge(tokenId, t, totalIncoming);
 
         } else {    
             // Distribute the value and coins among all linked tokens.
@@ -1665,14 +1670,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                         // Treat both base and affinity bonus as outbound “signal”
                         uint256 echo = _reverbEcho(linkedCoins, linkedBonusCoins);
                         if (echo > 0) {
-                            t.activeCharge += echo;
-                            emit ActiveCharge(tokenId, echo);
+                            _addActiveCharge(tokenId, t, echo);
                         }
                     }
                 } else if (linkedCoins != 0) {
                     // If linked token could not be charged, add the coins to the source's active charge.
-                    t.activeCharge += linkedCoins;
-                    emit ActiveCharge(tokenId, linkedCoins);
+                    _addActiveCharge(tokenId, t, linkedCoins);
                 }
             }
         }
@@ -1910,7 +1913,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // incrementalValue is only needed for the activation path
-        uint256 incrementalValuePerCharge = 0;
+        uint256 incrementalValuePerCharge;
         if (!discharge && t.distributionCharge > 0) {
             incrementalValuePerCharge = (t.distributionValue * _coinMultiplier) / t.distributionCharge;
         }
@@ -1937,8 +1940,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 _addDistributedValue(tokenOwner, remainingTokenValue);
             } else {
                 if (capturedCharge > 0) {
-                    t.activeCharge += capturedCharge;
-                    emit ActiveCharge(tokenId, capturedCharge);
+                    _addActiveCharge(tokenId, t, capturedCharge);
                 }
                 _addDistributedValue(tokenOwner, ownerDistributionAmount + remainingTokenValue);
             }
@@ -2007,7 +2009,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             } else {
                 uint256 charge = contribution.charge;
                 // Activation: accumulate for final owner payout
-                uint256 distributableValue = 0;
+                uint256 distributableValue;
 
                 unchecked {
                     ownerDistributionAmount += value;
@@ -2173,11 +2175,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
                         uint256 share = (ac * baseEfficiency) / sumOfEfficiencies;
                         if (share == 0) continue;
-
-                        Token storage linkedToken = _tokens[linkId];
-                        linkedToken.activeCharge += share;
-
-                        emit ActiveCharge(linkId, share);
+                        
+                        _addActiveCharge(linkId, _tokens[linkId], share);
                     }
 
                     // Any rounding remainder (from integer division) is implicitly lost,
@@ -2914,8 +2913,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(required);
 
         // Grant raw activeCharge to the token.
-        t.activeCharge += coins;
-        emit ActiveCharge(tokenId, coins);
+        _addActiveCharge(tokenId, t, coins);
     }
 
 }
