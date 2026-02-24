@@ -891,7 +891,7 @@ keeperBonus = batchVolume / KEEPER_BOUNTY_DIVISOR
 with `KEEPER_BOUNTY_DIVISOR = 100` (1%).
 - `batchVolume` is the sum of the contributors' processed `charge` (activation path) or `discharge` amount (inactive discharge path) in that specific call.
 - The reward is credited to the caller’s pending coin distribution (withdrawn later through `withdraw()`), not transferred inline.
-- This incentive is what makes long-running activations/discharges practically permissionless after they are started: third parties can spend gas to finish someone else’s batch and get compensated in DIGIL.
+- Third parties can spend gas to finish someone else’s batch and get compensated in DIGIL.
 
 ### Admin value creation
 
