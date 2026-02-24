@@ -2407,10 +2407,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         destination token's incremental value. Any value contributed is split
     ///         between and added to the source and destination token.
     ///         The coin cost for linking scales with efficiency and number of links,
-    ///         with early-link discounts:
-    ///             - First new link on a token: 50% of base cost.
-    ///             - Second new link on a token: 50% of base cost.
-    ///             - Subsequent links: full base cost.
+    ///         with the following discounts applied:
+    ///             - Early-link: First two new links on a token are 50% of the base cost.
+    ///             - Community Expansion: Linking to a token owned by a different address
+    ///               grants a 25% discount on the final coin cost.
     ///         An efficiency of 1 indicates ~1% transfer; 100 indicates 100%; 200
     ///         indicates 200%, etc.
     /// @dev    A token's foundational Plane link (its "element") can only be set at
@@ -2493,6 +2493,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 coinCost -= oldCost;
             } else {
                 coinCost = 0; // If rounding makes newCost <= oldCost, treat the upgrade as free.
+            }
+        }
+
+        // Community Expansion: 25% Discount if linking to a different owner.
+        // Discount = 1 / (Reduction^2) = 1/4 = 25%.
+        if (ownerOf(linkId) != _msgSender()) {
+            unchecked {
+                coinCost -= coinCost / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
             }
         }
 
