@@ -191,19 +191,15 @@ contract FoxtrotTestSuite {
         digil.dischargeToken{value: 400000000000000}(activeTokenId);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(fireTokenId);
-        console.log(activeCharge);
         Assert.equal(activeCharge, coinMultiplier * 103, "Invalid Fire active charge");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(airTokenId);
-        console.log(activeCharge);
         Assert.equal(activeCharge, coinMultiplier * 206, "Invalid Air active charge");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(earthTokenId);
-        console.log(activeCharge);
         Assert.equal(activeCharge, coinMultiplier * 515 / 10, "Invalid Earth active charge");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(waterTokenId);
-        console.log(activeCharge);
         Assert.equal(activeCharge, coinMultiplier * 515 / 10, "Invalid Water active charge");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
