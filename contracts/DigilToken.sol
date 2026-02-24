@@ -2862,11 +2862,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             cost = cost * 100 / (100 + uint256(bonus));
         }
 
-        // Set protection
-        t.buff.flags = DigilFlags.set(t.buff.flags, DigilFlags.STABILIZED);
-
         // Transfer Coins from the user to the contract
         _coinsFromSender(cost);
+
+        // Set protection
+        t.buff.flags = DigilFlags.set(t.buff.flags, DigilFlags.STABILIZED);
 
         // Update last activity
         t.lastActivity = block.timestamp;
