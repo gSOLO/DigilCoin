@@ -775,13 +775,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // Prevent token transfers while a batch operation is in progress.
             _requireNoBatch(t);
 
-            if (tokenId <= PLANAR_TRANSFER_MAX_ID) {
-                // 1) Planar tokens cannot be burned.
-                require(to != address(0), "DIGIL: Planar Non-burnable");
-                // 2) Outside of transfer ownership, planar tokens must remain with the admin.
-                if (!_planarTransferActive) {
-                    require(to == owner(), "DIGIL: Planar Locked to Owner");
-                }
+            // Outside of transfer ownership, planar tokens must remain with the admin.
+            if (tokenId <= PLANAR_TRANSFER_MAX_ID && !_planarTransferActive) {
+                require(to == owner(), "DIGIL: Planar Locked to Owner");
             }
         }
 
