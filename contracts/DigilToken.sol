@@ -1587,22 +1587,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
-    /// @dev Computes the REVERBERATED echo amount from a single link.
-    ///      - Caps the contribution from bonusCoins to at most 4× linkedCoins
-    ///        to avoid extreme affinity spikes completely dominating.
-    ///      - Returns the final echo amount after dividing by AFFINITY_REDUCTION.
-    ///      If both linkedCoins and bonusCoins are zero, returns 0.
-    function _reverbEcho(uint256 linkedCoins, uint256 bonusCoins) internal pure returns (uint256) {
-        unchecked {
-            // Cap bonusCoins at 4× linkedCoins for controlled “planar drama”
-            uint256 maxBonus = linkedCoins * (AFFINITY_BOOST  * AFFINITY_BOOST);
-            if (bonusCoins > maxBonus) {
-                bonusCoins = maxBonus;
-            }
-            return (linkedCoins + bonusCoins) / AFFINITY_REDUCTION;
-        }
-    }
-
     /// @dev    Internal helper to increase a token's active charge and emit the event.
     ///         Centralizing this logic saves significant bytecode by deduplicating
     ///         the `LOG` opcodes and memory setup required for event emission.
@@ -1692,8 +1676,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     // If REVERBERATED buff is active, reflect a fraction of the
                     // *successfully propagated* coins back into this token as fresh activeCharge.
                     if (DigilFlags.has(t.buff.flags, DigilFlags.REVERBERATED) && block.timestamp < t.buff.expiresAt) {
+                        uint256 echo;
                         // Treat both base and affinity bonus as outbound “signal”
-                        uint256 echo = _reverbEcho(linkedCoins, linkedBonusCoins);
+                        unchecked {
+                            // Cap bonusCoins at 4× linkedCoins for controlled “planar drama”
+                            uint256 maxBonus = linkedCoins * (AFFINITY_BOOST  * AFFINITY_BOOST); 
+                            // We can safely mutate linkedBonusCoins here as it isn't used again in this iteration
+                            if (linkedBonusCoins > maxBonus) {
+                                linkedBonusCoins = maxBonus;
+                            }
+                            echo = (linkedCoins + linkedBonusCoins) / AFFINITY_REDUCTION;
+                        }
                         if (echo > 0) {
                             _addActiveCharge(tokenId, t, echo);
                         }
