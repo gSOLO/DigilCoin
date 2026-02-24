@@ -1323,7 +1323,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///               [1 .. PLANAR_MAX_ID]. Foundational planes cannot be linked or changed later.
     /// @param  data Optional arbitrary data to store with the token.
     /// @return tokenId The ID of the newly created token.
-    function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable nonReentrant returns(uint256) {
+    function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable returns(uint256) {
         // 1. INPUT VALIDATION
         // Ensure if they set a value, it isn't below the global floor (unless it's 0).
         if (incrementalValue > 0 && incrementalValue < _incrementalValue) {
@@ -1487,7 +1487,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  activationThreshold New activation threshold in coin units (must be 0 for planar tokens).
     /// @param  data New token data (applied only if `data.length > 0`).
     /// @param  uri New token URI (applied only if `bytes(uri).length > 0`).
-    function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable nonReentrant {
+    function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
         _checkApprovedAndNoBatch(tokenId, t);
@@ -1848,7 +1848,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to charge.
     /// @param  coins The coin units used in the charge.
     /// @return True if the token was successfully charged.
-    function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable nonReentrant returns(bool) {
+    function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable returns(bool) {
         _notOnBlacklist(contributor);
         _checkTokenExists(tokenId);
         
@@ -2102,7 +2102,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to discharge.
     /// @return completed True if this call finished the discharge; false if more
     ///                   calls are required to process remaining contributors.
-    function dischargeToken(uint256 tokenId) external payable nonReentrant returns (bool) {
+    function dischargeToken(uint256 tokenId) external payable returns (bool) {
         Token storage t = _tokens[tokenId];
 
         // First call: require ownership/approval.
@@ -2245,7 +2245,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token to activate.
     /// @return completed True if this call finished the activation; false if more
     ///                   calls are required to process remaining contributors.
-    function activateToken(uint256 tokenId) external nonReentrant returns(bool) {
+    function activateToken(uint256 tokenId) external returns(bool) {
         Token storage t = _tokens[tokenId];
         
         // First call: require ownership/approval.
@@ -2405,7 +2405,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId    The source token ID.
     /// @param  linkId     The destination token ID to link to.
     /// @param  efficiency The efficiency of the link (percentage based).
-    function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) external payable nonReentrant {
+    function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) external payable {
         Token storage t = _tokens[tokenId];
         // _checkApproved calls ownerOf(tokenId).
         // ownerOf(tokenId) reverts if the token does not exist.
