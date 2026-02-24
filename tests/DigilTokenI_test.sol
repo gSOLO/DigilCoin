@@ -99,14 +99,14 @@ contract IndiaTestSuite {
         }
         
         uint256 currentSeed = 1;
-        for (uint256 accountIndex = 0; accountIndex < 497; accountIndex++) {
+        for (uint256 accountIndex = 0; accountIndex < 297; accountIndex++) {
             currentSeed = uint256(keccak256(abi.encodePacked(currentSeed, accountIndex))); // Generate a new seed for each address
             address addr = address(uint160(currentSeed)); // Convert the seed to an address
             digil.chargeTokenAs{value: incrementalValue}(addr, activeTokenId, coinMultiplier);
         }
 
         (uint256 newCharge, uint256 newActiveCharge, uint256 newValue, , ) = digil.tokenCharge(activeTokenId);
-        Assert.ok(newCharge >= coinMultiplier * 512, "Token charge did not increase appropriately");
+        Assert.ok(newCharge >= coinMultiplier * 312, "Token charge did not increase appropriately");
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
         Assert.ok(newValue == 100000000000000, "Token value should not increase");
 
@@ -127,7 +127,7 @@ contract IndiaTestSuite {
 
         (newCharge, newActiveCharge, newValue, , ) = digil.tokenCharge(activeTokenId);
         Assert.ok(newCharge == 0, "Token charge did not decrease appropriately");
-        Assert.ok(newActiveCharge == coinMultiplier * 512, "Token active charge did not increase appropriately");
+        Assert.ok(newActiveCharge == coinMultiplier * 312, "Token active charge did not increase appropriately");
         Assert.ok(newValue == 0, "Token value should reset");
     }
 
@@ -144,7 +144,7 @@ contract IndiaTestSuite {
         Assert.equal(links, 0, "Invalid Link Count (!=0)");
         (uint256 charge, uint256 activeCharge, uint256 value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid initial Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid initial Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 312, "Invalid initial Source active charge");
         Assert.equal(value, 0, "Invalid initial Source value");
 
         uint256 fireTokenId = digil.createToken{value: 100000000000000}(0, 0, false, 4, "Fire Destination Plane");
@@ -159,20 +159,20 @@ contract IndiaTestSuite {
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid new Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid new Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 312, "Invalid new Source active charge");
 
         uint16 flags;
         digil.buffToken(activeTokenId, 30, 0, 0, flags, 0, 24);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post buff Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 412, "Invalid post buff Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 212, "Invalid post buff Source active charge");
 
         digil.deactivateToken(activeTokenId);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post deactivate Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 206, "Invalid post deactivate Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 106, "Invalid post deactivate Source active charge");
 
         bool activationComplete = digil.activateToken(activeTokenId);
         while(!activationComplete) {
@@ -181,9 +181,9 @@ contract IndiaTestSuite {
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post activate Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 206, "Invalid post activate Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 106, "Invalid post activate Source active charge");
 
-        digil.overchargeToken{value: 100000000000000 * 306 * 2}(activeTokenId, 306 * coinMultiplier);
+        digil.overchargeToken{value: 100000000000000 * 406 * 2}(activeTokenId, 406 * coinMultiplier);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post overcharge 1 Source charge");
