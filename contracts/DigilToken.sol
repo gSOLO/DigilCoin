@@ -1068,10 +1068,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Token Information
 
-    /// @dev    Internal function to ensure a token exists (i.e. has a non-zero owner).
+    /// @dev    Internal function to ensure a token exists.
     /// @param  tokenId The token ID to check.
     function _checkTokenExists(uint256 tokenId) internal view {
-        require(_ownerOf(tokenId) != address(0), "DIGIL: Token Does Not Exist");
+        require(tokenId < _nextTokenId, "DIGIL: Token Does Not Exist");
     }
 
     /// @inheritdoc ERC721
