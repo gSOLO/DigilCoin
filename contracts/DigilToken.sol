@@ -195,6 +195,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token that was updated
     event Update(uint256 indexed tokenId);
 
+    /// @notice Emitted when a batch operation (activation or discharge) makes partial progress.
+    /// @param  tokenId The ID of the token being processed.
+    /// @param  processed The number of contributors processed so far.
+    /// @param  total The total number of contributors to process.
+    event Batch(uint256 indexed tokenId, uint256 processed, uint256 total);
+
     /// @notice Emitted when a token is activated.
     /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being activated
@@ -1954,6 +1960,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (!discharge && ownerDistributionAmount > 0) {
             _addDistributedValue(tokenOwner, ownerDistributionAmount);
         }
+
+        // Emit the batch progress event
+        emit Batch(tokenId, distributionIndex, contributorsCount);
 
         return false;   // more calls needed
     }
