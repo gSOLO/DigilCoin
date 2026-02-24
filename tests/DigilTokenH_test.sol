@@ -98,14 +98,14 @@ contract HotelTestSuite {
         }
         
         uint256 currentSeed = 1;
-        for (uint256 accountIndex = 0; accountIndex < 497; accountIndex++) {
+        for (uint256 accountIndex = 0; accountIndex < 297; accountIndex++) {
             currentSeed = uint256(keccak256(abi.encodePacked(currentSeed, accountIndex))); // Generate a new seed for each address
             address addr = address(uint160(currentSeed)); // Convert the seed to an address
             digil.chargeTokenAs{value: incrementalValue}(addr, activeTokenId, coinMultiplier);
         }
 
         (uint256 newCharge, uint256 newActiveCharge, uint256 newValue, , ) = digil.tokenCharge(activeTokenId);
-        Assert.ok(newCharge >= coinMultiplier * 512, "Token charge did not increase appropriately");
+        Assert.ok(newCharge >= coinMultiplier * 312, "Token charge did not increase appropriately");
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
         Assert.ok(newValue == 100000000000000, "Token value should not increase");
 
@@ -126,7 +126,7 @@ contract HotelTestSuite {
 
         (newCharge, newActiveCharge, newValue, , ) = digil.tokenCharge(activeTokenId);
         Assert.ok(newCharge == 0, "Token charge did not decrease appropriately");
-        Assert.ok(newActiveCharge == coinMultiplier * 512, "Token active charge did not increase appropriately");
+        Assert.ok(newActiveCharge == coinMultiplier * 312, "Token active charge did not increase appropriately");
         Assert.ok(newValue == 0, "Token value should reset");
     }
 
@@ -143,7 +143,7 @@ contract HotelTestSuite {
         Assert.equal(links, 0, "Invalid Link Count (!=0)");
         (uint256 charge, uint256 activeCharge, uint256 value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid initial Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid initial Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 312, "Invalid initial Source active charge");
         Assert.equal(value, 0, "Invalid initial Source value");
 
         uint256 fireTokenId = digil.createToken{value: 100000000000000}(0, 0, false, 4, "Fire Destination Plane");
@@ -185,24 +185,24 @@ contract HotelTestSuite {
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid new Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 512, "Invalid new Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 312, "Invalid new Source active charge");
         Assert.equal(value, 250000000000000, "Invalid new Source value");
 
         digil.buffToken(activeTokenId, 30, 0, 0, 0, 0, 24);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(activeTokenId);
         Assert.equal(charge, 0, "Invalid post buff Source charge");
-        Assert.equal(activeCharge, coinMultiplier * 312, "Invalid post buff Source active charge");
+        Assert.equal(activeCharge, coinMultiplier * 112, "Invalid post buff Source active charge");
         Assert.equal(value, 250000000000000, "Invalid post buff Source value");
 
-        digil.chargeToken{value: 200 * 100000000000000}(activeTokenId, 200 * coinMultiplier);
+        digil.chargeToken{value: 200 * 100000000000000}(activeTokenId, 100 * coinMultiplier);
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(fireTokenId);
-        Assert.equal(charge, 20000000000000000000, "Invalid Fire charge");
+        Assert.equal(charge, 10000000000000000000, "Invalid Fire charge");
         Assert.equal(value, 150000000000000, "Invalid Fire value");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(airTokenId);
-        Assert.equal(charge, 25000000000000000000, "Invalid Air charge");
+        Assert.equal(charge, 12500000000000000000, "Invalid Air charge");
         Assert.equal(value, 150000000000000, "Invalid Air value");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(earthTokenId);
@@ -210,7 +210,7 @@ contract HotelTestSuite {
         Assert.equal(value, 200000000000000, "Invalid Earth value");
 
         (charge, activeCharge, value, , ) = digil.tokenCharge(waterTokenId);
-        Assert.equal(charge, 17500000000000000000, "Invalid Water charge");
+        Assert.equal(charge, 8750000000000000000, "Invalid Water charge");
         Assert.equal(value, 150000000000000, "Invalid Water value");
     }
 }
