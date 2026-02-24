@@ -201,6 +201,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  total The total number of contributors to process.
     event Batch(uint256 indexed tokenId, uint256 processed, uint256 total);
 
+    /// @notice Emitted when a caller earns a Keeper bounty for advancing a multi-batch
+    ///         activation or discharge distribution.
+    /// @dev    Keeper bounties are only paid on batch-progress calls (i.e., when a distribution
+    ///         is not yet complete) and only when the token's contributor set is large enough
+    ///         to require more than one batch.
+    ///         The bounty amount is denominated in Digil Coin units (the ERC20 used by this
+    ///         contract) and is credited to the keeper's pending distribution balance, not
+    ///         transferred immediately. The keeper can later claim it via {withdraw}.
+    /// @param  keeper  The address that advanced the batch and earned the bounty.
+    /// @param  tokenId The Digil token whose batch distribution was progressed.
+    /// @param  coins   The Keeper bounty amount credited, in ERC20 coin units.
+    event Bounty(address indexed keeper, uint256 indexed tokenId, uint256 coins);
+
     /// @notice Emitted when a token is activated.
     /// @dev    Check with tokenData to get an idea of its completion progress
     /// @param  tokenId The ID of the token that was or is being activated
@@ -877,8 +890,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///             * `value` is credited to `_distributions[caller].value` using
     ///               {_addValue}, to be withdrawn later via {withdraw}.
     ///         - The per-contributor record for the current epoch is cleared:
-    ///             * `c.value` and `c.charge` are zeroed
-    ///             * `c.distributed` is set to true to prevent double reclamation.
+    ///             * `c.value`, `c.charge`, and `c.discharge` are zeroed.
+    ///           The contributor remains logically present only via the current epoch record,
+    ///           and cannot reclaim the same contribution twice because the value/charge are removed.
     ///
     ///         Scope:
     ///         - This function never moves the token itself and never touches any
@@ -1327,6 +1341,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     /// @param  incrementalValue The incremental value (in wei) required with each coin used for charging.
     ///                          Must be 0 or at least the global minimum incremental value.
+    ///                          Token creation accepts excess ETH above the minimum required deposit;
+    ///                          all supplied ETH is added to the token's intrinsic value.
     /// @param  activationThreshold The number of coins required for token activation.
     /// @param  restricted Whether the token is restricted to whitelisted addresses for charging.
     /// @param  plane The chosen planar token (numeric index) to link with. This becomes the immutable
@@ -1423,7 +1439,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Adds addresses to a token's whitelist.
     ///         Once an address has been whitelisted, it cannot be removed.
-    ///         If no whitelisted addresses are supplied, the token's whitelist is disabled.
+    ///         If no addresses are supplied, the token is switched to unrestricted mode
+    ///         (if it was previously restricted). No addresses are ever removed from the
+    ///         one-way whitelist mapping.
     ///         Requires a value sent greater than or equal to the larger of the token's incremental value or the minimum incremental value. 
     /// @param  tokenId The token ID to update.
     /// @param  whitelisted An array of addresses to whitelist.
@@ -1982,7 +2000,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // KEEPER BOUNTY: 1% of the volume processed in this batch
         // Incentivizes external gas payment for batch processing
         if (contributorsCount > _batchSize) {
-            _addValue(_msgSender(), 0, batchVolume / KEEPER_BOUNTY_DIVISOR);
+            uint256 bounty = batchVolume / KEEPER_BOUNTY_DIVISOR;
+            _addValue(_msgSender(), 0, bounty);
+            emit Bounty(_msgSender(), tokenId, bounty);
         }
 
         // Emit the batch progress event
@@ -2257,7 +2277,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///         Distribution behavior:
     ///         - Internally, activation uses {_distribute} with `discharge = false`.
-    ///         - Contributions are processed in batches up to `_batchSize * 2` per call.
+    ///         - Contributions are processed in batches up to `_batchSize` per call.
     ///         - On partial progress, a {Batch} event is emitted and the function
     ///           returns `false`, indicating more calls are required.
     ///         - Once all contributors have been processed in the current epoch:
