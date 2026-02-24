@@ -48,6 +48,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint16 private _batchSize = 128;                            // Configurable batch size for distribution or discharge operations
     uint256 private constant MIN_BATCH_SIZE = 32;               // Minimum number of items to process in a single batch operation
     uint256 private constant MAX_BATCH_SIZE = 1024;             // Maximum number of items to process in a single batch operation
+    uint256 private constant KEEPER_BOUNTY_DIVISOR = 100;       // Divisor for the inflationary bounty minted to Keepers (100 = 1% of batch volume)
 
     // Define the inactivity period for reclaiming contributions
     uint256 private constant INACTIVITY_PERIOD = 90 days;       // A short timeout to reclaim contributions from tokens after inactivity
@@ -1913,7 +1914,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Process the batch via helper (separate stack frame → avoids stack too deep)
-        uint256 ownerDistributionAmount = _processBatch(t, distributionIndex, currentBatchSize, incrementalValuePerCharge, discharge);
+        (uint256 ownerDistributionAmount, uint256 batchVolume) = _processBatch(t, distributionIndex, currentBatchSize, incrementalValuePerCharge, discharge);
 
         // Advance cursor for next call (if any)
         distributionIndex += currentBatchSize;
@@ -1956,9 +1957,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             _addDistributedValue(tokenOwner, ownerDistributionAmount);
         }
 
-        // KEEPER BOUNTY: Reward the caller for paying gas to process the queue
+        // KEEPER BOUNTY: 1% of the volume processed in this batch
+        // Incentivizes external gas payment for batch processing
         if (_msgSender() != tokenOwner) {
-            _addValue(_msgSender(), 0, _coinMultiplier); // Rewards 1 Coin
+            _addValue(_msgSender(), 0, batchVolume / KEEPER_BOUNTY_DIVISOR);
         }
 
         // Emit the batch progress event
@@ -1975,36 +1977,61 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param discharge True = discharge mode, false = activation mode.
     /// @return ownerDistributionAmount Total value accumulated for the token owner
     ///                                 in activation mode (always 0 in discharge mode).
-    function _processBatch(Token storage t, uint256 startIndex, uint256 toProcess, uint256 incrementalValuePerCharge, bool discharge) private returns (uint256 ownerDistributionAmount) {
+    function _processBatch(Token storage t, uint256 startIndex, uint256 toProcess, uint256 incrementalValuePerCharge, bool discharge) private returns (uint256 ownerDistributionAmount, uint256 batchVolume) {
         // Cache both storage references once at the function entry.
         // This eliminates repeated slot derivations inside the hot loop.
         address[] storage contributors = t.contributors;
         mapping(address => TokenContribution) storage contributions = t.contributions;
 
-        ownerDistributionAmount = 0;   // only used in activation path
+        ownerDistributionAmount = 0;
+        batchVolume = 0;
+
+        uint256 cachedTokenValue = t.value; 
 
         // === HOT LOOP - DIRECT STORAGE READS (fully cached) ===
         for (uint256 i = 0; i < toProcess; ++i) {
             address contributor = contributors[startIndex + i];
             TokenContribution storage contribution = contributions[contributor];
 
+            uint256 value = contribution.value;
+
             if (discharge) {
+                uint256 charge = contribution.discharge;
                 // Discharge: full unwind back to contributor
-                _addValue(contributor, contribution.value, contribution.discharge);
-            } else {
-                // Activation: accumulate for final owner payout
-                ownerDistributionAmount += contribution.value;
+                _addValue(contributor, value, charge);
 
-                uint256 distributableValue = incrementalValuePerCharge * contribution.charge / _coinMultiplier;
-
-                if (distributableValue > t.value) {
-                    distributableValue = t.value;
+                unchecked { 
+                    // Accumulate volume
+                    batchVolume += charge;
                 }
-                unchecked { t.value -= distributableValue; }
+            } else {
+                uint256 charge = contribution.charge;
+                // Activation: accumulate for final owner payout
+                uint256 distributableValue = 0;
+
+                unchecked {
+                    ownerDistributionAmount += value;
+
+                    distributableValue = incrementalValuePerCharge * charge / _coinMultiplier;
+
+                    if (distributableValue > cachedTokenValue) {
+                        distributableValue = cachedTokenValue;
+                    }
+                    cachedTokenValue -= distributableValue;
+
+                    // Accumulate volume
+                    batchVolume += charge;
+                }
 
                 _addDistributedValue(contributor, distributableValue);
+
+                
             }
         }
+
+        t.value = cachedTokenValue;
+
+        return (ownerDistributionAmount, batchVolume);
     }
 
     /// @notice Discharges a token, settling contributions and redistributing any remaining
