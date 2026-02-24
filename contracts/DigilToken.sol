@@ -1959,9 +1959,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // KEEPER BOUNTY: 1% of the volume processed in this batch
         // Incentivizes external gas payment for batch processing
-        if (_msgSender() != tokenOwner) {
-            _addValue(_msgSender(), 0, batchVolume / KEEPER_BOUNTY_DIVISOR);
-        }
+        _addValue(_msgSender(), 0, batchVolume / KEEPER_BOUNTY_DIVISOR);
 
         // Emit the batch progress event
         emit Batch(tokenId, distributionIndex, contributorsCount);
