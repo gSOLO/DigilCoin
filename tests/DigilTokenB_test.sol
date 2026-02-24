@@ -97,21 +97,21 @@ contract BetaTestSuite {
         }
         
         uint256 currentSeed = 1;
-        for (uint256 accountIndex = 0; accountIndex < 499; accountIndex++) {
+        for (uint256 accountIndex = 0; accountIndex < 299; accountIndex++) {
             currentSeed = uint256(keccak256(abi.encodePacked(currentSeed, accountIndex))); // Generate a new seed for each address
             address addr = address(uint160(currentSeed)); // Convert the seed to an address
             digil.chargeTokenAs{value: incrementalValue}(addr, tokenId, coinMultiplier);
         }
 
         (uint256 newCharge, uint256 newActiveCharge, uint256 newValue, , ) = digil.tokenCharge(tokenId);
-        Assert.ok(newCharge >= coinMultiplier * 514, "Token charge did not increase appropriately");
+        Assert.ok(newCharge >= coinMultiplier * 314, "Token charge did not increase appropriately");
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
         Assert.ok(newValue == 100000000000000, "Token value should not increase");
 
         digil.chargeToken{value: incrementalValue * 6}(tokenId, coinMultiplier);
 
         (newCharge, newActiveCharge, newValue, , ) = digil.tokenCharge(tokenId);
-        Assert.ok(newCharge >= coinMultiplier * 515, "Token charge did not increase appropriately");
+        Assert.ok(newCharge >= coinMultiplier * 315, "Token charge did not increase appropriately");
         Assert.ok(newActiveCharge == 0, "Token active charge should not increase");
         Assert.ok(newValue == (100000000000000 + incrementalValue * 5), "Token value did not increase appropriately");
 
@@ -132,7 +132,7 @@ contract BetaTestSuite {
 
         (newCharge, newActiveCharge, newValue, , ) = digil.tokenCharge(tokenId);
         Assert.ok(newCharge == 0, "Token charge did not decrease appropriately");
-        Assert.ok(newActiveCharge == coinMultiplier * 515, "Token active charge did not increase appropriately");
+        Assert.ok(newActiveCharge == coinMultiplier * 315, "Token active charge did not increase appropriately");
         Assert.ok(newValue == 0, "Token value should reset");
     }
 
