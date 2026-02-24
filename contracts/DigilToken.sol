@@ -1881,23 +1881,23 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @return completed True if this call finished the entire distribution cycle,
     ///                   false if more calls are required to process remaining contributors.
     function _distribute(uint256 tokenId, bool discharge) internal returns (bool completed) {
-        Token storage token = _tokens[tokenId];
+        Token storage t = _tokens[tokenId];
 
         // Capture full remaining charge/value at start of cycle (only once).
         // This is safe because direct charges are blocked while distributionIndex > 0.
-        if (token.distributionCharge == 0) {
-            token.distributionCharge = token.charge;
-            token.charge = 0;
+        if (t.distributionCharge == 0) {
+            t.distributionCharge = t.charge;
+            t.charge = 0;
         }
-        if (token.distributionValue == 0) {
-            token.distributionValue = token.value;
+        if (t.distributionValue == 0) {
+            t.distributionValue = t.value;
         }
 
         // Cache expensive external call once
         address tokenOwner = ownerOf(tokenId);
 
-        uint256 distributionIndex = token.distributionIndex;
-        uint256 contributorsCount = token.contributors.length;
+        uint256 distributionIndex = t.distributionIndex;
+        uint256 contributorsCount = t.contributors.length;
 
         // Determine how many contributors to process in this batch
         uint256 currentBatchSize = _batchSize;
@@ -1907,45 +1907,46 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // incrementalValue is only needed for the activation path
         uint256 incrementalValuePerCharge = 0;
-        if (!discharge && token.distributionCharge > 0) {
-            incrementalValuePerCharge = (token.distributionValue * _coinMultiplier) / token.distributionCharge;
+        if (!discharge && t.distributionCharge > 0) {
+            incrementalValuePerCharge = (t.distributionValue * _coinMultiplier) / t.distributionCharge;
         }
 
         // Process the batch via helper (separate stack frame → avoids stack too deep)
-        uint256 ownerDistributionAmount = _processBatch(token, distributionIndex, currentBatchSize, incrementalValuePerCharge, discharge);
+        uint256 ownerDistributionAmount = _processBatch(t, distributionIndex, currentBatchSize, incrementalValuePerCharge, discharge);
 
         // Advance cursor for next call (if any)
         distributionIndex += currentBatchSize;
-        token.distributionIndex = distributionIndex;
+        t.distributionIndex = distributionIndex;
 
         // === FINAL BATCH COMPLETED? ===
         if (distributionIndex >= contributorsCount) {
             // Reset all batch state
-            token.distributionIndex = 0;
-            uint256 capturedCharge = token.distributionCharge;
-            token.distributionCharge = 0;
-            token.distributionValue = 0;
+            t.distributionIndex = 0;
+            uint256 capturedCharge = t.distributionCharge;
+            t.distributionCharge = 0;
+            t.distributionValue = 0;
 
-            uint256 remainingTokenValue = token.value;
-            token.value = 0;
+            uint256 remainingTokenValue = t.value;
+            t.value = 0;
 
             if (discharge) {
                 _addDistributedValue(tokenOwner, remainingTokenValue);
             } else {
                 if (capturedCharge > 0) {
-                    token.activeCharge += capturedCharge;
+                    t.activeCharge += capturedCharge;
                     emit ActiveCharge(tokenId, capturedCharge);
                 }
                 _addDistributedValue(tokenOwner, ownerDistributionAmount + remainingTokenValue);
+            }
 
-                // Contract-token recallable logic
-                if (token.contractTokenAddress != address(0)) {
-                    ContractToken storage ct = _contractTokens[token.contractTokenAddress][tokenId];
-                    if (_contractTokenExists[token.contractTokenAddress][ct.tokenId]) {
-                        ct.recallable = true;
-                    }
+            // Contract-token recallable logic
+            if (t.contractTokenAddress != address(0)) {
+                ContractToken storage ct = _contractTokens[t.contractTokenAddress][tokenId];
+                if (_contractTokenExists[t.contractTokenAddress][ct.tokenId]) {
+                    ct.recallable = !discharge;
                 }
             }
+
             return true;   // cycle complete
         }
 
