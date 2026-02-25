@@ -91,8 +91,11 @@ Used for **charge units**, feature fees (linking, metadata updates, buffs, etc.)
 - **Epochs & claiming**:
   - Epoch length is **30 days**.
   - The contract stores the most recent **12 epochs** (ring buffer) and keeps **3 epochs** claimable.
-  - Unclaimed / unclaimable ETH is **swept forward** so ETH does not become trapped.
-  - `syncEpoch()` is public so anyone can force epoch advancement/sweeps if activity is low.
+  - Unclaimed / unclaimable ETH is **swept forward** so ETH does not become trapped:
+    - If an epoch ends with `totalEff == 0`, its remaining pool is rolled into the next epoch immediately.
+    - Once an epoch ages past the claim window, any remaining ETH is swept into the current epoch (`SweptUnclaimable`).
+    - For long inactivity gaps, `_fastForwardEpochs` performs a bounded O(`STORED_EPOCHS`) sweep/reinit pass, preserving liveness and avoiding unbounded gas growth.
+  - `syncEpoch()` is public so anyone can permissionlessly trigger epoch advancement/sweep-forward maintenance when activity is low.
 - **UX helpers**: `previewClaim(epochId, user)` estimates a claim without changing state; `claimMany(...)` batches claims across multiple epochs.
 
 DigilCoin has **18 decimals** (same as ETH). Where we say “coins,” we mean base units at this precision.
@@ -252,7 +255,7 @@ bits 116..119 → themeId       (4 bits, 0..15)
 - `links[]` (≤ 10) • `linkEfficiency[linkId].base` and `.affinityBonus` (percent-like integers).
 - `buff { efficiencyBonus, attunement, amplification, flags, expiresAt }` — optional **temporary buffs** applied to the token. `flags` is a bitmask for special states: `STABILIZED (1)`, `ANCHORED (2)`, `PRIMED (4)`, `REVERBERATED (8)`.
 - `contributors[]` plus per-address  
-  `TokenContribution { charge, value, epoch, exists, distributed, whitelisted }`.
+  `TokenContribution { charge, value, epoch, exists, whitelisted }`.
 
 **Metadata & flags**
 - `data` (bytes) and `uri` (string). Planar tokens require `data.length ≥ 4` to preserve the affinity codec.
@@ -338,7 +341,8 @@ This is the firing of the sigil. The accumulated potential energy is transmuted 
   - After all contributors:
     - `distributionCharge` is moved to `activeCharge`.
     - The owner receives **`distribution` plus any remaining rounding “dust”** from the token’s value. Internally this is passed through `_addDistributedValue(owner, distribution + tValue)`, so the standard fee split still applies but dust is treated as part of the owner’s payout rather than an extra contract-only pool.
-- If not completed in one call, emits `Batch(tokenId, processed, total)` and awards the caller a **keeper bounty** of `batchVolume / 100` coins (1% of charge volume processed in that partial batch).
+- If not completed in one call, emits `Batch(tokenId, processed, total)`.
+- If contributor count exceeds `_batchSize`, each **partial** call also credits the caller a keeper bounty of `batchVolume / 100` coins (1% of processed contributor charge for that batch).
 - Emits `Activate(tokenId)` on completion.
 - The token is then marked `active = true`, and `activating = false`.
 
@@ -417,7 +421,7 @@ Deactivation is a **purely stateful** operation — no ETH moves in or out. It i
 dischargeToken(tokenId)
 ```
 
-(multi-tx; `nonReentrant`)
+(multi-tx)
 
 The final release. The construct is dismantled, value is settled, and remaining energy is grounded or directed outward to its neighbors.
 
@@ -432,6 +436,8 @@ msg.value == max(globalMin, token.incrementalValue) × max(1, links.length)
 ```
 
 This scales the discharge cost with link complexity. The value is added to the contract’s pool.
+
+- During continuation (`discharging == true`), `msg.value` must be exactly `0`; no extra ETH can be attached to progress calls.
 
 Two main modes:
 
@@ -450,7 +456,8 @@ Two main modes:
      - Any remaining dust from `token.value` is folded into the owner’s payout: the owner is credited with `distribution + tValue` via `_addDistributedValue(owner, distribution + tValue)`, which still enforces the usual contract fee split.
    - After this **value settlement**, the token can still have `activeCharge`—but it is now treated as **surplus power to be pushed outward**.
 
-- In any **partial** discharge batch (same as activation), the caller receives a **keeper bounty** of `batchVolume / 100` coins and a `Batch(tokenId, processed, total)` event is emitted.
+- In any **partial** discharge batch, `Batch(tokenId, processed, total)` is emitted.
+- If contributor count exceeds `_batchSize`, the caller also receives a **keeper bounty** of `batchVolume / 100` coins (credited to pending distribution, withdrawn later).
 
 After `_distribute` completes in either mode:
 
@@ -522,7 +529,6 @@ Returns raw per-address contribution data:
   uint256 charge,
   uint256 value,
   bool    exists,
-  bool    distributed,
   bool    whitelisted,
   uint256 epoch
 )
@@ -534,7 +540,6 @@ Notes:
 - To interpret safely:
   - Compare `epoch` with `tokenData(tokenId).contributionEpoch`.
   - If they differ, the contribution is from a **previous logical round** and is effectively stale, even if values are non-zero.
-- `distributed` indicates whether this contributor has already been processed in the current distribution/discharge cycle.
 - `whitelisted` is preserved across epochs and controls access for restricted tokens.
 
 ### `tokenLinkAt(tokenId, index)`
@@ -856,33 +861,40 @@ i.e. 1% of the coin rate per full increment.
 withdraw()
 ```
 
-lets any **non-blacklisted** address claim its pending ETH and coins.
+lets any address claim pending distributions, with blacklist-aware coin behavior.
 
 - Looks up `Distribution { time, coins, value }` for `msg.sender`.
-- Resets stored `coins` and `value` to 0.
-- Pays out all `value` (ETH) via a safe send.
-- Attempts to transfer all `coins` from the contract to the user via `_coins.transferFrom`; if that fails, the coins are left pending and reported as 0 in the return value.
+- Pays out all pending `value` (ETH) first; this path works even when the account is blacklisted.
+- If the account is blacklisted, the function returns immediately after ETH payout (`coins = 0`) and does **not** consume pending coin balance.
+- For non-blacklisted accounts, it reads pending base coins, computes a time bonus, and attempts a single transfer of `baseCoins + bonus`.
+- If contract coin balance is short, it attempts a best-effort `_coins.mint(address(this), shortfall)` before transfer.
+- If transfer fails, base coins are restored and bonus is not consumed.
 
 **Time-based bonus coins**
 
-If the address holds **any Digil** (`balanceOf(addr) > 0`), it also receives a **time-based coin bonus**:
+If the address holds **any Digil** (`balanceOf(addr) > 0`), it may receive a **time-based coin bonus**:
 
-- For each `BONUS_INTERVAL` (15 minutes) since the last bonus timestamp (`distribution.time`), the account earns `+coinMultiplier` coins.
-- The raw bonus is capped per call at `_coinRate`.
-- The contract computes:
+- First, the per-withdraw cap is dynamic:
 
   ```solidity
-  rawBonus = (now - lastBonusTime) / BONUS_INTERVAL × coinMultiplier
-  bonus    = min(rawBonus, cap)
+  dailyCap = _coinRate + (balanceOf(addr) * _coinMultiplier / YIELD_PERIOD)
   ```
 
-- On successful `withdraw`, `distribution.time` is updated to the current timestamp and the user receives `bonus` in addition to any base `coins` in their distribution bucket.
+  with `YIELD_PERIOD = 7`.
+- Then bonus accrues in `BONUS_INTERVAL` (15 minute) steps at 1% of that cap per step:
+
+  ```solidity
+  rawBonus = ((now - lastBonusTime) / BONUS_INTERVAL) * dailyCap / BONUS_RATE_DIVISOR
+  bonus    = min(rawBonus, dailyCap)
+  ```
+
+- `distribution.time` is updated only when a coin transfer succeeds and `bonus > 0`.
 
 ### Keeper bonus for activation/discharge continuation
 
 Both `activateToken` and `dischargeToken` share the same batch engine (`_distribute`) and keeper reward policy:
 
-- On calls that make **partial progress** (`distributionIndex` advances but contributors remain), the caller is credited:
+- On calls that make **partial progress** (`distributionIndex` advances but contributors remain), the caller can be credited:
 
 ```solidity
 keeperBonus = batchVolume / KEEPER_BOUNTY_DIVISOR
@@ -890,6 +902,7 @@ keeperBonus = batchVolume / KEEPER_BOUNTY_DIVISOR
 
 with `KEEPER_BOUNTY_DIVISOR = 100` (1%).
 - `batchVolume` is the sum of the contributors' processed `charge` (activation path) or `discharge` amount (inactive discharge path) in that specific call.
+- The bounty branch is only executed when `contributorsCount > _batchSize`, i.e., only batches that truly require continuation mint keeper rewards.
 - The reward is credited to the caller’s pending coin distribution (withdrawn later through `withdraw()`), not transferred inline.
 - Third parties can spend gas to finish someone else’s batch and get compensated in DIGIL.
 
@@ -975,6 +988,10 @@ Blacklisted addresses:
 - **Batching & epochs**:
   - Activation and discharge stream contributors in pages using `distributionIndex` and `_batchSize`.
   - After a full discharge completes, `contributors[]` is cleared and `contributionEpoch` increments, so old contributors cannot be double-counted.
+- **Token sweep safety valve**:
+  - `sweep(token)` lets `owner()` rescue arbitrary ERC-20 balances accidentally sent to `DigilToken`.
+  - The function **explicitly blocks sweeping the native DIGIL system coin** (`token != address(_coins)`), preserving solvency for pending user distributions and bonuses.
+  - Allowed sweep targets transfer full balance to the owner wallet.
 - **Access guards**:
   - Transfers and operations require callers not be blacklisted.
   - Transfers auto-whitelist the new owner on that token.
@@ -985,8 +1002,8 @@ Blacklisted addresses:
   - Buff state is global per source token (applies to all outgoing links), visible via `tokenLinkAt`.
   - Buffs are time-limited, cost scales with **bonus**, **duration**, and **linkCount**, and they are cleared on full discharge.
 - **Withdraw bonus**:
-  - `_pendingBonus` centralizes bonus math and is reused by `withdraw`.
-  - Accounts holding coins or Digils earn time-based bonuses up to `_coinRate` per withdrawal call.
+  - Bonus accrual uses 15-minute steps and a dynamic cap: `_coinRate + (NFT balance / YIELD_PERIOD)` (scaled by `_coinMultiplier`).
+  - Blacklisted accounts can still withdraw ETH but cannot withdraw coin balances or consume bonus state.
 
 ---
 
