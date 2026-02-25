@@ -31,6 +31,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private constant MAX_COIN_RATE = 1000000000;        // The maximum coin rate for operations
 
     // Constants for bonus interval and multiplier
+    uint256 private constant YIELD_PERIOD = 7;                  // Number of days required for a holder to earn 100% of their NFT balance in bonus coins.
     uint256 private constant BONUS_INTERVAL = 15 minutes;       // Time interval for bonus coin accrual upon withdrawal. Allows 100% of bonus coins to be retrieved every 25 hours 
     uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
 
@@ -619,10 +620,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Compute time-based bonus *without* mutating state.
         uint256 bonus;
-        if (balanceOf(addr) != 0) {
-            if (nowTs > oldTime) {
-                uint256 rawBonus = ((nowTs - oldTime) / BONUS_INTERVAL) * _coinMultiplier;
-                bonus = rawBonus < _coinRate ? rawBonus : _coinRate;
+        uint256 balance = balanceOf(addr);
+        if (balance > 0 && nowTs > oldTime) {
+            // COLLECTOR'S YIELD: 
+            // The daily cap increases by (Balance / YIELD_PERIOD).
+            // This ensures that over the course of 7 days, the bonus pool 
+            // generates exactly 100% of the user's NFT balance.
+            unchecked { 
+                uint256 dailyCap = _coinRate + (balance * _coinMultiplier / YIELD_PERIOD);
+
+                // Speed calculation: (Intervals elapsed) * (Daily Revenue / 100)
+                // Precision: Multiply by dailyCap before dividing by BONUS_RATE_DIVISOR (100).
+                uint256 rawBonus = ((nowTs - oldTime) / BONUS_INTERVAL) * dailyCap / BONUS_RATE_DIVISOR;
+                
+                bonus = rawBonus < dailyCap ? rawBonus : dailyCap;
             }
         }
         uint256 total = baseCoins + bonus;
