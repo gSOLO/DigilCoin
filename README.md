@@ -255,7 +255,7 @@ bits 116..119 → themeId       (4 bits, 0..15)
 - `links[]` (≤ 10) • `linkEfficiency[linkId].base` and `.affinityBonus` (percent-like integers).
 - `buff { efficiencyBonus, attunement, amplification, flags, expiresAt }` — optional **temporary buffs** applied to the token. `flags` is a bitmask for special states: `STABILIZED (1)`, `ANCHORED (2)`, `PRIMED (4)`, `REVERBERATED (8)`.
 - `contributors[]` plus per-address  
-  `TokenContribution { charge, value, epoch, exists, distributed, whitelisted }`.
+  `TokenContribution { charge, value, epoch, exists, whitelisted }`.
 
 **Metadata & flags**
 - `data` (bytes) and `uri` (string). Planar tokens require `data.length ≥ 4` to preserve the affinity codec.
@@ -529,7 +529,6 @@ Returns raw per-address contribution data:
   uint256 charge,
   uint256 value,
   bool    exists,
-  bool    distributed,
   bool    whitelisted,
   uint256 epoch
 )
@@ -541,7 +540,6 @@ Notes:
 - To interpret safely:
   - Compare `epoch` with `tokenData(tokenId).contributionEpoch`.
   - If they differ, the contribution is from a **previous logical round** and is effectively stale, even if values are non-zero.
-- `distributed` indicates whether this contributor has already been processed in the current distribution/discharge cycle.
 - `whitelisted` is preserved across epochs and controls access for restricted tokens.
 
 ### `tokenLinkAt(tokenId, index)`
