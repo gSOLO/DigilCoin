@@ -81,7 +81,9 @@ End-user Digils may **align** to a foundational plane during creation. This alig
 
 ## Global Configuration
 
-The universe's "physics" are controlled by admin dials that dictate the economy:
+The universe's "physics" are controlled by admin dials that dictate the economy. Reconfiguration is performed via:
+`configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint256 batchSize)`
+
 - **Coin Rate**: The baseline ERC-20 cost for system actions.
 - **Incremental Value**: The global minimum ETH required per coin spent (the material floor).
 - **Transfer Value**: The percentage of ETH that flows back to users versus what is retained as a protocol fee (usually a 1% to 10% fee).
@@ -108,24 +110,35 @@ Each Digil maintains a mini-ledger of its own state:
 
 The existence of a Digil follows a defined path: **Creating** → **Charging** → **Activating**. Eventually, the energy can be grounded: **Deactivating** and **Discharging**.
 
-### 1. Creating (`createToken`)
+### 1. Creating
+`createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes data)`
+
 You bring a Digil into existence by defining its required ETH increment and its activation threshold. You can choose to align it with a foundational plane (for an upfront coin fee) and choose whether it accepts open contributions or is restricted to a whitelist. Any ETH sent during creation becomes its foundational value.
 
-### 2. Charging (`chargeToken` / `chargeTokenAs`)
+### 2. Charging
+`chargeToken(uint256 tokenId, uint256 coins)`
+`chargeTokenAs(address contributor, uint256 tokenId, uint256 coins)`
+
 To empower the sigil, participants offer material value (ETH) and energetic value (Coins). 
 - **Inactive Tokens**: Charging builds "Potential Energy." Participants supply coins and the required minimum ETH. 
 - **Active Tokens**: If the token has no links, coins become "Kinetic Energy" (Active Charge). If the token is linked, the energy is distributed across the network based on the strength and affinity of those links. Unused ETH goes to the token's owner.
 
-### 3. Activating (`activateToken`)
+### 3. Activating
+`activateToken(uint256 tokenId)`
+
 Once an inactive token reaches its activation threshold, it can be activated. This transmutes potential energy into active kinetic energy. 
 - The token's pooled ETH is settled back to the contributors proportionally based on how much they charged it.
 - The owner receives their original required contribution pool plus any mathematical rounding dust.
 - If there are many contributors, this processes in batches. Anyone can step in to pay gas and finish a batch, earning a **keeper bounty** in DIGIL for doing so.
 
-### 4. Deactivating (`deactivateToken`)
+### 4. Deactivating
+`deactivateToken(uint256 tokenId)`
+
 A purely stateful operation that powers down an active construct. No ETH moves. Thematic bleed occurs: a portion of the token's active power is sacrificed to the void (burned) as the cost of breaking the spell.
 
-### 5. Discharging (`dischargeToken`)
+### 5. Discharging
+`dischargeToken(uint256 tokenId)`
+
 The final release dismantling the construct. 
 - **Inactive Discharge**: Contributors receive a full refund of their ETH and Coins. The owner gets any leftover value.
 - **Active Discharge**: Behaves like activation—ETH is settled proportionally. However, any remaining active power is forcefully pushed outward along the token's link graph, strengthening its neighbors before the token is wiped clean.
@@ -134,11 +147,11 @@ The final release dismantling the construct.
 
 ## Linking & Affinity
 
-By calling `linkToken`, you establish a flow of value between two Digils. The strength of this connection relies on **Planar Affinity**—how well the elemental nature of the source aligns with the destination (e.g., Fire to Air vs. Fire to Water).
+By calling `linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency)`, you establish a flow of value between two Digils. The strength of this connection relies on **Planar Affinity**—how well the elemental nature of the source aligns with the destination (e.g., Fire to Air vs. Fire to Water).
 
 - Linking splits the required ETH evenly between the two tokens.
 - Creating links costs Coins. You receive an **Early-Link Discount** (50% off) for the first two new links on a token.
-- You can unlink peer-to-peer Digils via `unlinkToken`, but foundational planar alignments chosen at creation are permanent.
+- You can unlink peer-to-peer Digils via `unlinkToken(uint256 tokenId, uint256 linkId)`, but foundational planar alignments chosen at creation are permanent.
 
 ---
 
@@ -146,7 +159,9 @@ By calling `linkToken`, you establish a flow of value between two Digils. The st
 
 Owners can spend an active token's kinetic energy (Active Charge) to apply temporary rituals and enhancements.
 
-### Temporary Buffs (`buffToken`)
+### Temporary Buffs
+`buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearance, uint256 durationMinutes)`
+
 You can mix and match effects for a designated time period (up to 7 days). The cost dynamically scales based on the duration, the number of links, and the magnitude of the requested powers:
 - **Efficiency**: Temporarily boosts the base efficiency of all outgoing links.
 - **Attunement**: Temporarily shifts your token's frequency to mimic a different Planar Archetype, altering how it synergizes with neighbors.
@@ -154,13 +169,19 @@ You can mix and match effects for a designated time period (up to 7 days). The c
 - **Anchor**: Binds energy to the vessel. When discharged, the token retains 25% of its power rather than dissipating completely.
 - **Reverb**: Creates a feedback loop. A portion of the energy successfully pushed to outgoing links echoes back to the source.
 
-### Stabilization (`stabilizeToken`)
+### Stabilization
+`stabilizeToken(uint256 tokenId)`
+
 Acts as insurance. By paying a small upfront Coin fee, the token is warded against the 50% power bleed that normally occurs during Deactivation or Vault Recalls.
 
-### Priming (`primeToken`)
+### Priming
+`primeToken(uint256 tokenId)`
+
 Acts as a catalyst for inactive tokens. By paying an upfront Coin fee, the activation threshold is temporarily halved, making it significantly easier to activate the sigil.
 
-### Overcharging (`overchargeToken`)
+### Overcharging
+`overchargeToken(uint256 tokenId, uint256 coins)`
+
 A direct conversion feature for owners. You can pay a premium ETH fee to inject raw Active Charge directly into an active token without generating contribution records. 
 
 ---
@@ -170,31 +191,45 @@ A direct conversion feature for owners. You can pay a premium ETH fee to inject 
 Digils can act as "spirit vessels" for other NFTs. 
 
 - **Deposit**: When you send an external ERC-721 to the Digil contract, you are charged a Coin fee, and a new Digil is minted wrapped around your NFT. 
-- **Recall (`recallToken`)**: Once the Digil completes at least one activation cycle, the owner can recall the underlying NFT. Pulling the artifact out of the vessel causes the Digil to suffer a power bleed, leaving behind an empty, but highly charged and historically rich, shell.
+- **Recall**: `recallToken(address collection, uint256 digilId)`  
+  Once the Digil completes at least one activation cycle, the owner can recall the underlying NFT. Pulling the artifact out of the vessel causes the Digil to suffer a power bleed, leaving behind an empty, but highly charged and historically rich, shell.
 
 ---
 
 ## Distributions, Withdrawals & Reclaims
 
-### Withdrawals (`withdraw`)
+### Withdrawals
+`withdraw()`
+
 When ETH or Coins are owed to you (from activation payouts, refunds, or system rewards), they sit in a pending distribution pool. Calling withdraw pulls these assets to your wallet. 
 - **Time Bonuses**: If you hold any Digils, letting your pending Coins sit allows them to accrue a time-based bonus over a 7-day yield period. 
 
-### Contributor Reclaim (`reclaimContribution`)
+### Contributor Reclaim
+`reclaimContribution(uint256 tokenId)`
+
 A non-custodial safety hatch. If you contributed to a token that has been completely inactive for 90 days, you can unilaterally pull your ETH back out. This forfeits your associated Coins but ensures your ETH is never trapped by a negligent token owner.
 
 ---
 
 ## Opt-Out / Blacklist
 
-Accounts can willingly blacklist themselves via `setOptStatus` by paying a small fee. Blacklisted accounts cannot send/receive Digils, participate in charging, or earn Coin bonuses. They can, however, always withdraw their pending ETH. This is useful for individuals who wish to permanently exit the gameplay loop.
+`setOptStatus(bool optOut)`
+
+Accounts can willingly blacklist themselves via this function by paying a small fee. Blacklisted accounts cannot send/receive Digils, participate in charging, or earn Coin bonuses. They can, however, always withdraw their pending ETH. This is useful for individuals who wish to permanently exit the gameplay loop.
 
 ---
 
 ## Admin & Security Notes
 
-- **Metadata Updates (`updateToken`)**: Token URIs and internal arbitrary data can be updated for a Coin fee, but economic parameters cannot be changed once a token has been charged.
-- **Read-Only Views**: The contract exposes various `tokenCharge`, `tokenData`, `tokenBuff`, and `tokenContribution` functions to allow front-ends to easily read the complex, packed state of any Digil.
+- **Metadata Updates**: `updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes data, string uri)`  
+  Token URIs and internal arbitrary data can be updated for a Coin fee, but economic parameters cannot be changed once a token has been charged.
+- **Read-Only Views**: The contract exposes various functions to allow front-ends to easily read the complex, packed state of any Digil:
+  - `tokenCharge(uint256 tokenId)`
+  - `tokenData(uint256 tokenId)`
+  - `tokenBuff(uint256 tokenId)`
+  - `tokenContribution(uint256 tokenId, address contributor)`
+  - `tokenLinkAt(uint256 tokenId, uint256 index)`
+  - `tokenAttachment(uint256 tokenId)`
 - **Batch Safety**: Sensitive lifecycle transitions are protected by batch-locks. If a token is mid-activation, it cannot be transferred, charged, or updated until the community finishes the batch processing.
 - **Sweep Safety**: The admin can rescue mistakenly sent ERC-20s, but is explicitly blocked from sweeping the native Digil Coin to ensure protocol solvency.
 
@@ -213,19 +248,19 @@ Accounts can willingly blacklist themselves via `setOptStatus` by paying a small
 ## How it Works: End-to-End Examples
 
 ### 1. Creating and Charging
-Alice decides to create a new intent. She calls `createToken`, setting a moderate ETH requirement and an activation threshold of 100 Coins. She pays an extra Coin fee to align her Digil permanently with the "Harmony" plane. Because she leaves it open (unrestricted), anyone can contribute.
-Bob sees her Digil and calls `chargeToken`. He supplies 50 Coins and the necessary ETH. Bob is now logged as a contributor. 
+Alice decides to create a new intent. She calls `createToken(200_000 gwei, 100 * 10**18, false, 12, "ipfs://token-A")`, setting a moderate ETH requirement and an activation threshold of 100 Coins. She pays an extra Coin fee to align her Digil permanently with the "Harmony" plane. Because she leaves it open (unrestricted), anyone can contribute.  
+Bob sees her Digil and calls `chargeToken(tokenA, 50 * 10**18)`. He supplies 50 Coins and the necessary ETH. Bob is now logged as a contributor. 
 
 ### 2. Activating the Sigil
-Alice and Bob finish charging the token to 100 Coins. Alice calls `activateToken`. The contract looks at the ETH pooled inside the token and distributes it back to Alice and Bob based on their 50/50 contribution split. The token is now marked "Active", and the 100 Potential Coins become 100 Kinetic Coins (Active Charge).
+Alice and Bob finish charging the token to 100 Coins. Alice calls `activateToken(tokenA)`. The contract looks at the ETH pooled inside the token and distributes it back to Alice and Bob based on their 50/50 contribution split. The token is now marked "Active", and the 100 Potential Coins become 100 Kinetic Coins (Active Charge).
 
 ### 3. Linking & Buffing
-Alice wants to power up Charlie's Digil. She calls `linkToken` to connect her Digil to Charlie's. Because Charlie's Digil is aligned to "Exergy" (which pairs well with her "Harmony" alignment), the contract grants a massive Affinity Bonus. 
+Alice wants to power up Charlie's Digil. She calls `linkToken(tokenA, tokenC, 120)` to connect her Digil to Charlie's. Because Charlie's Digil is aligned to "Exergy" (which pairs well with her "Harmony" alignment), the contract grants a massive Affinity Bonus. 
 
-Before sending power, Alice calls `buffToken`, spending some of her Active Charge to apply the **Reverb** and **Amplification** effects for 24 hours. Now, when she charges her active token, the power flows directly across the link to Charlie, gets multiplied by the Amplification, and a portion of that successful transfer echoes back to Alice to recharge her own Digil. 
+Before sending power, Alice calls `buffToken(tokenA, 30, 0, 0, 8, 0, 1440)`, spending some of her Active Charge to apply the **Reverb** and **Amplification** effects for 24 hours. Now, when she charges her active token, the power flows directly across the link to Charlie, gets multiplied by the Amplification, and a portion of that successful transfer echoes back to Alice to recharge her own Digil. 
 
 ### 4. Deactivating and Discharging
-Months later, Alice is done with her construct. She calls `deactivateToken`. The token powers down, and half of its remaining kinetic energy is burned into the void. She then calls `dischargeToken`. Because the token is active, it settles any remaining internal value, then forcefully flushes all of its remaining kinetic energy out into Charlie's token (and any other links she made), before wiping itself completely clean, ready to be used anew. 
+Months later, Alice is done with her construct. She calls `deactivateToken(tokenA)`. The token powers down, and half of its remaining kinetic energy is burned into the void. She then calls `dischargeToken(tokenA)`. Because the token is active, it settles any remaining internal value, then forcefully flushes all of its remaining kinetic energy out into Charlie's token (and any other links she made), before wiping itself completely clean, ready to be used anew. 
 
 ---
 
