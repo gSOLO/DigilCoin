@@ -2790,11 +2790,16 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint16 requestedFlags = flags & DigilFlags.USER_FLAGS_MASK;
 
         require(
-            (efficiencyBonus > 0 && efficiencyBonus <= MAX_BUFF_BONUS) ||
-            (attunement > 0 && attunement < PLANAR_MAX_ID) || 
-            (amplification > 0 && amplification <= MAX_BUFF_BONUS) ||
-            requestedFlags > 0 ||
-            appearance != 0,
+            efficiencyBonus <= MAX_BUFF_BONUS &&
+            attunement < PLANAR_MAX_ID &&
+            amplification <= MAX_BUFF_BONUS &&
+            (
+                efficiencyBonus > 0 ||
+                attunement > 0 || 
+                amplification > 0 ||
+                requestedFlags > 0 ||
+                appearance != 0
+            ),
             "DIGIL: Invalid Buff"
         );
         
