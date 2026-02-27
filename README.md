@@ -182,6 +182,7 @@ Owners can spend an active token's kinetic energy (Active Charge) to apply tempo
 You can mix and match effects for a designated time period (up to 7 days). The cost dynamically scales based on the duration, the number of links, and the magnitude of the requested powers:
 - **Efficiency**: Temporarily boosts the base efficiency of all outgoing links.
 - **Attunement**: Temporarily shifts your token's frequency to mimic a different Planar Archetype, altering how it synergizes with neighbors.
+  - **Synergy Discount**: Attunement magnitude gets a **25% discount** when the chosen plane has a strong affinity with the token's primary planar link.
 - **Amplification**: Multiplies any incoming energy landing on the token.
 - **Anchor**: Binds energy to the vessel. When discharged, the token retains 25% of its power rather than dissipating completely.
 - **Reverb**: Creates a feedback loop. A portion of the energy successfully pushed to outgoing links echoes back to the source.
