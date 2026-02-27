@@ -685,8 +685,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _addValue(address addr, uint256 value, uint256 coins) internal {
         if (value > 0 || coins > 0) {
             Distribution storage distribution = _distributions[addr];
-            distribution.value += value;
-            distribution.coins += coins;
+            unchecked {
+                distribution.value += value;
+                distribution.coins += coins;
+            }
         }
     }
 
@@ -740,7 +742,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  value The amount of value (in wei) to add.
     function _createValue(uint256 tokenId, uint256 value) internal {
         if (value > 0) {
-            _tokens[tokenId].value += value;
+            unchecked {
+                _tokens[tokenId].value += value;
+            }
             emit Enrich(tokenId, value);
         }
     }
@@ -1623,7 +1627,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  t The storage reference to the token.
     /// @param  amount The amount of active charge to add.
     function _addActiveCharge(uint256 tokenId, Token storage t, uint256 amount) internal {
-        t.activeCharge += amount;
+        unchecked {
+            t.activeCharge += amount;
+        }
         emit ActiveCharge(tokenId, amount);
     }
 
@@ -1854,10 +1860,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             }
 
             // Coins + required value are tied together at the Charge level
-            c.charge += coins;
-            c.discharge += realCoins;
-            t.charge += coins;
-            c.value += minimumValue;
+            unchecked {
+                c.charge += coins;
+                c.discharge += realCoins;
+                t.charge += coins;
+                c.value += minimumValue;
+            }
             emit Charge(contributor, tokenId, coins, minimumValue);
 
             // minimumValue -> affects c.value and reclaimContribution
@@ -2805,7 +2813,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     tier *= AFFINITY_BOOST;
                 }
 
-                magnitude += tier * 50;
+                uint256 attunementCost = tier * 50;
+
+                // --- Synergy Discount ---
+                uint256 baseLink = t.links.length > 0 ? t.links[0] : 0;
+                if (baseLink > 0 && baseLink <= PLANAR_MAX_ID) {
+                    bytes storage s = _tokens[baseLink].data;
+                    bytes storage d = _tokens[attunement].data;
+                    if (s[1] == d[0] || s[2] == d[0]) {
+                        // 25% off magnitude for strong affinity 
+                        attunementCost -= attunementCost / (AFFINITY_REDUCTION * AFFINITY_REDUCTION); 
+                    }
+                }
+
+                magnitude += attunementCost;
             }
             // 2. Flag Cost (The "Payment" Logic)
             // Check each allowed user flag. If set, increase magnitude.
