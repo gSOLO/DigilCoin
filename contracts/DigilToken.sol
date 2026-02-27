@@ -363,8 +363,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         data[11] = bytes("newya|X.NNW"); // nature
         data[12] = bytes("hrdyg|X.SE "); // harmony
         data[13] = bytes("dohyp|X.SW "); // discord
-        data[14] = bytes("podto|K.W  "); // entropy
-        data[15] = bytes("grhtr|K.E  "); // negentropy/exergy
+        data[14] = bytes("podty|K.W  "); // entropy
+        data[15] = bytes("grhty|K.E  "); // negentropy/exergy
         data[16] = bytes("kpgtx|K    "); // magick/kosmos
         data[17] = bytes("txy--|K.X  "); // aether
         data[18] = bytes("yxt--|X.R  "); // external reality/world
