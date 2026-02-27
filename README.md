@@ -254,7 +254,7 @@ Accounts can willingly blacklist themselves via this function by paying a small 
   - `configuration()`
 - **Batch Safety**: Sensitive lifecycle transitions are protected by batch-locks. If a token is mid-activation, it cannot be transferred, charged, or updated until the community finishes the batch processing.
 - **Sweep Safety**: The admin can rescue mistakenly sent ERC-20s, but is explicitly blocked from sweeping the native Digil Coin to ensure protocol solvency.
-- **Emergency / Backstop Controls**: Admin can rescue stuck Digils and inject value with `createValue` in exceptional protocol-maintenance situations.
+- **Emergency / Backstop Controls**: Admin can sweep non-DIGIL ERC-20 tokens accidentally sent to the contract and can inject ETH value into a Digil via `createValue` for protocol-maintenance scenarios; there is no implemented admin function in `DigilToken.sol` that forcibly rescues/transfers arbitrary Digil NFTs.
 
 ---
 
