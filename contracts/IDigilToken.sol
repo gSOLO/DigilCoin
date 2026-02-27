@@ -40,14 +40,14 @@ interface IDigilToken is IERC721, IERC721Receiver {
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external;
     function configuration() external view returns (uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize);
 
+    // Sweep (Admin Function)
+    function sweep(address token) external;
+
     // Withdraw
     function withdraw() external payable returns (uint256 coins, uint256 value);
 
     // Opt In / Opt Out
     function setOptStatus(bool optOut) external payable;
-
-    // Rescue Token
-    function rescueToken(uint256 tokenId, address to) external;
 
     // ERC721 Receiver
     function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external override returns (bytes4);
