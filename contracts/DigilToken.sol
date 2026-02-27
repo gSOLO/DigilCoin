@@ -672,6 +672,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Add Value and Distributions
 
+    /// @dev    Reverts with {InsufficientFunds} using the caller-provided required amount.
+    /// @param  required The exact native-value amount expected for the operation (in wei).
     function _revertInsufficientFunds(uint256 required) private pure {
         revert InsufficientFunds(required);
     }
@@ -2756,6 +2758,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - A precomputed `magnitude` score is calculated from requested parameters:
     ///             * `efficiencyBonus + amplification`
     ///             * + tiered attunement weight (scaled by attunement plane and short-duration boost)
+    ///               and reduced by 25% when the chosen attunement has strong affinity with the token's
+    ///               primary planar link (Synergy Discount)
     ///             * + costs for requested flags and tier tags
     ///             * + a small flat weight if `appearance` tags are provided
     ///         - Cost uses {_buffCost(magnitude, duration, linkCount)} where:
