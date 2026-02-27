@@ -672,6 +672,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Add Value and Distributions
 
+    function _revertInsufficientFunds(uint256 required) private pure {
+        revert InsufficientFunds(required);
+    }
+
     /// @dev    Internal helper that adds native value to the contract’s own pending distribution bucket.
     /// @param  value The amount of Ether (in wei) to add.
     function _addValue(uint256 value) internal {
@@ -761,7 +765,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(msg.value);
 
         // Ensure the contract has sufficient available value.
-        if (_distributions[address(this)].value < value) revert InsufficientFunds(value);
+        if (_distributions[address(this)].value < value) _revertInsufficientFunds(value);
 
         _distributions[address(this)].value -= value;
 
@@ -860,7 +864,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Calculate required minimum funds for opting in/out.
         // This ties the opt decision to the current economic scale of the system.
         uint256 required = _incrementalValue * _coinRate / _coinMultiplier;        
-        if (msg.value != required) revert InsufficientFunds(required);
+        if (msg.value != required) _revertInsufficientFunds(required);
         
         // Add the sent value to the contract’s distribution (not to any specific token).
         _addValue(required);
@@ -930,7 +934,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Penalty: require at least one incremental unit of ETH.
         // Use the greater of the token's incrementalValue or the global minimum
         uint256 required = _max(t.incrementalValue, _incrementalValue);
-        if (msg.value != required) revert InsufficientFunds(required);
+        if (msg.value != required) _revertInsufficientFunds(required);
 
         // Route the penalty into the system’s value pool.
         _addValue(required);
@@ -1384,7 +1388,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // 3. CHECK FUNDS
-        if (msg.value < required) revert InsufficientFunds(required);
+        if (msg.value < required) _revertInsufficientFunds(required);
         
         // 4. CREATE TOKEN & SET STATE
         uint256 tokenId = _createToken(_msgSender(), incrementalValue, activationThreshold, data);
@@ -1479,7 +1483,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 // Switching into restricted mode requires paying at least the higher
                 // of token.incrementalValue or the global minimum.
                 uint256 required = _max(t.incrementalValue, _incrementalValue);
-                if (value < required) revert InsufficientFunds(required);
+                if (value < required) _revertInsufficientFunds(required);
                 emit Restrict(tokenId);
             }
             // If restricting is being disabled, no additional payment is required.
@@ -1585,7 +1589,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // base = max(old, new, _incrementalValue)
             minimumValue = _max(t.incrementalValue, _max(incrementalValue, _incrementalValue));
         }
-        if (msg.value != minimumValue) revert InsufficientFunds(minimumValue);
+        if (msg.value != minimumValue) _revertInsufficientFunds(minimumValue);
 
         // Add any sent Ether to the contract's distribution (not directly to this token).
         _addValue(minimumValue);
@@ -1781,7 +1785,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             uint256 requiredValue = _max(t.incrementalValue, _incrementalValue);
 
             // For direct proxy calls, we revert if funds are insufficient.
-            if (value < requiredValue) revert InsufficientFunds(requiredValue);
+            if (value < requiredValue) _revertInsufficientFunds(requiredValue);
         }
         
         TokenContribution storage c = t.contributions[contributor];
@@ -1835,7 +1839,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // For non-linked charging, enforce whitelisting and minimum value.
             require(whitelisted, "DIGIL: Restricted");
 
-            if (value < minimumValue) revert InsufficientFunds(minimumValue);
+            if (value < minimumValue) _revertInsufficientFunds(minimumValue);
             
             // Transfer coins from the contributor to this contract.
             _coinsFromSender(coins);
@@ -2197,10 +2201,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // Determine the required minimum value for discharge, scaled by number of links.
             // This scales the "fee" with the complexity of the token's graph.
             uint256 required = _max(t.incrementalValue, _incrementalValue) * _max(t.links.length, 1);
-            if (msg.value != required) revert InsufficientFunds(required);
+            if (msg.value != required) _revertInsufficientFunds(required);
              _addValue(msg.value);
         } else {
-            if (msg.value != 0) revert InsufficientFunds(0);
+            if (msg.value != 0) _revertInsufficientFunds(0);
         }
         
         // Update last activity
@@ -2489,7 +2493,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         uint256 value = msg.value;
         uint256 requiredValue = t.incrementalValue + d.incrementalValue;
-        if (value < requiredValue) revert InsufficientFunds(requiredValue);
+        if (value < requiredValue) _revertInsufficientFunds(requiredValue);
 
         // Update last activity
         t.lastActivity = block.timestamp;
@@ -2985,7 +2989,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Premium cost: 2x the normal ETH-per-coin-unit rate.
         // `coins` is in "coin units" (scaled by _coinMultiplier), so we normalize by _coinMultiplier.
         uint256 required = (iv * coins * AFFINITY_BOOST) / _coinMultiplier;
-        if (msg.value != required) revert InsufficientFunds(required);
+        if (msg.value != required) _revertInsufficientFunds(required);
 
         // Update last activity timestamp.
         t.lastActivity = block.timestamp;
