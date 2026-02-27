@@ -2802,64 +2802,67 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Calculate Magnitude
         {
-            uint256 magnitude = uint256(efficiencyBonus) + uint256(amplification);
+            unchecked {
+                uint256 magnitude = uint256(efficiencyBonus) + uint256(amplification);
 
-            // 1. Attunement Cost
-            if (attunement > 0) {
-                uint256 tier;
-                if (attunement < 4) tier = 4;         // void/karma/kaos
-                else if (attunement < 8) tier = 1;    // elements
-                else if (attunement < 12) tier = 2;   // para
-                else if (attunement < 17) tier = 8;   // energy
-                else tier = 16;                       // aether
+                // 1. Attunement Cost
+                if (attunement > 0) {
+                    uint256 tier;
+                    if (attunement < 4) tier = 4;         // void/karma/kaos
+                    else if (attunement < 8) tier = 1;    // elements
+                    else if (attunement < 12) tier = 2;   // para
+                    else if (attunement < 17) tier = 8;   // energy
+                    else tier = 16;                       // aether
 
-                if (duration <= 15) {
-                    tier *= AFFINITY_BOOST;
-                }
-
-                uint256 attunementCost = tier * 50;
-
-                // --- Synergy Discount ---
-                uint256 baseLink = t.links.length > 0 ? t.links[0] : 0;
-                if (baseLink > 0 && baseLink <= PLANAR_MAX_ID) {
-                    bytes storage s = _tokens[baseLink].data;
-                    bytes storage d = _tokens[attunement].data;
-                    if (s[1] == d[0] || s[2] == d[0]) {
-                        // 25% off magnitude for strong affinity 
-                        attunementCost -= attunementCost / (AFFINITY_REDUCTION * AFFINITY_REDUCTION); 
+                    if (duration <= 15) {
+                        tier *= AFFINITY_BOOST;
                     }
+
+                    uint256 attunementCost = tier * 50;
+
+                    // --- Synergy Discount ---
+                    uint256 baseLink = t.links.length > 0 ? t.links[0] : 0;
+                    if (baseLink > 0 && baseLink <= PLANAR_MAX_ID) {
+                        bytes storage s = _tokens[baseLink].data;
+                        bytes storage d = _tokens[attunement].data;
+                        bytes1 target = d[0];
+                        if (s[1] == target || s[2] == target) {
+                            // 25% off magnitude for strong affinity 
+                            attunementCost -= attunementCost / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
+                        }
+                    }
+
+                    magnitude += attunementCost;
                 }
+                // 2. Flag Cost (The "Payment" Logic)
+                // Check each allowed user flag. If set, increase magnitude.
+                if (DigilFlags.has(requestedFlags, DigilFlags.ANCHORED))      magnitude += 50;
+                if (DigilFlags.has(requestedFlags, DigilFlags.REVERBERATED))  magnitude += 50;
+                if (DigilFlags.has(requestedFlags, DigilFlags.ELEMENTAL))     magnitude += 5;
+                if (DigilFlags.has(requestedFlags, DigilFlags.PARAELEMENTAL)) magnitude += 10;
+                if (DigilFlags.has(requestedFlags, DigilFlags.VOIDIC))        magnitude += 25;
+                if (DigilFlags.has(requestedFlags, DigilFlags.KARMIC))        magnitude += 50;
+                if (DigilFlags.has(requestedFlags, DigilFlags.KAOTIC))        magnitude += 50;
+                if (DigilFlags.has(requestedFlags, DigilFlags.AETHERIAL))     magnitude += 100;
+                if (DigilFlags.has(requestedFlags, DigilFlags.CELESTIAL))     magnitude += 200;
+                // --- Appearance tagging cost (style/cosmetics/colors in `appearance`) ---
+                // Light flat magnitude so appearance tagging isn't completely free.
+                if (DigilAppearance.hasStyle(appearance))     magnitude += 5;
+                if (DigilAppearance.hasCosmetics(appearance)) magnitude += 5;
+                if (DigilAppearance.hasColors(appearance))    magnitude += 5; // includes mainRgb + gradients
 
-                magnitude += attunementCost;
+                // Save the magnitude
+                t.buff.magnitude = uint16(magnitude);
+
+                // Calculate link count (min 1)
+                uint256 linkCount = t.links.length;
+                if (linkCount == 0) linkCount = 1;
+
+                // Cost is proportional to magnitude, duration, and number of affected links.
+                uint256 cost = _buffCost(magnitude, duration, linkCount);
+                if (t.activeCharge < cost) revert InsufficientActiveCharge(cost);
+                t.activeCharge -= cost;
             }
-            // 2. Flag Cost (The "Payment" Logic)
-            // Check each allowed user flag. If set, increase magnitude.
-            if (DigilFlags.has(requestedFlags, DigilFlags.ANCHORED))      magnitude += 50;
-            if (DigilFlags.has(requestedFlags, DigilFlags.REVERBERATED))  magnitude += 50;
-            if (DigilFlags.has(requestedFlags, DigilFlags.ELEMENTAL))     magnitude += 5;
-            if (DigilFlags.has(requestedFlags, DigilFlags.PARAELEMENTAL)) magnitude += 10;
-            if (DigilFlags.has(requestedFlags, DigilFlags.VOIDIC))        magnitude += 25;
-            if (DigilFlags.has(requestedFlags, DigilFlags.KARMIC))        magnitude += 50;
-            if (DigilFlags.has(requestedFlags, DigilFlags.KAOTIC))        magnitude += 50;
-            if (DigilFlags.has(requestedFlags, DigilFlags.AETHERIAL))     magnitude += 100;
-            if (DigilFlags.has(requestedFlags, DigilFlags.CELESTIAL))     magnitude += 200;
-            // --- Appearance tagging cost (style/cosmetics/colors in `appearance`) ---
-            // Light flat magnitude so appearance tagging isn't completely free.
-            if (DigilAppearance.hasStyle(appearance))     magnitude += 5;
-            if (DigilAppearance.hasCosmetics(appearance)) magnitude += 5;
-            if (DigilAppearance.hasColors(appearance))    magnitude += 5; // includes mainRgb + gradients
-
-            // Save the magnitude
-            t.buff.magnitude = uint16(magnitude);
-
-            // Calculate link count (min 1)
-            uint256 linkCount = t.links.length;
-            if (linkCount == 0) linkCount = 1;
-
-            // Cost is proportional to magnitude, duration, and number of affected links.
-            uint256 cost = _buffCost(magnitude, duration, linkCount);
-            if (t.activeCharge < cost) revert InsufficientActiveCharge(cost);
-            t.activeCharge -= cost;
         }
 
         // Compute expiry timestamp in seconds
