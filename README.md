@@ -143,8 +143,8 @@ To empower the sigil, participants offer material value (ETH) and energetic valu
 `activateToken(uint256 tokenId)`
 
 Once an inactive token reaches its activation threshold, it can be activated. This transmutes potential energy into active kinetic energy.
-- The token's pooled ETH is settled back to the contributors proportionally based on how much they charged it.
-- The owner receives their original required contribution pool plus any mathematical rounding dust.
+- Required contribution ETH is settled to the token owner.
+- Contributors only receive a proportional ETH distribution if there is distributable surplus value in the token.
 - If there are many contributors, this processes in batches. Anyone can step in to pay gas and finish a batch, earning a **keeper bounty** in DIGIL for doing so.
 
 ### 4. Deactivating
@@ -274,7 +274,7 @@ Alice decides to create a new intent. She calls `createToken(200_000 gwei, 100 *
 Bob sees her Digil and calls `chargeToken(tokenA, 50 * 10**18)`. He supplies 50 Coins and the necessary ETH. Bob is now logged as a contributor.
 
 ### 2. Activating the Sigil
-Alice and Bob finish charging the token to 100 Coins. Alice calls `activateToken(tokenA)`. The contract looks at the ETH pooled inside the token and distributes it back to Alice and Bob based on their 50/50 contribution split. The token is now marked "Active", and the 100 Potential Coins become 100 Kinetic Coins (Active Charge).
+Alice and Bob finish charging the token to 100 Coins. Alice calls `activateToken(tokenA)`. The required contribution ETH is settled to the owner of `tokenA` (Alice). If any extra surplus ETH had been sitting in the token, that surplus would be distributed proportionally to contributors. The token is now marked "Active", and the 100 Potential Coins become 100 Kinetic Coins (Active Charge).
 
 ### 3. Linking & Buffing
 Alice wants to power up Charlie's Digil. She calls `linkToken(tokenA, tokenC, 120)` to connect her Digil to Charlie's. Because Charlie's Digil is aligned to "Exergy" (which pairs well with her "Harmony" alignment), the contract grants a massive Affinity Bonus.
@@ -282,7 +282,7 @@ Alice wants to power up Charlie's Digil. She calls `linkToken(tokenA, tokenC, 12
 Before sending power, Alice calls `buffToken(tokenA, 30, 0, 0, 8, 0, 1440)`, spending some of her Active Charge to apply the **Reverb** and **Amplification** effects for 24 hours. Now, when she charges her active token, the power flows directly across the link to Charlie, gets multiplied by the Amplification, and a portion of that successful transfer echoes back to Alice to recharge her own Digil.
 
 ### 4. Deactivating and Discharging
-Months later, Alice is done with her construct. She calls `deactivateToken(tokenA)`. The token powers down, and half of its remaining kinetic energy is burned into the void. She then calls `dischargeToken(tokenA)`. Because the token is active, it settles any remaining internal value, then forcefully flushes all of its remaining kinetic energy out into Charlie's token (and any other links she made), before wiping itself completely clean, ready to be used anew.
+Months later, Alice is done with her construct. She calls `deactivateToken(tokenA)`. The token powers down, and half of its remaining kinetic energy is burned into the void. She then calls `dischargeToken(tokenA)`. Because the token is now inactive, discharge runs the inactive unwind path: contribution records are settled/refunded per the discharge rules, any remaining active charge is pushed through links (with normal anchor/rounding behavior), and the token is wiped clean for a new cycle.
 
 ---
 
