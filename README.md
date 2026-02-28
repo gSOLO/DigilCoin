@@ -158,6 +158,7 @@ A purely stateful operation that powers down an active construct. No ETH moves. 
 The final release dismantling the construct.
 - **Inactive Discharge**: Contributors receive a full refund of their ETH and Coins. The owner gets any leftover value.
 - **Active Discharge**: Behaves like activation—ETH is settled proportionally. However, any remaining active power is forcefully pushed outward along the token's link graph, strengthening its neighbors before the token is wiped clean.
+- **Wrapped NFT Recallability**: If this Digil wraps an external ERC721, an *inactive* discharge clears recallability; an *active* discharge preserves it (the external NFT remains vaulted until recalled).
 
 ---
 
@@ -211,8 +212,9 @@ Digils can act as "spirit vessels" for other NFTs.
 
 - **Deposit**: When you send an external ERC-721 to the Digil contract, you are charged a Coin fee, and a new Digil is minted wrapped around your NFT.
 - **Recall**: `recallToken(address account, uint256 digilId)`  
-  Once the Digil completes at least one activation cycle, the owner can recall the underlying NFT. Pulling the artifact out of the vessel causes the Digil to suffer a power bleed, leaving behind an empty, but highly charged and historically rich, shell.
-- **Safeguard**: Wrapped tokens can only be recalled when protocol state says the vessel has completed the required lifecycle gates.
+  Once the Digil completes at least one activation cycle, the owner can recall the underlying NFT **as long as the Digil remains active**. If the Digil is discharged into an inactive state, recallability is cleared and the Digil must be activated again to make the wrapped NFT recallable. Pulling the artifact out of the vessel causes the Digil to suffer a power bleed, leaving behind an empty, but highly charged and historically rich, shell.
+- **Safeguard**: Wrapped tokens can only be recalled when protocol state says the vessel has completed the required lifecycle gates (and the Digil is currently active).
+ 
 
 ---
 
