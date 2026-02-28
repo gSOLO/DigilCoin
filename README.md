@@ -142,7 +142,7 @@ To empower the sigil, participants offer material value (ETH) and energetic valu
 ### 3. Activating
 `activateToken(uint256 tokenId)`
 
-Once an inactive token reaches its activation threshold, it can be activated. This transmutes potential energy into active kinetic energy.
+Once an inactive token reaches its activation threshold, it can be activated (first call requires owner/approved operator; continuation calls are open to anyone not blacklisted). This transmutes potential energy into active kinetic energy.
 - Required contribution ETH is settled to the token owner.
 - Contributors only receive a proportional ETH distribution if there is distributable surplus value in the token.
 - If there are many contributors, this processes in batches. Anyone can step in to pay gas and finish a batch, earning a **keeper bounty** in DIGIL for doing so.
@@ -155,7 +155,7 @@ A purely stateful operation that powers down an active construct. No ETH moves. 
 ### 5. Discharging
 `dischargeToken(uint256 tokenId)`
 
-The final release dismantling the construct.
+The final release dismantling the construct. First call requires owner/approved operator; continuation calls are open to anyone not blacklisted.
 - **Inactive Discharge**: Contributors receive a full refund of their ETH and Coins. The owner gets any leftover value.
 - **Active Discharge**: Behaves like activation—ETH is settled proportionally. However, any remaining active power is forcefully pushed outward along the token's link graph, strengthening its neighbors before the token is wiped clean.
 - **Wrapped NFT Recallability**: If this Digil wraps an external ERC721, an *inactive* discharge clears recallability; an *active* discharge preserves it (the external NFT remains vaulted until recalled).
