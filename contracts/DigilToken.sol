@@ -255,7 +255,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Emitted when a temporary buff is applied to a token.
     /// @param  tokenId The ID of the token that was buffed.
-    event Buff(uint256 indexed tokenId);
+    event Buff(uint256 indexed tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint256 duration);
 
     /// @notice Emitted when a token is stabilized to prevent active charge bleed.
     /// @param  tokenId The ID of the token being stabilized.
@@ -2901,7 +2901,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Update last activity
         t.lastActivity = block.timestamp;
 
-        emit Buff(tokenId);
+        emit Buff(tokenId, efficiencyBonus, attunement, amplification, flags, duration);
     }
 
     /// @notice Primes an inactive token to temporarily reduce its activation threshold
