@@ -895,7 +895,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///           `c.charge > 0`) in the current contribution epoch.
     ///
     ///         Penalty:
-    ///         - The caller must send at least one unit of "penalty" value:
+    ///         - The caller must send one unit of "penalty" value:
     ///               required = max(token.incrementalValue, _incrementalValue)
     ///           If `msg.value` is below this threshold, the call reverts with
     ///           {InsufficientFunds}.
