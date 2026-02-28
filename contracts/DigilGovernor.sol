@@ -121,7 +121,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @notice Thrown when a stake-related action is attempted but user/total stake is zero or already burned.
     error NoStake();
 
-    /// @param defaultAdmin Admin that receives DEFAULT_ADMIN_ROLE and VETO_ROLE.
+    /// @param defaultAdmin Admin that becomes {owner} and can call {veto}.
     /// @param _token The IVotes token used for delegation-based voting power (DigilCoin).
     /// @param _timelock Timelock controller used for queued/executed operations.
     /// @param _nftGate The ERC721 used to gate voting by NFT tokenId.
