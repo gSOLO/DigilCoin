@@ -989,8 +989,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///        as immutable provenance data.
     ///      * `recallable` for this Digil remains `false` initially; the external token
     ///        cannot be recalled yet.
-    ///  - The external token becomes *recallable* only after the Digil completes an
-    ///    **activation** distribution cycle:
+    ///  - The external token becomes *recallable* after the Digil completes an
+    ///    **activation** distribution cycle, and remains recallable while the Digil is active:
     ///      * When `_distribute(tokenId, false)` finishes (called from {activateToken}),
     ///        it sets `_contractTokens[contractTokenAddress][tokenId].recallable = true`
     ///        if and only if `_contractTokenExists[contractTokenAddress][externalTokenId]`
@@ -1001,8 +1001,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///      * Sets `_contractTokenExists[external][externalTokenId] = false`,
     ///        meaning the token is no longer vaulted.
     ///      * Leaves `contractTokenAddress` and `tokenId` intact for historical provenance.
-    ///  - A full discharge cycle (see {dischargeToken}) **does not** make a token
-    ///    recallable; in fact, it explicitly clears `recallable` after distribution,
+    ///  - A full discharge cycle (see {dischargeToken}) sets `recallable` based on whether
+    ///    the Digil remains active: inactive unwind clears it; active settlement preserves it,
     ///    while leaving the external token still vaulted until recall.
     function onERC721Received(address, address from, uint256 tokenId, bytes calldata data) external nonReentrant returns (bytes4) {
         _notOnBlacklist(from);
@@ -1045,9 +1045,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///  - The attached contract-token record for this Digil must be marked
     ///    `recallable`:
     ///        _contractTokens[account][tokenId].recallable == true.
-    ///    This flag is set only when a full **activation** distribution cycle
-    ///    completes via {_distribute} called from {activateToken}, and the external
-    ///    token is still vaulted (i.e.
+    ///    This flag is set when a full **activation** distribution cycle
+    ///    completes via {_distribute} called from {activateToken}, and is maintained while
+    ///    the Digil remains active, provided the external token is still vaulted (i.e.
     ///        _contractTokenExists[account][externalTokenId] == true
     ///    at the end of the distribution).
     ///
@@ -1257,7 +1257,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///       - The external ERC721 has been deposited via {onERC721Received} and is
     ///         currently held (“vaulted”) by this contract.
     ///       - No full activation distribution cycle has yet completed to mark it
-    ///         recallable, or a full discharge cycle has since cleared recallability.
+    ///         recallable, or the Digil is currently inactive (so recallability is not asserted).
     ///
     ///  3. Vaulted and recallable
     ///     - `contractTokenAddress != address(0)`
@@ -1267,7 +1267,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///     Interpretation:
     ///       - The external ERC721 is still held by this contract and was marked
     ///         recallable when a full activation distribution cycle completed via
-    ///         {_distribute} called from {activateToken}.
+    ///         {_distribute} called from {activateToken}, and remains recallable while the Digil is active.
     ///       - It can now be reclaimed by an approved operator using {recallToken}.
     ///
     ///  4. Recalled (historical-only)
@@ -1290,10 +1290,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///    and is:
     ///      * set to `true` when a full activation distribution cycle completes and the
     ///        external token is still vaulted, and
+    ///      * maintained while the Digil remains active (and the external token remains vaulted), and
     ///      * set back to `false` either when:
     ///          - {recallToken} succeeds, or
-    ///          - a full discharge cycle completes ({dischargeToken}), which explicitly
-    ///            clears recallability without unvaulting the external token.
+    ///          - a full discharge cycle completes ({dischargeToken}) for an inactive token (unwind),
+    ///            which clears recallability without unvaulting the external token.
     ///
     /// @param  tokenId The internal Digil token ID being queried.
     /// @return contractTokenAddress The ERC721 contract address of the attached token (zero if none).
@@ -1939,7 +1940,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///   safely span multiple transactions.
     /// - When the final batch completes: resets all batch state, converts
     ///   captured charge to `activeCharge` (activation), marks attached
-    ///   contract tokens recallable, and distributes remaining value.
+    ///   contract tokens recallable (while active/activating), and distributes remaining value.
     /// - After a full cycle the caller clears the contributors array and
     ///   bumps `contributionEpoch` (logical reset of all records).
     ///
@@ -2010,7 +2011,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if (t.contractTokenAddress != address(0)) {
                 ContractToken storage ct = _contractTokens[t.contractTokenAddress][tokenId];
                 if (_contractTokenExists[t.contractTokenAddress][ct.tokenId]) {
-                    ct.recallable = !discharge;
+                    ct.recallable = (t.active || t.activating);
                 }
             }
 
