@@ -212,8 +212,8 @@ Digils can act as "spirit vessels" for other NFTs.
 
 - **Deposit**: When you send an external ERC-721 to the Digil contract, you are charged a Coin fee, and a new Digil is minted wrapped around your NFT.
 - **Recall**: `recallToken(address account, uint256 digilId)`  
-  Once the Digil completes at least one activation cycle, the owner can recall the underlying NFT **as long as the Digil remains active**. If the Digil is discharged into an inactive state, recallability is cleared and the Digil must be activated again to make the wrapped NFT recallable. Pulling the artifact out of the vessel causes the Digil to suffer a power bleed, leaving behind an empty, but highly charged and historically rich, shell.
-- **Safeguard**: Wrapped tokens can only be recalled when protocol state says the vessel has completed the required lifecycle gates (and the Digil is currently active).
+  Once the Digil completes at least one activation cycle, an approved operator can recall the underlying NFT. Recallability is sticky until explicitly cleared: it is removed when the wrapped NFT is recalled, or when a full discharge settles while the Digil is inactive. Deactivation alone does not clear the flag. Pulling the artifact out of the vessel causes the Digil to suffer a power bleed, leaving behind an empty, but highly charged and historically rich, shell.
+- **Safeguard**: Wrapped tokens can only be recalled when protocol state says the vessel has completed the required lifecycle gates and currently marks the attachment as recallable.
  
 
 ---
