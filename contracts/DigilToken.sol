@@ -32,7 +32,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Constants for bonus interval and multiplier
     uint256 private constant YIELD_PERIOD = 7;                  // Number of days required for a holder to earn 100% of their NFT balance in bonus coins.
-    uint256 private constant BONUS_INTERVAL = 15 minutes;       // Time interval for bonus coin accrual upon withdrawal. Allows 100% of bonus coins to be retrieved every 25 hours 
+    uint256 private constant BONUS_INTERVAL = 15 minutes;       // Bonus accrual interval (100% of cap is reachable every ~25 hours).
     uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
 
     // Configuration values for incremental and transfer values
@@ -72,7 +72,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev address(0)    = Unvaulted
     ///      address(this) = Fully Vaulted (attached to a Digil)
     ///      User Address  = Pending Vault (deposited by user, waiting for fee payment)
-    mapping(address => mapping(uint256 => address)) private _contractTokenAddress;  // Tracks the current owner of an external ERC721 token in the vault.
+    mapping(address => mapping(uint256 => address)) private _contractTokenAddress;  // Tracks the current owner of an external ERC721 token in the vault. (externalContract, externalTokenId).
 
 
     /// @dev Structure to hold pending coin and value distributions for a user, and
@@ -179,8 +179,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  batchSize The new batch size
     event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize);
 
-    /// @notice Emitted when an address opts out (added to the blacklist).
-    /// @param  account The address of the account that opted out
+    /// @notice Emitted when an address toggles opt-out status.
+    /// @param  account The address whose status changed
+    /// @param  optOut  True if the account is now opted out
     event OptStatus(address indexed account, bool optOut);
 
     /// @notice Emitted when an address is added to a token’s whitelist.
@@ -558,17 +559,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         contract’s own pending distribution bucket (`_distributions[address(this)]`).
     receive() external payable {
         _addValue(msg.value);
-    }
-
-    /// @notice Rescues random ERC20 tokens accidentally sent to the contract.
-    /// @dev    Transfers the full balance of the specified token to the contract owner.
-    ///         Explicitly prevents sweeping the system's native `_coins` token to protect
-    ///         protocol solvency.
-    /// @param  token The contract address of the ERC20 token to rescue.
-    function sweep(address token) external onlyOwner {
-        require(token != address(_coins), "DIGIL: Cannot Sweep System Coins");
-        uint256 balance = IERC20Mintable(token).balanceOf(address(this));
-        IERC20Mintable(token).transfer(owner(), balance);
     }
 
     /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
@@ -957,6 +947,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // ERC721 Receiver
 
     /// @inheritdoc IERC721Receiver
+    /// @dev Records a pending vault deposit for (msg.sender = external contract, tokenId = external tokenId).
     function onERC721Received(address, address from, uint256 tokenId, bytes calldata) external nonReentrant returns (bytes4) {
         address account = _msgSender();
         
@@ -970,6 +961,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Completes or cancels a pending ERC721 vault deposit.
+    /// @dev `account` is the external ERC721 contract; `tokenId` is the external tokenId.
+    ///      If `claim` is true, the external token remains held by this contract and a new Digil is minted.
+    ///      If `claim` is false, the external token is returned to the depositor and the pending record is cleared.
     /// @param  account The external ERC721 contract address.
     /// @param  tokenId The external ERC721 token ID.
     /// @param  data    Optional data to store with the new Digil token (ignored if canceling).
