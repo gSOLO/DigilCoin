@@ -83,6 +83,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     event Unlock(address indexed user);
     /// @notice Emitted when a user stakes coins on a proposal during Pending/Active state.
     event Stake(uint256 indexed proposalId, address indexed user, uint256 amount);
+    /// @notice Emitted when coins are irreversibly burned as “signal” during Pending/Active state.
+    event Signal(uint256 indexed proposalId, address indexed user, uint256 amount);
     /// @notice Emitted when a user claims stake back on success/cancel states.
     event Claim(uint256 indexed proposalId, address indexed user, uint256 amount);
     /// @notice Emitted when stakes are batch-burned on failure; keeper receives bounty.
@@ -113,7 +115,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     error LockNotExpired(uint256 expiry);
     /// @notice Thrown when attempting to unlock with no locked balance.
     error NoLockedCoins();
-    /// @notice Thrown when staking actions are attempted in an invalid Governor state.
+    /// @notice Thrown when staking/signaling actions are attempted in an invalid Governor state.
     error InvalidProposalState(ProposalState state);
     /// @notice Thrown when a stake-related action is attempted but user/total stake is zero or already burned.
     error NoStake();
@@ -564,5 +566,25 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         }
 
         emit Burn(proposalId, sender, burnAmount, bounty);
+    }
+
+    /// @notice Burns coins immediately as a “signal” during Pending/Active state (non-refundable).
+    /// @dev This is separate from staking: signal is always burned; stake is conditionally refundable/burnable based on proposal outcome.
+    /// @param proposalId Proposal to signal.
+    /// @param amount Amount of DigilCoin to burn as signal.
+    function signalProposal(uint256 proposalId, uint256 amount) external {
+        ProposalState currentState = state(proposalId);
+        
+        // Rule: Can only signal if Pending or Active
+        if (currentState != ProposalState.Pending && currentState != ProposalState.Active) {
+            revert InvalidProposalState(currentState);
+        }
+
+        address sender = _msgSender();
+
+        _transferFrom(sender, address(this), amount);
+        _burn(amount);
+
+        emit Signal(proposalId, sender, amount);
     }
 }
