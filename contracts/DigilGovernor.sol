@@ -15,7 +15,7 @@ import {IERC20Burnable} from "contracts/IERC20Burnable.sol";
 
 /// @title Digil Governor
 /// @author gSOLO
-/// @notice Governance contract for DigilCoin with: (1) NFT-gated voting, (2) vote weight boosted by time-locked coins, (3) quadratic counting, (4) timelock execution, and (5) optional stake/signal mechanic.
+/// @notice Governance contract for DigilCoin with: (1) NFT-gated voting, (2) vote weight boosted by time-locked coins, (3) quadratic counting, (4) timelock execution, and (5) optional stakeing mechanic.
 /// @dev Extends OpenZeppelin Governor with custom `_getVotes` (raw power) + `_countVote` (quadratic tally). Time is sourced from the token’s ERC6372 clock (`token().clock()` / `token().CLOCK_MODE()`).
 /// @custom:security-contact security@digil.co.in
 // OPTIMIZATION: Removed 'GovernorSettings' inheritance
@@ -54,17 +54,17 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @dev Quorum is computed as a percentage of sqrt(totalSupplyAtSnapshot).
     uint256 private constant QUORUM_PERCENT = 4; // 4%
 
-    // --- STAKING STORAGE ---
-    /// @dev Keeper bounty in basis points paid when burning all stakes on a failed proposal.
-    uint256 private constant STAKE_KEEPER_FEE =  500; // 5%
-    /// @dev Basis points denominator.
-    uint256 private constant BPS_DENOMINATOR = 10000;
-
-    /// @notice User stake amounts per proposal (principal claimable if proposal succeeds/cancels; burned if defeated/expired via batch burn).
-    mapping(uint256 => mapping(address => uint256)) internal proposalStakes;
+    /// @dev Tracks the PvP staking markets per proposal.
+    struct ProposalMarket {
+        uint256 totalStakedFor;
+        uint256 totalStakedAgainst;
+        bool orphanedSwept; // Flags if orphaned tokens have been burned
+        mapping(address => uint256) stakeFor;
+        mapping(address => uint256) stakeAgainst;
+    }
     
-    /// @dev Cached total stake per proposal to allow single-call batch burn.
-    mapping(uint256 => uint256) internal proposalTotalStaked;
+    /// @dev Tracks the PvP staking markets per proposal.
+    mapping(uint256 => ProposalMarket) public proposalMarkets;
 
     /// @dev Internal support encoding used in `_countVote`.
     enum VoteType {
@@ -81,16 +81,23 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     event Lock(address indexed user, uint256 amount, uint48 expiry);
     /// @notice Emitted when coins are unlocked (principal returned).
     event Unlock(address indexed user);
-    /// @notice Emitted when a user stakes coins on a proposal during Pending/Active state.
-    event Stake(uint256 indexed proposalId, address indexed user, uint256 amount);
-    /// @notice Emitted when coins are irreversibly burned as “signal” during Pending/Active state.
-    event Signal(uint256 indexed proposalId, address indexed user, uint256 amount);
-    /// @notice Emitted when a user claims stake back on success/cancel states.
-    event Claim(uint256 indexed proposalId, address indexed user, uint256 amount);
-    /// @notice Emitted when stakes are batch-burned on failure; keeper receives bounty.
-    event Burn(uint256 indexed proposalId, address indexed keeper, uint256 amountBurned, uint256 bountyPaid);
     /// @notice Emitted when the proposal threshold is set.
     event ProposalThresholdSet(uint256 oldProposalThreshold, uint256 newProposalThreshold);
+    /// @notice Emitted when a user places a stake on a proposal outcome.
+    /// @param proposalId The ID of the proposal being staked on.
+    /// @param user The address of the user placing the stake.
+    /// @param supportFor True if betting the proposal will pass, False if betting it will fail.
+    /// @param amount The amount of tokens staked.
+    event Stake(uint256 indexed proposalId, address indexed user, bool supportFor, uint256 amount);
+    /// @notice Emitted when a user claims their winnings or refund.
+    /// @param proposalId The ID of the proposal.
+    /// @param user The address of the user claiming.
+    /// @param amount The total amount of tokens sent back to the user (principal + winnings).
+    event Claim(uint256 indexed proposalId, address indexed user, uint256 amount);
+    /// @notice Emitted when orphaned tokens (from a losing side with no winners) are burned.
+    /// @param proposalId The ID of the proposal.
+    /// @param amount The amount of tokens burned.
+    event Burn(uint256 indexed proposalId, uint256 amount);
 
     // Errors
     /// @notice Thrown when vote params are missing (tokenId is required for NFT-gated voting).
@@ -115,10 +122,17 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     error LockNotExpired(uint256 expiry);
     /// @notice Thrown when attempting to unlock with no locked balance.
     error NoLockedCoins();
-    /// @notice Thrown when staking/signaling actions are attempted in an invalid Governor state.
+    /// @notice Thrown when staking actions are attempted in an invalid Governor state.
     error InvalidProposalState(ProposalState state);
     /// @notice Thrown when a stake-related action is attempted but user/total stake is zero or already burned.
     error NoStake();
+    /// @notice Thrown when attempting to claim or sweep on a market that is still pending or active.
+    error MarketNotFinalized();
+    /// @notice Thrown when a user attempts to claim winnings but their chosen side lost, or they already claimed.
+    error StakeLostOrNothingToClaim();
+    /// @notice Thrown when a sweep operation is attempted but there are no orphaned stakes to burn.
+    error NoOrphanedStakes();
+    /// @notice Thrown when vote params are missing (tokenId is required for NFT-gated voting).
 
     /// @param _token The IVotes token used for delegation-based voting power (DigilCoin).
     /// @param _timelock Timelock controller used for queued/executed operations.
@@ -451,7 +465,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         emit Unlock(sender);
     }
 
-    // Staking and Signaling
+    // --- PVP STAKING (PREDICTION MARKET) ---
 
     /// @dev Internal safe wrapper for ERC20 transferFrom with explicit false-return handling.
     function _transferFrom(address from, address to, uint256 amount) internal {
@@ -470,121 +484,112 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         IERC20Burnable(address(token())).burn(amount);
     }
 
-    /// @notice Stakes coins on a proposal while it is Pending or Active.
-    /// @dev Uses CEI: updates accounting first, then pulls tokens. If transferFrom fails, the whole tx reverts and storage updates roll back.
-    /// @param proposalId Proposal to stake on.
-    /// @param amount Amount of DigilCoin to stake.
-    function stakeOnProposal(uint256 proposalId, uint256 amount) external {
+    /// @notice Evaluates the current state of a proposal and translates it into a prediction market outcome.
+    /// @dev    Internal helper used by `claimWinnings` and `sweepOrphanedStakes` to consolidate logic and save bytecode.
+    /// @param  proposalId The ID of the proposal being evaluated.
+    /// @return outcome An integer representing the market result: 1 = FOR won, 0 = AGAINST won, 2 = DRAW (Canceled).
+    /// @custom:reverts MarketNotFinalized if the proposal is still voting (Pending or Active).
+    function _getMarketOutcome(uint256 proposalId) internal view returns (uint8) {
+        ProposalState s = state(proposalId);
+        if (s == ProposalState.Succeeded || s == ProposalState.Queued || s == ProposalState.Executed) return 1;
+        if (s == ProposalState.Defeated || s == ProposalState.Expired) return 0;
+        if (s == ProposalState.Canceled) return 2;
+        revert MarketNotFinalized();
+    }
+
+    /// @notice Stakes coins on the outcome of a governance proposal (PvP Prediction Market).
+    /// @dev    Tokens are transferred from the user to the Governor. Can only be called during Pending or Active states.
+    /// @param  proposalId The ID of the proposal to stake on.
+    /// @param  supportFor Set to `true` to bet that the proposal will succeed. Set to `false` to bet it will fail.
+    /// @param  amount The amount of DigilCoin to stake.
+    function stakeOnOutcome(uint256 proposalId, bool supportFor, uint256 amount) external {
         ProposalState currentState = state(proposalId);
 
-        // Rule: Can only stake if Pending or Active
+        // Can only enter the market while voting is pending or active
         if (currentState != ProposalState.Pending && currentState != ProposalState.Active) {
             revert InvalidProposalState(currentState);
         }
 
         address sender = _msgSender();
+        ProposalMarket storage market = proposalMarkets[proposalId];
 
         // --- EFFECTS ---
-        proposalStakes[proposalId][sender] += amount;
-        proposalTotalStaked[proposalId] += amount;
+        if (supportFor) {
+            market.stakeFor[sender] += amount;
+            market.totalStakedFor += amount;
+        } else {
+            market.stakeAgainst[sender] += amount;
+            market.totalStakedAgainst += amount;
+        }
 
         // --- INTERACTION ---
         _transferFrom(sender, address(this), amount);
 
-        emit Stake(proposalId, sender, amount);
+        emit Stake(proposalId, sender, supportFor, amount);
     }
 
-    /// @notice Claims staked coins back for proposals that succeeded (or were canceled) and are refundable.
-    /// @dev Refundable in: Succeeded, Queued, Executed, Canceled. Not refundable in Defeated/Expired (those are burnable).
-    /// @param proposalId Proposal to claim stake from.
-    function claimStake(uint256 proposalId) external {
-        ProposalState currentState = state(proposalId);
-        
-        // Rule: Can claim if Succeeded, Queued, Executed, or Canceled.
-        // (i.e., NOT Pending, Active, Defeated, or Expired)
-        bool claimable = (
-            currentState == ProposalState.Succeeded || 
-            currentState == ProposalState.Queued || 
-            currentState == ProposalState.Executed ||
-            currentState == ProposalState.Canceled
-        );
-        
-        if (!claimable) revert InvalidProposalState(currentState);
+    /// @notice Claims winnings or a refund for a finalized proposal market.
+    /// @dev    If the user bet correctly, they receive their principal plus a proportional share of the losing side's pool.
+    ///         If the proposal was canceled, the market is a DRAW and the user receives exactly their principal back.
+    ///         Calculates payout dynamically and clears user balances before transfer (CEI pattern).
+    /// @param  proposalId The ID of the finalized proposal to claim from.
+    function claimWinnings(uint256 proposalId) external {
+        uint8 outcome = _getMarketOutcome(proposalId);
 
         address sender = _msgSender();
+        ProposalMarket storage market = proposalMarkets[proposalId];
+        
+        uint256 userFor = market.stakeFor[sender];
+        uint256 userAgainst = market.stakeAgainst[sender];
+        
+        if (userFor == 0 && userAgainst == 0) revert NoStake();
 
-        uint256 amount = proposalStakes[proposalId][sender];
-        if (amount == 0) revert NoStake();
+        // Clear balances first to prevent reentrancy
+        market.stakeFor[sender] = 0;
+        market.stakeAgainst[sender] = 0;
 
-        // Effects: clear user stake and reduce cached total before transferring.
-        proposalStakes[proposalId][sender] = 0;        
-        proposalTotalStaked[proposalId] -= amount; 
+        uint256 payout = 0;
 
-        _transfer(sender, amount);
-        emit Claim(proposalId, sender, amount);
+        if (outcome == 1) { // FOR Won
+            if (userFor > 0) payout = userFor + ((userFor * market.totalStakedAgainst) / market.totalStakedFor);
+        } else if (outcome == 0) { // AGAINST Won
+            if (userAgainst > 0) payout = userAgainst + ((userAgainst * market.totalStakedFor) / market.totalStakedAgainst);
+        } else if (outcome == 2) { // DRAW
+            payout = userFor + userAgainst; 
+        }
+
+        if (payout == 0) revert StakeLostOrNothingToClaim();
+
+        _transfer(sender, payout);
+        emit Claim(proposalId, sender, payout);
     }
 
-    /// @notice Burns all stake on a failed proposal (Defeated or Expired) in one call; pays a keeper bounty.
-    /// @dev Any caller can execute this “cleanup” once. This is intended as a batch-guard pattern to avoid per-user loops.
-    /// @param proposalId Proposal whose stakes should be finalized by burning.
-    function burnAllStakes(uint256 proposalId) external {
-        // 1. CONSOLIDATED STATE CHECK
-        // Instead of rejecting specific bad states, we only accept the two valid ones.
-        ProposalState currentState = state(proposalId);
-        
-        // Rule: Can only burn if Defeated or Expired
-        if (currentState != ProposalState.Defeated && currentState != ProposalState.Expired) {
-            revert InvalidProposalState(currentState);
+    /// @notice Burns losing tokens if the winning side had zero participants.
+    /// @dev    For example, if a proposal is Defeated (AGAINST wins), but absolutely zero tokens were staked AGAINST it,
+    ///         the tokens staked FOR it are "orphaned" (nobody can claim them). This function permanently burns them.
+    ///         Can be called by anyone exactly once per finalized market.
+    /// @param  proposalId The ID of the finalized proposal to sweep.
+    function sweepOrphanedStakes(uint256 proposalId) external {
+        ProposalMarket storage market = proposalMarkets[proposalId];
+        if (market.orphanedSwept) revert NoOrphanedStakes();
+
+        uint8 outcome = _getMarketOutcome(proposalId);
+        uint256 amountToBurn = 0;
+
+        if (outcome == 1) { // FOR won
+            if (market.totalStakedFor == 0) amountToBurn = market.totalStakedAgainst;
+        } else if (outcome == 0) { // AGAINST won
+            if (market.totalStakedAgainst == 0) amountToBurn = market.totalStakedFor;
+        } else {
+            // outcome == 2 (DRAW). Everyone is refunded, no orphaned tokens.
+            revert NoOrphanedStakes(); 
         }
 
-        // 2. CONSOLIDATED AMOUNT CHECK
-        // If we already burned it, or if nobody ever staked, there is "NothingToBurn".
-        if (proposalTotalStaked[proposalId] == 0) {
-            revert NoStake();
-        }
+        if (amountToBurn == 0) revert NoOrphanedStakes();
 
-        // 3. EXECUTION
-        uint256 totalAmount = proposalTotalStaked[proposalId];
-        
-        // Update state first (Checks-Effects-Interactions)
-        proposalTotalStaked[proposalId] = 0; 
+        market.orphanedSwept = true;
+        _burn(amountToBurn);
 
-        // Calculate Jackpot Bounty
-        uint256 bounty = (totalAmount * STAKE_KEEPER_FEE) / BPS_DENOMINATOR;
-        uint256 burnAmount = totalAmount - bounty;
-
-        address sender = _msgSender();
-
-        // Pay the Keeper
-        if (bounty > 0) {
-            _transfer(sender, bounty);
-        }
-
-        // Burn the rest
-        if (burnAmount > 0) {
-            _burn(burnAmount);
-        }
-
-        emit Burn(proposalId, sender, burnAmount, bounty);
-    }
-
-    /// @notice Burns coins immediately as a “signal” during Pending/Active state (non-refundable).
-    /// @dev This is separate from staking: signal is always burned; stake is conditionally refundable/burnable based on proposal outcome.
-    /// @param proposalId Proposal to signal.
-    /// @param amount Amount of DigilCoin to burn as signal.
-    function signalProposal(uint256 proposalId, uint256 amount) external {
-        ProposalState currentState = state(proposalId);
-        
-        // Rule: Can only signal if Pending or Active
-        if (currentState != ProposalState.Pending && currentState != ProposalState.Active) {
-            revert InvalidProposalState(currentState);
-        }
-
-        address sender = _msgSender();
-
-        _transferFrom(sender, address(this), amount);
-        _burn(amount);
-
-        emit Signal(proposalId, sender, amount);
+        emit Burn(proposalId, amountToBurn);
     }
 }
