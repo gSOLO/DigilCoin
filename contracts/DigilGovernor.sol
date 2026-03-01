@@ -502,7 +502,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @param  proposalId The ID of the proposal to stake on.
     /// @param  supportFor Set to `true` to bet that the proposal will succeed. Set to `false` to bet it will fail.
     /// @param  amount The amount of DigilCoin to stake.
-    function stakeOnOutcome(uint256 proposalId, bool supportFor, uint256 amount) external {
+    function stake(uint256 proposalId, bool supportFor, uint256 amount) external {
         ProposalState currentState = state(proposalId);
 
         // Can only enter the market while voting is pending or active
@@ -533,7 +533,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     ///         If the proposal was canceled, the market is a DRAW and the user receives exactly their principal back.
     ///         Calculates payout dynamically and clears user balances before transfer (CEI pattern).
     /// @param  proposalId The ID of the finalized proposal to claim from.
-    function claimWinnings(uint256 proposalId) external {
+    function claim(uint256 proposalId) external {
         uint8 outcome = _getMarketOutcome(proposalId);
 
         address sender = _msgSender();
@@ -569,7 +569,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     ///         the tokens staked FOR it are "orphaned" (nobody can claim them). This function permanently burns them.
     ///         Can be called by anyone exactly once per finalized market.
     /// @param  proposalId The ID of the finalized proposal to sweep.
-    function sweepOrphanedStakes(uint256 proposalId) external {
+    function burn(uint256 proposalId) external {
         ProposalMarket storage market = proposalMarkets[proposalId];
         if (market.orphanedSwept) revert NoOrphanedStakes();
 
