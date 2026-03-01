@@ -7,7 +7,6 @@ import {GovernorTimelockControl} from "@openzeppelin/contracts/governance/extens
 import {GovernorVotes} from "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
@@ -20,7 +19,7 @@ import {IERC20Burnable} from "contracts/IERC20Burnable.sol";
 /// @dev Extends OpenZeppelin Governor with custom `_getVotes` (raw power) + `_countVote` (quadratic tally). Time is sourced from the token’s ERC6372 clock (`token().clock()` / `token().CLOCK_MODE()`).
 /// @custom:security-contact security@digil.co.in
 // OPTIMIZATION: Removed 'GovernorSettings' inheritance
-contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTimelockControl, Ownable {
+contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTimelockControl {
     using Checkpoints for Checkpoints.Trace208;
 
     /// @notice ERC721 used as a gate/credential to cast a vote (by tokenId) and to prevent double-use of an NFT per proposal.
@@ -78,8 +77,6 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     uint256 private _proposalThreshold = 10000e18;
 
     // Events
-    /// @notice Emitted when a proposal is vetoed/canceled by a VETO_ROLE holder.
-    event ProposalVetoed(uint256 proposalId);
     /// @notice Emitted when coins are locked and/or the expiry is extended.
     event Lock(address indexed user, uint256 amount, uint48 expiry);
     /// @notice Emitted when coins are unlocked (principal returned).
@@ -121,11 +118,10 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @notice Thrown when a stake-related action is attempted but user/total stake is zero or already burned.
     error NoStake();
 
-    /// @param defaultAdmin Admin that becomes {owner} and can call {veto}.
     /// @param _token The IVotes token used for delegation-based voting power (DigilCoin).
     /// @param _timelock Timelock controller used for queued/executed operations.
     /// @param _nftGate The ERC721 used to gate voting by NFT tokenId.
-    constructor(address defaultAdmin, IVotes _token, TimelockController _timelock, address _nftGate) Governor("Digil Governor") GovernorVotes(_token) GovernorTimelockControl(_timelock) Ownable(defaultAdmin) {
+    constructor(IVotes _token, TimelockController _timelock, address _nftGate) Governor("Digil Governor") GovernorVotes(_token) GovernorTimelockControl(_timelock) {
         // Immutable gate reference (saves gas vs storage read).
         nftGate = IERC721(_nftGate);
     }
@@ -318,18 +314,6 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @dev Indicates a Bravo-like 3-option support, quorum counts For+Abstain, quadratic mode, and NFT gate requirement.
     function COUNTING_MODE() public pure virtual override returns (string memory) {
         return "support=bravo&quorum=for,abstain&mode=quadratic&gate=nft_id";
-    }
-
-    /// @notice Cancels a proposal through the timelock/governor pipeline.
-    /// @dev Emits ProposalVetoed(proposalId) for off-chain consumers. Uses `_cancel` from Governor (and TimelockControl extension).
-    /// @param targets Target contracts for the proposal actions.
-    /// @param values ETH values for each call.
-    /// @param calldatas Encoded function calls.
-    /// @param descriptionHash Hash of the proposal description (as per OZ Governor).
-    function veto(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) public onlyOwner {
-        uint256 proposalId = getProposalId(targets, values, calldatas, descriptionHash);
-        emit ProposalVetoed(proposalId);
-        _cancel(targets, values, calldatas, descriptionHash);
     }
 
     // Overrides required by Solidity due to multiple inheritance
