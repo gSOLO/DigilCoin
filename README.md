@@ -60,7 +60,7 @@ The on-chain governance contract for DigilCoin that executes approved proposals.
 
 - **Voting**: Uses quadratic counting (weight is the square root of held power) and is **NFT-gated** (voters must own or be approved for a Digil token to cast a ballot).
 - **Raw Vote Power Composition**: Delegated liquid votes plus time-locked coin power and a lock-duration bonus.
-- **Staking & Locking**: Users can lock their coins for a time-based voting bonus, or stake their coins on active proposals to earn keeper bounties from failed proposals.
+- **Staking, Signaling & Locking**: Users can lock coins for a time-based voting bonus, stake coins on pending/active proposals (refundable only if proposals are not defeated/expired), or burn coins as a non-refundable **signal** of support/conviction while a proposal is pending/active.
 - **Execution Safety**: Proposals execute through timelock controls, preserving review windows for privileged actions.
 
 ### Digil Timelock

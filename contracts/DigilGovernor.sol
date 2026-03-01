@@ -15,7 +15,7 @@ import {IERC20Burnable} from "contracts/IERC20Burnable.sol";
 
 /// @title Digil Governor
 /// @author gSOLO
-/// @notice Governance contract for DigilCoin with: (1) NFT-gated voting, (2) vote weight boosted by time-locked coins, (3) quadratic counting, (4) timelock execution, and (5) optional staking side-mechanic.
+/// @notice Governance contract for DigilCoin with: (1) NFT-gated voting, (2) vote weight boosted by time-locked coins, (3) quadratic counting, (4) timelock execution, and (5) optional stake/signal mechanic.
 /// @dev Extends OpenZeppelin Governor with custom `_getVotes` (raw power) + `_countVote` (quadratic tally). Time is sourced from the token’s ERC6372 clock (`token().clock()` / `token().CLOCK_MODE()`).
 /// @custom:security-contact security@digil.co.in
 // OPTIMIZATION: Removed 'GovernorSettings' inheritance
@@ -451,7 +451,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         emit Unlock(sender);
     }
 
-    // Staking
+    // Staking and Signaling
 
     /// @dev Internal safe wrapper for ERC20 transferFrom with explicit false-return handling.
     function _transferFrom(address from, address to, uint256 amount) internal {
