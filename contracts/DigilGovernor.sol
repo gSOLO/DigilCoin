@@ -15,7 +15,7 @@ import {IERC20Burnable} from "contracts/IERC20Burnable.sol";
 
 /// @title Digil Governor
 /// @author gSOLO
-/// @notice Governance contract for DigilCoin with: (1) NFT-gated voting, (2) vote weight boosted by time-locked coins, (3) quadratic counting, (4) timelock execution, and (5) optional stakeing mechanic.
+/// @notice Governance contract for DigilCoin with: (1) NFT-gated voting, (2) vote weight boosted by time-locked coins, (3) quadratic counting, (4) timelock execution, and (5) an optional proposal outcome staking market.
 /// @dev Extends OpenZeppelin Governor with custom `_getVotes` (raw power) + `_countVote` (quadratic tally). Time is sourced from the token’s ERC6372 clock (`token().clock()` / `token().CLOCK_MODE()`).
 /// @custom:security-contact security@digil.co.in
 // OPTIMIZATION: Removed 'GovernorSettings' inheritance
@@ -124,15 +124,14 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     error NoLockedCoins();
     /// @notice Thrown when staking actions are attempted in an invalid Governor state.
     error InvalidProposalState(ProposalState state);
-    /// @notice Thrown when a stake-related action is attempted but user/total stake is zero or already burned.
+    /// @notice Thrown when a user attempts to claim from a proposal where they have no stake.
     error NoStake();
     /// @notice Thrown when attempting to claim or sweep on a market that is still pending or active.
     error MarketNotFinalized();
     /// @notice Thrown when a user attempts to claim winnings but their chosen side lost, or they already claimed.
     error StakeLostOrNothingToClaim();
-    /// @notice Thrown when a sweep operation is attempted but there are no orphaned stakes to burn.
+    /// @notice Thrown when a burn operation is attempted but there are no orphaned stakes to burn.
     error NoOrphanedStakes();
-    /// @notice Thrown when vote params are missing (tokenId is required for NFT-gated voting).
 
     /// @param _token The IVotes token used for delegation-based voting power (DigilCoin).
     /// @param _timelock Timelock controller used for queued/executed operations.
@@ -485,7 +484,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     }
 
     /// @notice Evaluates the current state of a proposal and translates it into a prediction market outcome.
-    /// @dev    Internal helper used by `claimWinnings` and `sweepOrphanedStakes` to consolidate logic and save bytecode.
+    /// @dev    Internal helper used by `claim` and `burn` to consolidate logic and save bytecode.
     /// @param  proposalId The ID of the proposal being evaluated.
     /// @return outcome An integer representing the market result: 1 = FOR won, 0 = AGAINST won, 2 = DRAW (Canceled).
     /// @custom:reverts MarketNotFinalized if the proposal is still voting (Pending or Active).
