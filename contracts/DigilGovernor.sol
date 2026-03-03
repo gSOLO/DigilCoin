@@ -100,7 +100,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     event Burn(uint256 indexed proposalId, uint256 amount);
 
     // Errors
-    /// @notice Thrown when vote params are missing (tokenId is required for NFT-gated voting).
+    /// @notice Thrown when vote params are missing (tokenId is required for NFT-gated voting)
+    ///         or when a lock operation would overflow the checkpointed locked amount type (uint208)
     error InvalidParams();
     /// @notice Thrown when the same NFT tokenId is reused on the same proposal.
     error AlreadyUsedNft(uint256 tokenId);
@@ -122,9 +123,6 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     error LockNotExpired(uint256 expiry);
     /// @notice Thrown when attempting to unlock with no locked balance.
     error NoLockedCoins();
-    /// @notice Thrown when a lock operation would overflow the checkpointed locked amount type (uint208).
-    /// @dev Prevents truncation when casting the requested lock increment into uint208 and prevents overflow on addition.
-    error LockAmountOverflow();
     /// @notice Thrown when staking actions are attempted in an invalid Governor state.
     error InvalidProposalState(ProposalState state);
     /// @notice Thrown when a user attempts to claim from a proposal where they have no stake.
@@ -402,10 +400,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         uint208 newAmount = currentAmount;
         if (amount > 0) {
             // Guard: amount must fit in uint208, and currentAmount + amount must not overflow uint208.
-            if (amount > type(uint208).max) revert LockAmountOverflow();
-            uint208 a = uint208(amount);
-            if (currentAmount > type(uint208).max - a) revert LockAmountOverflow();
-            newAmount = currentAmount + a;
+            if (amount > type(uint208).max) revert InvalidParams();
+            newAmount = currentAmount + uint208(amount);
         }
 
         // Proposed expiry is “now + duration” in the Governor’s clock units (timestamp-mode).
