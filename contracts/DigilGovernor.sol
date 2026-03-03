@@ -569,10 +569,11 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         emit Claim(proposalId, sender, payout);
     }
 
-    /// @notice Burns losing tokens if the winning side had zero participants.
-    /// @dev    For example, if a proposal is Defeated (AGAINST wins), but absolutely zero tokens were staked AGAINST it,
-    ///         the tokens staked FOR it are "orphaned" (nobody can claim them). This function permanently burns them.
-    ///         Can be called by anyone exactly once per finalized market.
+    /// @notice Burns orphaned stakes for a finalized proposal market and optionally pays a caller bounty.
+    /// @dev    If the winning side has zero participants, all tokens staked on the losing side become orphaned.
+    ///         This function can be called by anyone exactly once per finalized market to dispose of those orphaned tokens.
+    ///         A bounty of 1% is paid to the caller from the orphaned amount.
+    ///         the remainder is burned.
     /// @param  proposalId The ID of the finalized proposal to sweep.
     function burn(uint256 proposalId) external {
         ProposalMarket storage market = proposalMarkets[proposalId];
@@ -594,6 +595,13 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
 
         // --- Effects ---
         market.orphanedSwept = true;
+
+        // --- Bounty (paid out of the orphaned pool), then burn remainder ---
+        uint256 bounty = amountToBurn / 100; // 1%
+        if (bounty != 0) {
+            _transfer(_msgSender(), bounty);
+            amountToBurn -= bounty;
+        }
 
         _burn(amountToBurn);
         emit Burn(proposalId, amountToBurn);
