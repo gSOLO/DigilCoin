@@ -122,6 +122,9 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     error LockNotExpired(uint256 expiry);
     /// @notice Thrown when attempting to unlock with no locked balance.
     error NoLockedCoins();
+    /// @notice Thrown when a lock operation would overflow the checkpointed locked amount type (uint208).
+    /// @dev Prevents truncation when casting the requested lock increment into uint208 and prevents overflow on addition.
+    error LockAmountOverflow();
     /// @notice Thrown when staking actions are attempted in an invalid Governor state.
     error InvalidProposalState(ProposalState state);
     /// @notice Thrown when a user attempts to claim from a proposal where they have no stake.
@@ -398,8 +401,11 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // Decide new state (no external calls yet)
         uint208 newAmount = currentAmount;
         if (amount > 0) {
-            // Safe cast: Trace208 stores uint208 values; assumes amount fits (typical ERC20 ranges).
-            newAmount = currentAmount + uint208(amount);
+            // Guard: amount must fit in uint208, and currentAmount + amount must not overflow uint208.
+            if (amount > type(uint208).max) revert LockAmountOverflow();
+            uint208 a = uint208(amount);
+            if (currentAmount > type(uint208).max - a) revert LockAmountOverflow();
+            newAmount = currentAmount + a;
         }
 
         // Proposed expiry is “now + duration” in the Governor’s clock units (timestamp-mode).
@@ -484,7 +490,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     }
 
     /// @notice Evaluates the current state of a proposal and translates it into a prediction market outcome.
-    /// @dev    Internal helper used by `claim` and `burn` to consolidate logic and save bytecode.
+    /// @dev    Internal helper used by `claim` and `burn` to consolidate logic.
     /// @param  proposalId The ID of the proposal being evaluated.
     /// @return outcome An integer representing the market result: 1 = FOR won, 0 = AGAINST won, 2 = DRAW (Canceled).
     /// @custom:reverts MarketNotFinalized if the proposal is still voting (Pending or Active).
@@ -586,9 +592,10 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
 
         if (amountToBurn == 0) revert NoOrphanedStakes();
 
+        // --- Effects ---
         market.orphanedSwept = true;
-        _burn(amountToBurn);
 
+        _burn(amountToBurn);
         emit Burn(proposalId, amountToBurn);
     }
 }
