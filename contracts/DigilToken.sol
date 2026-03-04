@@ -73,11 +73,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///      address(this) = Fully Vaulted (attached to a Digil)
     ///      User Address  = Pending Vault (deposited by user, waiting for fee payment)
     mapping(address => mapping(uint256 => address)) private _contractTokenAddresses;// Tracks the current owner of an external ERC721 token in the vault. (externalContract, externalTokenId).
-    /// @dev Reverse index for fully vaulted external ERC721 tokens.
-    /// @dev Reverse index for external ERC721 tokens that are fully vaulted in this contract.
-    ///      (externalContract, externalTokenId) => digilTokenId. 0 means no active wrapper.
+    /// @dev (externalContract, externalTokenId) => digilTokenId. 0 means no active wrapper.
     ///      Used by {recallToken} to resolve the Digil that currently wraps a vaulted external token.
-    mapping(address => mapping(uint256 => uint256)) private _vaultedTokenIds;           
+    mapping(address => mapping(uint256 => uint256)) private _vaultedTokenIds;       // Reverse index for external ERC721 tokens that are fully vaulted in this contract.      
 
 
 
@@ -999,32 +997,35 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///  - The Coin vault fee cannot be collected.
     ///
     /// @param  account The external ERC721 contract address.
-    /// @param  tokenId The external ERC721 tokenId being vaulted.
+    /// @param  externalTokenId The external ERC721 tokenId being vaulted.
     /// @param  data    Optional data to store with the newly minted Digil token.
-    function vaultToken(address account, uint256 tokenId, bytes calldata data) external nonReentrant {
+    function vaultToken(address account, uint256 externalTokenId, bytes calldata data) external nonReentrant {
         address user = _msgSender();
-        
-        // Authenticate the caller as the recorded pending depositor
-        require(_contractTokenAddresses[account][tokenId] == user, "DIGIL: Not The Depositor");
 
-         _notOnBlacklist(user);
+        // Cache nested mapping to reduce repeated keccak(base) work.
+        mapping(uint256 => address) storage vaulters = _contractTokenAddresses[account];
+
+        // Authenticate the caller as the recorded pending depositor
+        require(vaulters[externalTokenId] == user, "DIGIL: Not The Depositor");
+
+        _notOnBlacklist(user);
 
         // Transfer rights to the contract (mark as permanently vaulted)
-        _contractTokenAddresses[account][tokenId] = address(this);
+        vaulters[externalTokenId] = address(this);
 
         uint256 vaultFee = _coinRate * 10;
         if (!_transferCoinsFrom(user, address(this), vaultFee)) revert CoinTransferFailed(vaultFee);
 
-        require(IERC721(account).ownerOf(tokenId) == address(this), "DIGIL: Contract Token Not Received");
+        require(IERC721(account).ownerOf(externalTokenId) == address(this), "DIGIL: Contract Token Not Received");
 
-        uint256 internalId = _createToken(user, _incrementalValue, 0, data);   
-        _contractTokens[account][internalId].tokenId = tokenId;
+        uint256 tokenId = _createToken(user, _incrementalValue, 0, data);   
+        _contractTokens[account][tokenId].tokenId = externalTokenId;
+        // Reverse index for option-A recall lookup
+        _vaultedTokenIds[account][externalTokenId] = tokenId;
 
-        Token storage t = _tokens[internalId];
-        t.uri = string(abi.encodePacked(tokenURI(internalId), "?ct=1"));
+        Token storage t = _tokens[tokenId];
+        t.uri = string(abi.encodePacked(tokenURI(tokenId), "?ct=1"));
         t.contractTokenAddress = account;
-
-        _vaultedTokenIds[account][tokenId] = internalId;
     }
 
     /// @notice Cancels a pending external ERC721 vault deposit or recalls a vaulted external ERC721 from its Digil.
@@ -1071,16 +1072,21 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function recallToken(address account, uint256 externalTokenId) external nonReentrant {
         address caller = _msgSender();
 
-        address holder = _contractTokenAddresses[account][externalTokenId];
-        require(holder != address(0), "DIGIL: Token Not In Vault");
+        // Cache nested mappings to avoid repeated keccak(base) work.
+        mapping(uint256 => address) storage vaulters = _contractTokenAddresses[account];
+        mapping(uint256 => uint256) storage internalTokens = _vaultedTokenIds[account];
+
+        address addr = vaulters[externalTokenId];
+        require(addr != address(0), "DIGIL: Token Not In Vault");
 
         // --- Case 1: Pending deposit (cancel) ---
-        if (holder != address(this)) {
-            require(holder == caller, "DIGIL: Not The Depositor");
+        if (addr != address(this)) {
+            require(addr == caller, "DIGIL: Not The Depositor");
 
             // effects
-            _vaultedTokenIds[account][externalTokenId] = 0;
-            _contractTokenAddresses[account][externalTokenId] = address(0);
+            vaulters[externalTokenId] = address(0);
+            // Defensive: clear reverse index if set (no-op for pure pending deposits)
+            internalTokens[externalTokenId] = 0;
 
             // interaction
             IERC721(account).safeTransferFrom(address(this), caller, externalTokenId);
@@ -1088,8 +1094,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // --- Case 2: Fully vaulted / attached to a Digil (recall) ---
-        uint256 tokenId = _vaultedTokenIds[account][externalTokenId];
-        _vaultedTokenIds[account][externalTokenId] = 0;
+        uint256 tokenId = internalTokens[externalTokenId];
+        require(tokenId != 0, "DIGIL: No Digil For Token");
 
         _checkApproved(tokenId);
 
@@ -1100,15 +1106,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Safety check: enforce that the supplied account matches the attached contract.
         require(account == t.contractTokenAddress, "DIGIL: Invalid Contract Account");
 
-        ContractToken storage contractToken = _contractTokens[account][tokenId];
-        require(contractToken.tokenId == externalTokenId, "DIGIL: Wrong External Token");
-        require(contractToken.recallable, "DIGIL: Contract Token Is Not Recallable");
+        mapping(uint256 => ContractToken) storage cts = _contractTokens[account];
+        ContractToken storage contractToken = cts[tokenId];
 
         uint256 contractTokenId = contractToken.tokenId;
+        require(contractTokenId == externalTokenId, "DIGIL: Wrong External Token");
+        require(contractToken.recallable, "DIGIL: Contract Token Is Not Recallable");
 
         // --- Effects: clear all "attached contract" state first ---
         contractToken.recallable = false;
-        _contractTokenAddresses[account][contractTokenId] = address(0);
+        vaulters[contractTokenId] = address(0);
+        internalTokens[contractTokenId] = 0;
         // DO NOT clear contractToken.tokenId or t.contractTokenAddress.
         // They serve as immutable provenance metadata for this Digil.
         //contractToken.tokenId = 0;
@@ -1254,66 +1262,70 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Returns lifecycle information about any external ERC721 token
-    ///         that has been vaulted inside this Digil.
+    ///         that has been wrapped (vaulted) by this Digil.
     /// @dev
+    ///  This view reports the attachment state for `tokenId` using:
+    ///   - `_tokens[tokenId].contractTokenAddress` (which external ERC721 contract is associated),
+    ///   - `_contractTokens[contractTokenAddress][tokenId]` (which external tokenId is associated + recallable flag),
+    ///   - `_contractTokenAddresses[contractTokenAddress][externalTokenId]` (whether the external token is currently held here),
+    ///   - `_vaultedTokenIds[contractTokenAddress][externalTokenId]` (reverse index: which Digil currently wraps it).
+    ///
     ///  Lifecycle states (as observed through this view):
     ///
-    ///  1. Never vaulted
+    ///  1. Never wrapped / no provenance
     ///     - `contractTokenAddress == address(0)`
+    ///     - `externalTokenId == 0`
     ///     - `recallable == false`
     ///     - `vaulted == false`
-    ///     Interpretation: this Digil has never wrapped an external contract token.
+    ///     Interpretation: this Digil has never wrapped an external ERC721.
     ///
-    ///  2. Vaulted, not yet recallable
+    ///  2. Wrapped historically, but not currently vaulted (recalled or otherwise unvaulted)
     ///     - `contractTokenAddress != address(0)`
-    ///     - `_contractTokenExists[contractTokenAddress][externalTokenId] == true`
+    ///     - `externalTokenId != 0`
+    ///     - `_contractTokenAddresses[contractTokenAddress][externalTokenId] != address(this)`
+    ///       ⇒ `vaulted == false`
+    ///     - `recallable == false` (typically; may be stale only if state was never updated, but recall clears it)
+    ///     Interpretation:
+    ///       - {recallToken} has transferred the external ERC721 out of this contract (or it is otherwise
+    ///         not held here), so the token is not currently vaulted.
+    ///       - Provenance (`contractTokenAddress`, `externalTokenId`) is intentionally retained on the Digil
+    ///         for historical/audit/indexing purposes.
+    ///
+    ///  3. Vaulted, not yet recallable
+    ///     - `contractTokenAddress != address(0)`
+    ///     - `externalTokenId != 0`
+    ///     - `_contractTokenAddresses[contractTokenAddress][externalTokenId] == address(this)`
     ///       ⇒ `vaulted == true`
     ///     - `recallable == false`
     ///     Interpretation:
-    ///       - The external ERC721 has been deposited via {onERC721Received} and is
-    ///         currently held (“vaulted”) by this contract.
-    ///       - No full activation distribution cycle has yet completed to mark it
-    ///         recallable, or the Digil is currently inactive (so recallability is not asserted).
+    ///       - The external ERC721 is currently held (“vaulted”) by this contract under this Digil.
+    ///       - Recallability has not yet been granted for this attachment (e.g., activation distribution
+    ///         has not completed while active/activating).
     ///
-    ///  3. Vaulted and recallable
+    ///  4. Vaulted and recallable
     ///     - `contractTokenAddress != address(0)`
-    ///     - `_contractTokenExists[contractTokenAddress][externalTokenId] == true`
+    ///     - `externalTokenId != 0`
+    ///     - `_contractTokenAddresses[contractTokenAddress][externalTokenId] == address(this)`
     ///       ⇒ `vaulted == true`
     ///     - `recallable == true`
     ///     Interpretation:
-    ///       - The external ERC721 is still held by this contract and was marked
-    ///         recallable when a full activation distribution cycle completed via
-    ///         {_distribute} called from {activateToken}.
-    ///       - This state can persist across later deactivation and is only
-    ///         cleared by {recallToken} or by a full discharge cycle that
-    ///         settles while inactive.
-    ///       - It can now be reclaimed by an approved operator using {recallToken}.
-    ///
-    ///  4. Recalled (historical-only)
-    ///     - `contractTokenAddress != address(0)`
-    ///     - `_contractTokenAddresses[contractTokenAddress][externalTokenId] != address(this)`
-    ///       ⇒ `vaulted == false`
-    ///     - `recallable == false`
-    ///     Interpretation:
-    ///       - {recallToken} has successfully transferred the external ERC721 back
-    ///         to the current Digil owner.
-    ///       - The mapping `_contractTokenAddresses` no longer marks this pair as `address(this)`,
-    ///         so the token is no longer vaulted.
-    ///       - `contractTokenAddress` and `externalTokenId` are intentionally
-    ///         retained for provenance, allowing off-chain indexers and auditors
-    ///         to see which external asset this Digil historically wrapped.
+    ///       - The external ERC721 is still held by this contract and may be reclaimed by an approved
+    ///         operator via {recallToken(contractTokenAddress, externalTokenId)}.
     ///
     ///  Invariants:
-    ///  - `vaulted` is derived purely from `_contractTokenAddresses[contractTokenAddress][externalTokenId]`.
-    ///  - `recallable` is stored in `_contractTokens[contractTokenAddress][tokenId].recallable`
-    ///    and is:
-    ///      * set to `true` when a full activation distribution cycle completes and the
-    ///        external token is still vaulted, and
-    ///      * retained until explicitly cleared (while the external token remains vaulted), and
-    ///      * set back to `false` either when:
-    ///          - {recallToken} succeeds, or
-    ///          - a full discharge cycle completes ({dischargeToken}) for an inactive token (unwind),
-    ///            which clears recallability without unvaulting the external token.
+    ///  - `vaulted` is derived strictly from:
+    ///        `_contractTokenAddresses[contractTokenAddress][externalTokenId] == address(this)`
+    ///    i.e., whether this contract currently holds the external token.
+    ///  - `recallable` is derived strictly from:
+    ///        `_contractTokens[contractTokenAddress][tokenId].recallable`
+    ///    and is typically:
+    ///      * set true when a full activation distribution cycle completes while the Digil is active/activating
+    ///        and the external token is still vaulted, and
+    ///      * cleared by {recallToken} and by batch settlement paths that finalize while inactive.
+    ///  - `_vaultedTokenIds` is a reverse index for *currently vaulted* external tokens:
+    ///        `_vaultedTokenIds[contractTokenAddress][externalTokenId] == tokenId`
+    ///    and is cleared by {recallToken}. This view does not rely on `_vaultedTokenIds` to compute `vaulted`,
+    ///    but it should remain consistent for any fully vaulted token.
     ///
     /// @param  tokenId The internal Digil token ID being queried.
     /// @return contractTokenAddress The ERC721 contract address of the attached token (zero if none).
