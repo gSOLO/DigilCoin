@@ -111,6 +111,21 @@ For any logic change, agents should validate using the strongest available check
 - `DigilToken.sol` changes → run matching `tests/DigilToken*_test.sol` files.
 - Shared interfaces/libs changes → run all impacted suites.
 
+### Desktop Remix IDE deployment order for `DigilToken` testing
+
+When validating `DigilToken` behavior in the Desktop Remix IDE, use this strict bootstrap sequence:
+
+1. Deploy `DigilCoin` first with the default admin account (generally Remix account 0: `0x5B38Da6a701c568545dCfcB03FcB875f56beddC4`).
+2. Deploy `DigilToken` with:
+   - the same default admin as initial owner,
+   - the deployed `DigilCoin` contract address,
+   - `18` as the decimals constructor argument.
+3. On the deployed `DigilCoin`, call `grantRole` with:
+   - `role`: `0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6` (`MINTER_ROLE`),
+   - `account`: the deployed `DigilToken` contract address.
+
+This role assignment is required before `DigilToken` flows that mint DIGIL can succeed.
+
 If environment lacks required tooling, state limitation clearly and provide a follow-up command list for maintainers.
 
 ---
