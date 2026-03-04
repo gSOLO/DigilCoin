@@ -192,7 +192,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     // Constructor
 
     /// @notice Creates DigilCoin and initializes roles and the first epoch.
-    /// @param defaultAdmin Address granted DEFAULT_ADMIN_ROLE, PAUSER_ROLE, MINTER_ROLE, and REWARDS_ROLE.
+    /// @param defaultAdmin Address granted DEFAULT_ADMIN_ROLE, PAUSER_ROLE, MINTER_ROLE, and CONFIG_ROLE.
     constructor(address defaultAdmin) ERC20("Digil Coin", "DIGIL") ERC20Permit("Digil Coin") {
         // Role bootstrap
         _grantRole(DEFAULT_ADMIN_ROLE, defaultAdmin);

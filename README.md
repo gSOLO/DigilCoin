@@ -178,7 +178,7 @@ By calling `linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency)`, you e
 Owners can spend an active token's kinetic energy (Active Charge) to apply temporary rituals and enhancements.
 
 ### Temporary Buffs
-`buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearance, uint256 durationMinutes)`
+`buffToken(uint256 tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearance, uint256 duration)`
 
 You can mix and match effects for a designated time period (up to 7 days). The cost dynamically scales based on the duration, the number of links, and the magnitude of the requested powers:
 - **Efficiency**: Temporarily boosts the base efficiency of all outgoing links.

@@ -32,7 +32,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Constants for bonus interval and multiplier
     uint256 private constant YIELD_PERIOD = 7;                  // Number of days required for a holder to earn 100% of their NFT balance in bonus coins.
-    uint256 private constant BONUS_INTERVAL = 15 minutes;       // Bonus accrual interval (100% of cap is reachable every ~25 hours).
+    uint256 private constant BONUS_INTERVAL = 15 minutes;       // Bonus accrual interval (1% of the per-withdraw cap per interval; reaches cap in ~25 hours and then saturates).
     uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
 
     // Configuration values for incremental and transfer values
@@ -904,7 +904,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Enforce inactivity window before contributors can reclaim their contribution.
         require(block.timestamp >= t.lastActivity + INACTIVITY_PERIOD, "DIGIL: Token Cannot Be Reclaimed");
 
-        // Penalty: require at least one incremental unit of ETH.
+        // Penalty: require one incremental unit of ETH.
         // Use the greater of the token's incrementalValue or the global minimum
         uint256 required = _max(t.incrementalValue, _incrementalValue);
         if (msg.value != required) _revertInsufficientFunds(required);
@@ -964,18 +964,21 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev `account` is the external ERC721 contract; `tokenId` is the external tokenId.
     ///      If `claim` is true, the external token remains held by this contract and a new Digil is minted.
     ///      If `claim` is false, the external token is returned to the depositor and the pending record is cleared.
+    ///      Blacklist checks are applied only for claim-finalization, so users can always cancel and recover
+    ///      a pending deposit even after opting out.
     /// @param  account The external ERC721 contract address.
     /// @param  tokenId The external ERC721 token ID.
     /// @param  data    Optional data to store with the new Digil token (ignored if canceling).
     /// @param  claim   True to pay the fee and mint the Digil, False to cancel and return the NFT.
     function vaultToken(address account, uint256 tokenId, bytes calldata data, bool claim) external nonReentrant {
         address user = _msgSender();
-        _notOnBlacklist(user);
-
+        
         // Authenticate the caller as the recorded pending depositor
         require(_contractTokenAddress[account][tokenId] == user, "DIGIL: Not The Depositor");
 
         if (claim) {
+            _notOnBlacklist(user);
+
             // Transfer rights to the contract (mark as permanently vaulted)
             _contractTokenAddress[account][tokenId] = address(this);
 
@@ -1011,7 +1014,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///    This flag is set when a full **activation** distribution cycle
     ///    completes via {_distribute} called from {activateToken}, provided the
     ///    external token is still vaulted (i.e.
-    ///        _contractTokenExists[account][externalTokenId] == true
+    ///        _contractTokenAddress[account][externalTokenId] == address(this)
     ///    at the end of the distribution).
     ///    After being set, this flag remains true until it is explicitly cleared
     ///    by a successful recall or by a full discharge completion while inactive.
@@ -1020,7 +1023,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///  - Reads the external tokenId from `_contractTokens[account][tokenId].tokenId`.
     ///  - Updates state *before* the external call:
     ///      * Sets `_contractTokens[account][tokenId].recallable = false`.
-    ///      * Sets `_contractTokenExists[account][externalTokenId] = false`,
+    ///      * Sets `_contractTokenAddress[account][externalTokenId] = address(0)`,
     ///        meaning the external token is no longer vaulted.
     ///      * Leaves `tokenId` and `contractTokenAddress` untouched so that
     ///        {tokenAttachment} can still report historical provenance even after recall.
@@ -1240,20 +1243,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///  4. Recalled (historical-only)
     ///     - `contractTokenAddress != address(0)`
-    ///     - `_contractTokenExists[contractTokenAddress][externalTokenId] == false`
+    ///     - `_contractTokenAddress[contractTokenAddress][externalTokenId] != address(this)`
     ///       ⇒ `vaulted == false`
     ///     - `recallable == false`
     ///     Interpretation:
     ///       - {recallToken} has successfully transferred the external ERC721 back
     ///         to the current Digil owner.
-    ///       - The mapping `_contractTokenExists` has been cleared for this pair,
+    ///       - The mapping `_contractTokenAddress` no longer marks this pair as `address(this)`,
     ///         so the token is no longer vaulted.
     ///       - `contractTokenAddress` and `externalTokenId` are intentionally
     ///         retained for provenance, allowing off-chain indexers and auditors
     ///         to see which external asset this Digil historically wrapped.
     ///
     ///  Invariants:
-    ///  - `vaulted` is derived purely from `_contractTokenExists[contractTokenAddress][externalTokenId]`.
+    ///  - `vaulted` is derived purely from `_contractTokenAddress[contractTokenAddress][externalTokenId]`.
     ///  - `recallable` is stored in `_contractTokens[contractTokenAddress][tokenId].recallable`
     ///    and is:
     ///      * set to `true` when a full activation distribution cycle completes and the
