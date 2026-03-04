@@ -210,10 +210,15 @@ A direct conversion feature for owners. You can pay a premium ETH fee to inject 
 
 Digils can act as "spirit vessels" for other NFTs.
 
-- **Deposit**: When you send an external ERC-721 to the Digil contract, you are charged a Coin fee, and a new Digil is minted wrapped around your NFT.
-- **Recall**: `recallToken(address account, uint256 digilId)`  
-  Once the Digil completes at least one activation cycle, an approved operator can recall the underlying NFT. Recallability is sticky until explicitly cleared: it is removed when the wrapped NFT is recalled, or when a full discharge settles while the Digil is inactive. Deactivation alone does not clear the flag. Pulling the artifact out of the vessel causes the Digil to suffer a power bleed, leaving behind an empty, but highly charged and historically rich, shell.
-- **Safeguard**: Wrapped tokens can only be recalled when protocol state says the vessel has completed the required lifecycle gates and currently marks the attachment as recallable.
+- **Step 1 — Pending Deposit**: Transfer an external ERC-721 into `DigilToken` via `safeTransferFrom`. This records the depositor as the pending owner for that `(externalCollection, externalTokenId)` pair.
+- **Step 2 — Finalize Vault**: `vaultToken(address account, uint256 tokenId, bytes data)`  
+  Only the recorded depositor can finalize. Finalization charges the Coin vault fee, mints a new Digil wrapper, marks the external NFT as fully vaulted, and stores a reverse index from `(account, externalTokenId)` to the minted Digil id.
+- **Unified Exit / Recall**: `recallToken(address account, uint256 externalTokenId)`  
+  This function now handles both flows:
+  - **Cancel pending deposit**: If the NFT is still pending (not fully vaulted), only the depositor can cancel and receive the NFT back.
+  - **Recall fully vaulted NFT**: If the NFT is fully vaulted, an approved operator of the wrapping Digil can recall it only when the attachment is currently marked recallable.
+- **Recallability Rules**: Recallability becomes true after a full activation distribution cycle while the NFT remains vaulted. It stays sticky across deactivation, and is cleared only when either (a) recall succeeds, or (b) a full discharge settles while the Digil is inactive.
+- **Post-Recall Behavior**: Recalling transfers the external NFT to the current Digil owner, applies active-charge bleed to the Digil shell, and preserves attachment provenance metadata for historical indexing.
  
 
 ---
