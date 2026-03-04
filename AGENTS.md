@@ -89,7 +89,9 @@ When editing Solidity:
 ### 4.4 Comments and NatSpec
 
 - Add/update NatSpec when changing externally visible behavior.
+- After any code change, review affected NatSpec and inline comments to confirm they still match runtime behavior.
 - Keep comments factual and behavior-focused (not speculative).
+- After any code change, update `README.md` in the same PR when behavior, setup, or operator flow changes.
 - If you change assumptions, update both code comments and README-relevant sections.
 
 ---
@@ -204,7 +206,8 @@ Before finalizing:
 
 - [ ] Read README + touched contracts/tests.
 - [ ] Kept behavior changes minimal and explicit.
-- [ ] Updated comments/NatSpec for behavior changes.
+- [ ] Reviewed and updated NatSpec + inline comments so they match new behavior.
 - [ ] Ran relevant validation commands (or documented environment blockers).
+- [ ] Updated README when behavior/setup/flows changed.
 - [ ] Summarized risks, assumptions, and follow-ups in final output.
 

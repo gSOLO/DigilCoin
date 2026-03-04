@@ -16,6 +16,7 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 ## Table of Contents
 - [Brand & Terminology](#brand--terminology)
 - [Contracts Overview](#contracts-overview)
+- [Contribution Update Requirements](#contribution-update-requirements)
 - [Planar Tokens & Alignment](#planar-tokens--alignment)
 - [Global Configuration](#global-configuration)
 - [Per-Token Properties](#per-token-properties)
@@ -28,6 +29,22 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 - [Admin & Security Notes](#admin--security-notes)
 - [Economics & Costs Summary](#economics--costs-summary)
 - [How it Works: End-to-End Examples](#how-it-works-end-to-end-examples)
+
+---
+
+
+## Contribution Update Requirements
+
+When making contract or test behavior changes, keep documentation and comments synchronized in the same PR:
+
+- Review and update affected NatSpec and inline comments so they accurately describe runtime behavior.
+- Update this `README.md` whenever setup steps, execution flows, admin actions, or user-facing mechanics change.
+- For Desktop Remix IDE testing of `DigilToken`, use this deployment order:
+  1. Deploy `DigilCoin` with the default admin account (typically Remix account 0: `0x5B38Da6a701c568545dCfcB03FcB875f56beddC4`).
+  2. Deploy `DigilToken` using the same admin as initial owner, the deployed `DigilCoin` address, and `18` for decimals.
+  3. Call `grantRole` on `DigilCoin` using role `0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6` (`MINTER_ROLE`) and the deployed `DigilToken` address as `account`.
+
+This role grant is required before `DigilToken` flows that mint DIGIL can succeed.
 
 ---
 
