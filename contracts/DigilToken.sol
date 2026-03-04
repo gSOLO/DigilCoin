@@ -72,7 +72,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev address(0)    = Unvaulted
     ///      address(this) = Fully Vaulted (attached to a Digil)
     ///      User Address  = Pending Vault (deposited by user, waiting for fee payment)
-    mapping(address => mapping(uint256 => address)) private _contractTokenAddress;  // Tracks the current owner of an external ERC721 token in the vault. (externalContract, externalTokenId).
+    mapping(address => mapping(uint256 => address)) private _contractTokenAddresses;// Tracks the current owner of an external ERC721 token in the vault. (externalContract, externalTokenId).
+    /// @dev Reverse index for fully vaulted external ERC721 tokens.
+    /// @dev Reverse index for external ERC721 tokens that are fully vaulted in this contract.
+    ///      (externalContract, externalTokenId) => digilTokenId. 0 means no active wrapper.
+    ///      Used by {recallToken} to resolve the Digil that currently wraps a vaulted external token.
+    mapping(address => mapping(uint256 => uint256)) private _vaultedTokenIds;           
+
 
 
     /// @dev Structure to hold pending coin and value distributions for a user, and
@@ -952,98 +958,139 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         address account = _msgSender();
         
         // Ensure the token isn't already fully vaulted or pending by someone else
-        require(_contractTokenAddress[account][tokenId] == address(0), "DIGIL: Token Already Vaulted"); 
+        require(_contractTokenAddresses[account][tokenId] == address(0), "DIGIL: Token Already Vaulted"); 
         
         // Securely record the user as the pending depositor
-        _contractTokenAddress[account][tokenId] = from;
+        _contractTokenAddresses[account][tokenId] = from;
         
         return this.onERC721Received.selector;
     }
 
-    /// @notice Completes or cancels a pending ERC721 vault deposit.
-    /// @dev `account` is the external ERC721 contract; `tokenId` is the external tokenId.
-    ///      If `claim` is true, the external token remains held by this contract and a new Digil is minted.
-    ///      If `claim` is false, the external token is returned to the depositor and the pending record is cleared.
-    ///      Blacklist checks are applied only for claim-finalization, so users can always cancel and recover
-    ///      a pending deposit even after opting out.
+    /// @notice Finalizes a pending external ERC721 vault deposit by minting a new Digil wrapper.
+    /// @dev
+    ///  Vault lifecycle:
+    ///  1) User deposits an external ERC721 via `safeTransferFrom(..., address(this), externalTokenId, ...)`.
+    ///     The ERC721 callback {onERC721Received} records the depositor as:
+    ///         _contractTokenAddresses[account][externalTokenId] = depositor
+    ///     This is the "Pending Vault" state.
+    ///
+    ///  2) The depositor calls this function to finalize the vault:
+    ///     - Requires the caller is the recorded depositor.
+    ///     - Requires the caller is not opted out (blacklisted).
+    ///     - Charges a Coin vault fee (`vaultFee = _coinRate * 10`) from the caller.
+    ///     - Marks the external token as fully vaulted:
+    ///         _contractTokenAddresses[account][externalTokenId] = address(this)
+    ///     - Mints a new Digil to the caller and attaches provenance:
+    ///         _contractTokens[account][digilTokenId].tokenId = externalTokenId
+    ///         _tokens[digilTokenId].contractTokenAddress    = account
+    ///     - Updates the Digil URI with a `?ct=1` marker for front-end discovery.
+    ///     - Populates the reverse index:
+    ///         _vaultedTokenIds[account][externalTokenId] = digilTokenId
+    ///
+    ///  Canceling:
+    ///  - Cancel is no longer performed here. A depositor cancels a pending vault by calling
+    ///    {recallToken(account, externalTokenId)} while the token is still in the "Pending Vault"
+    ///    state (i.e. `_contractTokenAddresses[account][externalTokenId] == depositor`).
+    ///
+    ///  Reverts if:
+    ///  - The caller is not the recorded depositor.
+    ///  - The caller is opted out (blacklisted).
+    ///  - The external token is not currently held by this contract.
+    ///  - The Coin vault fee cannot be collected.
+    ///
     /// @param  account The external ERC721 contract address.
-    /// @param  tokenId The external ERC721 token ID.
-    /// @param  data    Optional data to store with the new Digil token (ignored if canceling).
-    /// @param  claim   True to pay the fee and mint the Digil, False to cancel and return the NFT.
-    function vaultToken(address account, uint256 tokenId, bytes calldata data, bool claim) external nonReentrant {
+    /// @param  tokenId The external ERC721 tokenId being vaulted.
+    /// @param  data    Optional data to store with the newly minted Digil token.
+    function vaultToken(address account, uint256 tokenId, bytes calldata data) external nonReentrant {
         address user = _msgSender();
         
         // Authenticate the caller as the recorded pending depositor
-        require(_contractTokenAddress[account][tokenId] == user, "DIGIL: Not The Depositor");
+        require(_contractTokenAddresses[account][tokenId] == user, "DIGIL: Not The Depositor");
 
-        if (claim) {
-            _notOnBlacklist(user);
+         _notOnBlacklist(user);
 
-            // Transfer rights to the contract (mark as permanently vaulted)
-            _contractTokenAddress[account][tokenId] = address(this);
+        // Transfer rights to the contract (mark as permanently vaulted)
+        _contractTokenAddresses[account][tokenId] = address(this);
 
-            uint256 vaultFee = _coinRate * 10;
-            if (!_transferCoinsFrom(user, address(this), vaultFee)) revert CoinTransferFailed(vaultFee);
+        uint256 vaultFee = _coinRate * 10;
+        if (!_transferCoinsFrom(user, address(this), vaultFee)) revert CoinTransferFailed(vaultFee);
 
-            require(IERC721(account).ownerOf(tokenId) == address(this), "DIGIL: Contract Token Not Received");
+        require(IERC721(account).ownerOf(tokenId) == address(this), "DIGIL: Contract Token Not Received");
 
-            uint256 internalId = _createToken(user, _incrementalValue, 0, data);   
-            _contractTokens[account][internalId].tokenId = tokenId;
+        uint256 internalId = _createToken(user, _incrementalValue, 0, data);   
+        _contractTokens[account][internalId].tokenId = tokenId;
 
-            Token storage t = _tokens[internalId];
-            t.uri = string(abi.encodePacked(tokenURI(internalId), "?ct=1"));
-            t.contractTokenAddress = account;
-        } else {
-            // Cancel: Clear the depositor record and return the NFT
-            _contractTokenAddress[account][tokenId] = address(0);
-            IERC721(account).safeTransferFrom(address(this), user, tokenId);
-        }
+        Token storage t = _tokens[internalId];
+        t.uri = string(abi.encodePacked(tokenURI(internalId), "?ct=1"));
+        t.contractTokenAddress = account;
+
+        _vaultedTokenIds[account][tokenId] = internalId;
     }
 
-    /// @notice Recalls an external ERC721 token that has been vaulted inside a Digil,
-    ///         transferring it back to the current owner of the Digil token.
-    /// @dev
-    ///  Preconditions:
-    ///  - The caller must be approved for `tokenId` via the standard ERC721
-    ///    authorization rules ({_checkApproved}).
-    ///  - `account` must match the attached ERC721 contract address:
-    ///        account == _tokens[tokenId].contractTokenAddress.
-    ///  - The attached contract-token record for this Digil must be marked
-    ///    `recallable`:
-    ///        _contractTokens[account][tokenId].recallable == true.
-    ///    This flag is set when a full **activation** distribution cycle
-    ///    completes via {_distribute} called from {activateToken}, provided the
-    ///    external token is still vaulted (i.e.
-    ///        _contractTokenAddress[account][externalTokenId] == address(this)
-    ///    at the end of the distribution).
-    ///    After being set, this flag remains true until it is explicitly cleared
-    ///    by a successful recall or by a full discharge completion while inactive.
+    /// @notice Cancels a pending external ERC721 vault deposit or recalls a vaulted external ERC721 from its Digil.
+    /// @dev Unified exit for external NFTs held by this contract:
     ///
-    ///  Effects:
-    ///  - Reads the external tokenId from `_contractTokens[account][tokenId].tokenId`.
-    ///  - Updates state *before* the external call:
-    ///      * Sets `_contractTokens[account][tokenId].recallable = false`.
-    ///      * Sets `_contractTokenAddress[account][externalTokenId] = address(0)`,
-    ///        meaning the external token is no longer vaulted.
-    ///      * Leaves `tokenId` and `contractTokenAddress` untouched so that
-    ///        {tokenAttachment} can still report historical provenance even after recall.
-    ///  - Applies thematic bleed to the Digil’s `activeCharge` via
-    ///    {_applyActiveChargeBleed}:
-    ///      * If STABILIZED, the protection is consumed and no bleed occurs.
-    ///      * Otherwise, a fraction of `activeCharge` is burned.
-    ///  - Finally, calls `ERC721(account).safeTransferFrom(address(this), owner, externalTokenId, t.data)`
-    ///    to transfer the external ERC721 back to the current owner of the Digil.
-    ///    Any revert in this external call rolls back all earlier state changes, so
-    ///    invariants are preserved.
+    ///  State detection:
+    ///  - `holder = _contractTokenAddresses[account][externalTokenId]`
+    ///  - `holder == address(0)`      => not in vault (revert)
+    ///  - `holder != address(this)`   => pending deposit (cancel)
+    ///  - `holder == address(this)`   => fully vaulted + attached to a Digil (recall)
     ///
-    ///  Postconditions:
-    ///  - The external ERC721 token transitions from:
-    ///        { vaulted = true, recallable = true }
-    ///    to:
-    ///        { vaulted = false, recallable = false }
-    ///    while provenance (`contractTokenAddress`, `externalTokenId`) remains queryable
-    ///    via {tokenAttachment}.
-    function recallToken(address account, uint256 tokenId) external nonReentrant {
+    ///  Case 1: Pending deposit (Cancel)
+    ///  - Preconditions:
+    ///      * `holder == msg.sender` (only the recorded depositor may cancel)
+    ///  - Effects:
+    ///      * Clears `_contractTokenAddresses[account][externalTokenId]` to `address(0)`
+    ///      * Clears `_vaultedTokenIds[account][externalTokenId]` to `0` (defensive / no-op if unset)
+    ///  - Interaction:
+    ///      * Transfers the external ERC721 back to the depositor:
+    ///          IERC721(account).safeTransferFrom(address(this), msg.sender, externalTokenId)
+    ///  - Note: No blacklist check is applied so users can always cancel and recover a pending deposit.
+    ///
+    ///  Case 2: Fully vaulted (Recall)
+    ///  - Resolves the wrapping Digil:
+    ///      * `digilTokenId = _vaultedTokenIds[account][externalTokenId]` (must be non-zero)
+    ///  - Preconditions:
+    ///      * Caller must be approved for `digilTokenId` via {_checkApproved}
+    ///      * Token must not be mid-batch via {_requireNoBatch}
+    ///      * `account == _tokens[digilTokenId].contractTokenAddress`
+    ///      * `_contractTokens[account][digilTokenId].tokenId == externalTokenId`
+    ///      * `_contractTokens[account][digilTokenId].recallable == true`
+    ///  - Effects (performed before the external call):
+    ///      * Clears `recallable` for this Digil’s attachment
+    ///      * Clears `_contractTokenAddresses[account][externalTokenId]` to `address(0)` (unvault)
+    ///      * Clears `_vaultedTokenIds[account][externalTokenId]` to `0`
+    ///      * Applies thematic bleed to the Digil via {_applyActiveChargeBleed}
+    ///      * Leaves provenance (`contractTokenAddress`, `externalTokenId`) intact on the Digil for {tokenAttachment}
+    ///  - Interaction:
+    ///      * Transfers the external ERC721 back to the current Digil owner:
+    ///          IERC721(account).safeTransferFrom(address(this), ownerOf(digilTokenId), externalTokenId, t.data)
+    ///
+    /// @param  account          The external ERC721 contract address.
+    /// @param  externalTokenId  The external ERC721 tokenId to cancel/recall.
+    function recallToken(address account, uint256 externalTokenId) external nonReentrant {
+        address caller = _msgSender();
+
+        address holder = _contractTokenAddresses[account][externalTokenId];
+        require(holder != address(0), "DIGIL: Token Not In Vault");
+
+        // --- Case 1: Pending deposit (cancel) ---
+        if (holder != address(this)) {
+            require(holder == caller, "DIGIL: Not The Depositor");
+
+            // effects
+            _vaultedTokenIds[account][externalTokenId] = 0;
+            _contractTokenAddresses[account][externalTokenId] = address(0);
+
+            // interaction
+            IERC721(account).safeTransferFrom(address(this), caller, externalTokenId);
+            return;
+        }
+
+        // --- Case 2: Fully vaulted / attached to a Digil (recall) ---
+        uint256 tokenId = _vaultedTokenIds[account][externalTokenId];
+        _vaultedTokenIds[account][externalTokenId] = 0;
+
         _checkApproved(tokenId);
 
         Token storage t = _tokens[tokenId];
@@ -1054,13 +1101,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(account == t.contractTokenAddress, "DIGIL: Invalid Contract Account");
 
         ContractToken storage contractToken = _contractTokens[account][tokenId];
+        require(contractToken.tokenId == externalTokenId, "DIGIL: Wrong External Token");
         require(contractToken.recallable, "DIGIL: Contract Token Is Not Recallable");
 
         uint256 contractTokenId = contractToken.tokenId;
 
         // --- Effects: clear all "attached contract" state first ---
         contractToken.recallable = false;
-        _contractTokenAddress[account][contractTokenId] = address(0);
+        _contractTokenAddresses[account][contractTokenId] = address(0);
         // DO NOT clear contractToken.tokenId or t.contractTokenAddress.
         // They serve as immutable provenance metadata for this Digil.
         //contractToken.tokenId = 0;
@@ -1243,20 +1291,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///  4. Recalled (historical-only)
     ///     - `contractTokenAddress != address(0)`
-    ///     - `_contractTokenAddress[contractTokenAddress][externalTokenId] != address(this)`
+    ///     - `_contractTokenAddresses[contractTokenAddress][externalTokenId] != address(this)`
     ///       ⇒ `vaulted == false`
     ///     - `recallable == false`
     ///     Interpretation:
     ///       - {recallToken} has successfully transferred the external ERC721 back
     ///         to the current Digil owner.
-    ///       - The mapping `_contractTokenAddress` no longer marks this pair as `address(this)`,
+    ///       - The mapping `_contractTokenAddresses` no longer marks this pair as `address(this)`,
     ///         so the token is no longer vaulted.
     ///       - `contractTokenAddress` and `externalTokenId` are intentionally
     ///         retained for provenance, allowing off-chain indexers and auditors
     ///         to see which external asset this Digil historically wrapped.
     ///
     ///  Invariants:
-    ///  - `vaulted` is derived purely from `_contractTokenAddress[contractTokenAddress][externalTokenId]`.
+    ///  - `vaulted` is derived purely from `_contractTokenAddresses[contractTokenAddress][externalTokenId]`.
     ///  - `recallable` is stored in `_contractTokens[contractTokenAddress][tokenId].recallable`
     ///    and is:
     ///      * set to `true` when a full activation distribution cycle completes and the
@@ -1284,7 +1332,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         recallable      = ct.recallable;
 
         // If contractTokenAddress or externalTokenId is zero, this also just reads defaults.
-        vaulted = _contractTokenAddress[contractTokenAddress][externalTokenId] == address(this);
+        vaulted = _contractTokenAddresses[contractTokenAddress][externalTokenId] == address(this);
     }
 
     // Token Creation
@@ -1980,7 +2028,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // Contract-token recallable logic
             if (t.contractTokenAddress != address(0)) {
                 ContractToken storage ct = _contractTokens[t.contractTokenAddress][tokenId];
-                if (_contractTokenAddress[t.contractTokenAddress][ct.tokenId] == address(this)) {
+                if (_contractTokenAddresses[t.contractTokenAddress][ct.tokenId] == address(this)) {
                     ct.recallable = (t.active || t.activating);
                 }
             }
