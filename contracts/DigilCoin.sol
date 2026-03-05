@@ -472,10 +472,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @param from Sender (zero on mint).
     /// @param to Recipient (zero on burn).
     /// @param value Amount moved.
-    function _update(address from, address to, uint256 value)
-        internal
-        override(ERC20, ERC20Pausable, ERC20Votes)
-    {
+    function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Pausable, ERC20Votes) {
         // First run the canonical OZ flow:
         // - enforces pause rules (reverts if paused)
         // - updates balances
