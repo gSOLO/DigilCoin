@@ -8,6 +8,7 @@ import {ERC20Pausable} from "@openzeppelin/contracts/token/ERC20/extensions/ERC2
 import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 import {ERC20Votes} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20Votes.sol";
 import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title Digil Coin (ERC20)
 /// @author gSOLO
@@ -31,7 +32,7 @@ import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
 /// Effective points include a **days-active multiplier** (based on uncapped raw spend), while point-earning is
 /// capped daily and per-epoch to limit gaming. Remaining ETH is swept forward so it never becomes unclaimable.
 /// @custom:security-contact security@digil.co.in
-contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20Permit, ERC20Votes {
+contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20Permit, ERC20Votes, ReentrancyGuard {
     // Roles
 
     /// @notice Can pause token transfers.
@@ -349,7 +350,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// - If `poolEth == 0` or `totalEff == 0`, claim pays 0 (and marks claimed).
     /// - Uses `call` to transfer ETH; reverts on failure.
     /// @param epochId The completed epoch identifier to claim against.
-    function claim(uint32 epochId) external {
+    function claim(uint32 epochId) external nonReentrant {
         _syncEpoch();
 
         // Must be a completed epoch.
@@ -408,7 +409,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @notice Claims multiple epochs in one call.
     /// @dev Convenience helper for UX; each epoch is validated individually.
     /// @param epochIds Array of epoch ids to claim.
-    function claimMany(uint32[] calldata epochIds) external {
+    function claimMany(uint32[] calldata epochIds) external nonReentrant {
         // `_syncEpoch()` is called in `claim` for each epoch; doing it once here is cheaper and safe.
         _syncEpoch();
         for (uint256 i = 0; i < epochIds.length; i++) {
