@@ -533,6 +533,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @dev    If the user bet correctly, they receive their principal plus a proportional share of the losing side's pool.
     ///         If the proposal was canceled, the market is a DRAW and the user receives exactly their principal back.
     ///         Calculates payout dynamically and clears user balances before transfer (CEI pattern).
+    ///         Integer division can leave small residual dust in the contract after all claims.
     /// @param  proposalId The ID of the finalized proposal to claim from.
     function claim(uint256 proposalId) external {
         uint8 outcome = _getMarketOutcome(proposalId);

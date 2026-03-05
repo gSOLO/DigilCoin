@@ -229,7 +229,7 @@ Digils can act as "spirit vessels" for other NFTs.
 `withdraw()`
 
 When ETH or Coins are owed to you (from activation payouts, refunds, or system rewards), they sit in a pending distribution pool. Calling withdraw pulls these assets to your wallet.
-- **Time Bonuses**: If you hold any Digils, letting your pending Coins sit allows them to accrue a time-based bonus over a 7-day yield period.
+- **Time Bonuses**: If you hold any Digils, pending Coins accrue a time-based bonus every 15 minutes until a per-withdraw cap is reached (the accrual slope is sized using a 7-day yield denominator).
 - **Single Settlement Surface**: Pending ETH and DIGIL from different flows (charging, activation, discharge, keeper rewards) are consolidated behind one user-level withdrawal path.
 
 ### Contributor Reclaim
@@ -243,7 +243,7 @@ A non-custodial safety hatch. If you contributed to a token that has been comple
 
 `setOptStatus(bool optOut)`
 
-Accounts can willingly blacklist themselves via this function by paying a small fee. Blacklisted accounts cannot send/receive Digils, participate in charging, or earn Coin bonuses. They can, however, always withdraw their pending ETH. This is useful for individuals who wish to permanently exit the gameplay loop.
+Accounts can willingly blacklist themselves via this function by paying a small fee. Blacklisted accounts cannot send/receive Digils, participate in charging, withdraw pending Coins, or earn Coin bonuses while opted out. They can, however, always withdraw their pending ETH. This is useful for individuals who wish to permanently exit the gameplay loop.
 
 ---
 

@@ -247,11 +247,12 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @dev
     /// - `weightBps == 0` disables eligibility for that spender.
     /// - `weightBps` is applied to counted spend as: `deltaPoints = countedSpend * weightBps`.
+    /// - `spender` must be a deployed contract (`spender.code.length > 0`).
     /// - Eligibility *also* requires `msg.sender == spender` so arbitrary user transfers do not earn points.
-    /// @param spender The contract address that will be eligible to earn rewards for users who spend into it.
+    /// @param spender The deployed contract address that will be eligible to earn rewards for users who spend into it.
     /// @param weightBps Weight in basis points, must be <= 10,000.
     function setSpendWeight(address spender, uint16 weightBps) external onlyRole(CONFIG_ROLE) {
-        if (spender == address(0) || weightBps > BASE_BPS) revert BadParameters();
+        if (spender == address(0) || spender.code.length == 0 || weightBps > BASE_BPS) revert BadParameters();
         spendWeightBps[spender] = weightBps;
         emit SpenderWeightSet(spender, weightBps);
     }

@@ -31,8 +31,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private constant MAX_COIN_RATE = 1000000000;        // The maximum coin rate for operations
 
     // Constants for bonus interval and multiplier
-    uint256 private constant YIELD_PERIOD = 7;                  // Number of days required for a holder to earn 100% of their NFT balance in bonus coins.
-    uint256 private constant BONUS_INTERVAL = 15 minutes;       // Bonus accrual interval (1% of the per-withdraw cap per interval; reaches cap in ~25 hours and then saturates).
+    uint256 private constant YIELD_PERIOD = 7;                  // Number of days required for a holder to earn 100% of their NFT balance in bonus coins (denominator for holder-yield sizing).
+    uint256 private constant BONUS_INTERVAL = 15 minutes;       // Bonus accrual interval (1% of the per-withdraw cap per interval; reaches cap in ~25 hours and then saturates until next withdrawal).
     uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
 
     // Configuration values for incremental and transfer values
@@ -872,7 +872,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Penalty:
     ///         - The caller must send one unit of "penalty" value:
     ///               required = max(token.incrementalValue, _incrementalValue)
-    ///           If `msg.value` is below this threshold, the call reverts with
+    ///           If `msg.value` is not exactly this value, the call reverts with
     ///           {InsufficientFunds}.
     ///         - The penalty is added to the protocol’s value pool via {_addValue}
     ///           and is not returned to the contributor.
@@ -1559,14 +1559,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - Updating `data` (non-empty bytes) charges `1000 * _coinRate` coins.
     ///           If both are updated in the same call, both fees are charged.
     ///         - For planar tokens (IDs 0..PLANAR_TRANSFER_MAX_ID), `data` must have length
-    ///           >= 4 to preserve planar affinity encoding.
+    ///           >= 5 to preserve planar affinity encoding.
     ///
     ///         ETH requirement:
     ///         - If neither `uri` nor `data` is updated (both empty), no minimum ETH is required.
     ///         - If either `uri` or `data` is updated, the call must include at least:
     ///               minimumValue = max(t.incrementalValue, incrementalValue, _incrementalValue)
-    ///           Any ETH sent (including excess) is routed into the protocol value pool via `_addValue`
-    ///           and is not refunded.
+    ///           Any ETH sent is routed into the protocol value pool via `{_addValue}`.
     ///
     ///         State updates:
     ///         - Updates `t.incrementalValue` and `t.activationThreshold` after validation.
