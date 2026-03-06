@@ -488,13 +488,13 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @notice Evaluates the current state of a proposal and translates it into a prediction market outcome.
     /// @dev    Internal helper used by `claim` and `burn` to consolidate logic.
     /// @param  proposalId The ID of the proposal being evaluated.
-    /// @return outcome An integer representing the market result: 1 = FOR won, 0 = AGAINST won, 2 = DRAW (Canceled).
+    /// @return outcome An integer representing the market result: 1 = FOR won, 0 = AGAINST won, 2 = DRAW (Canceled or Expired).
     /// @custom:reverts MarketNotFinalized if the proposal is still voting (Pending or Active).
     function _getMarketOutcome(uint256 proposalId) internal view returns (uint8) {
         ProposalState s = state(proposalId);
         if (s == ProposalState.Succeeded || s == ProposalState.Queued || s == ProposalState.Executed) return 1;
-        if (s == ProposalState.Defeated || s == ProposalState.Expired) return 0;
-        if (s == ProposalState.Canceled) return 2;
+        if (s == ProposalState.Defeated) return 0;
+        if (s == ProposalState.Canceled || s == ProposalState.Expired) return 2;
         revert MarketNotFinalized();
     }
 
