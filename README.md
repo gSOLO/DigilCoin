@@ -116,7 +116,7 @@ Each Digil maintains a mini-ledger of its own state:
   - **Incremental Value**: Per-token ETH floor used during contribution accounting.
   - **Activation Threshold**: The critical mass of coins required to fire the sigil.
 - **State & Workflow**: Flags indicating if the token is active, mid-activation, mid-discharge, restricted to a specific whitelist of contributors, or wrapped around an external NFT.
-- **Links & Buffs**: Up to 10 connections to other Digils, and any temporary status effects (buffs) currently applied.
+- **Links & Buffs**: Up to 10 total stored links, including a foundational planar alignment link when present. In practice, a Digil aligned to a foundational Plane has one slot already occupied, leaving fewer peer-to-peer Digil links available. Temporary status effects (buffs) may also be applied.
 - **Attachment Data**: For vaulted NFTs, each token tracks the source collection, source token id, and recall eligibility state.
 
 ---
@@ -157,7 +157,7 @@ A purely stateful operation that powers down an active construct. No ETH moves. 
 
 The final release dismantling the construct. First call requires owner/approved operator; continuation calls are open to anyone not blacklisted.
 - **Inactive Discharge**: Contributors receive a full refund of their ETH and Coins. The owner gets any leftover value.
-- **Active Discharge**: Behaves like activation—ETH is settled proportionally. However, any remaining active power is forcefully pushed outward along the token's link graph, strengthening its neighbors before the token is wiped clean.
+- **Active Discharge**: Behaves like activation—ETH is settled proportionally. However, any remaining active power is forcefully pushed outward along the token's link graph, strengthening its neighbors before contributor/distribution state is cleared. Active discharge does **not** itself deactivate the Digil; call `deactivateToken(uint256 tokenId)` separately if you want it powered down.
 - **Wrapped NFT Recallability**: If this Digil wraps an external ERC721, an *inactive* discharge clears recallability; an *active* discharge preserves it (the external NFT remains vaulted until recalled).
 
 ---
@@ -187,7 +187,7 @@ You can mix and match effects for a designated time period (up to 7 days). The c
 - **Amplification**: Multiplies any incoming energy landing on the token.
 - **Anchor**: Binds energy to the vessel. When discharged, the token retains 25% of its power rather than dissipating completely.
 - **Reverb**: Creates a feedback loop. A portion of the energy successfully pushed to outgoing links echoes back to the source.
-- **Appearance Override**: The buff payload can also carry short-lived appearance updates for rendering-layer experimentation.
+- **Appearance Override**: The buff payload can also carry appearance updates for rendering-layer experimentation. Unlike the temporary buff effect fields, the stored appearance payload persists across discharge until explicitly changed again.
 
 ### Stabilization
 `stabilizeToken(uint256 tokenId)`
@@ -212,12 +212,12 @@ Digils can act as "spirit vessels" for other NFTs.
 
 - **Step 1 — Pending Deposit**: Transfer an external ERC-721 into `DigilToken` via `safeTransferFrom`. This records the depositor as the pending owner for that `(externalCollection, externalTokenId)` pair.
 - **Step 2 — Finalize Vault**: `vaultToken(address account, uint256 tokenId, bytes data)`  
-  Only the recorded depositor can finalize. Finalization charges the Coin vault fee, mints a new Digil wrapper, marks the external NFT as fully vaulted, and stores a reverse index from `(account, externalTokenId)` to the minted Digil id.
+  Only the recorded depositor can finalize. Finalization charges the Coin vault fee, mints a new Digil wrapper, marks the external NFT as fully vaulted, and stores a reverse index from `(account, externalTokenId)` to the minted Digil id. The wrapper is created with an activation threshold of `0`.
 - **Unified Exit / Recall**: `recallToken(address account, uint256 externalTokenId)`  
   This function now handles both flows:
   - **Cancel pending deposit**: If the NFT is still pending (not fully vaulted), only the depositor can cancel and receive the NFT back.
   - **Recall fully vaulted NFT**: If the NFT is fully vaulted, an approved operator of the wrapping Digil can recall it only when the attachment is currently marked recallable.
-- **Recallability Rules**: Recallability becomes true after a full activation distribution cycle while the NFT remains vaulted. It stays sticky across deactivation, and is cleared only when either (a) recall succeeds, or (b) a full discharge settles while the Digil is inactive.
+- **Recallability Rules**: Recallability is enforced through the attachment's stored `recallable` flag. For vaulted wrappers, that flag is updated during the wrapper's lifecycle processing and can become true under the normal zero-threshold activation/distribution path. It stays sticky across deactivation, and is cleared only when either (a) recall succeeds, or (b) a full discharge settles while the Digil is inactive.
 - **Post-Recall Behavior**: Recalling transfers the external NFT to the current Digil owner, applies active-charge bleed to the Digil shell, and preserves attachment provenance metadata for historical indexing.
  
 
@@ -243,14 +243,14 @@ A non-custodial safety hatch. If you contributed to a token that has been comple
 
 `setOptStatus(bool optOut)`
 
-Accounts can willingly blacklist themselves via this function by paying a small fee. Blacklisted accounts cannot send/receive Digils, participate in charging, withdraw pending Coins, or earn Coin bonuses while opted out. They can, however, always withdraw their pending ETH. This is useful for individuals who wish to permanently exit the gameplay loop.
+Accounts can willingly blacklist themselves via this function by paying a small fee. Blacklisted accounts cannot send/receive Digils, participate in charging, or withdraw pending Coins while opted out. They can, however, always withdraw their pending ETH. Opting out does not itself reset any already-accumulated pending Coin bonus timing state. This is useful for individuals who wish to permanently exit the gameplay loop.
 
 ---
 
 ## Admin & Security Notes
 
 - **Metadata Updates**: `updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes data, string uri)`  
-  Token URIs and internal arbitrary data can be updated for a Coin fee, but economic parameters cannot be changed once a token has been charged.
+  Token URIs and internal arbitrary data can be updated by paying the required Coin cost and, when metadata/data is actually being changed, the required ETH amount based on the applicable incremental-value floor. Economic parameters are frozen only while the token currently has pending inactive `charge > 0`; if current charge is zero, they may be changed even if the token was used in an earlier lifecycle.
 - **Restriction Controls**: `restrictToken(uint256 tokenId, address[] whitelisted)` allows owners of restricted Digils to curate and update contributor access lists with explicit on-chain events.
 - **Read-Only Views**: The contract exposes various functions to allow front-ends to easily read the complex, packed state of any Digil:
   - `tokenCharge(uint256 tokenId)`
@@ -261,7 +261,6 @@ Accounts can willingly blacklist themselves via this function by paying a small 
   - `tokenAttachment(uint256 tokenId)`
   - `configuration()`
 - **Batch Safety**: Sensitive lifecycle transitions are protected by batch-locks. If a token is mid-activation, it cannot be transferred, charged, or updated until the community finishes the batch processing.
-- **Sweep Safety**: The admin can rescue mistakenly sent ERC-20s, but is explicitly blocked from sweeping the native Digil Coin to ensure protocol solvency.
 
 ---
 
