@@ -2518,7 +2518,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _chargeBuffForNewLink(t);
 
         Token storage d = _tokens[linkId];
-        require(!d.restricted || d.contributions[_msgSender()].whitelisted, "DIGIL: Restricted");
+        address sourceOwner = ownerOf(tokenId);
+        require(!d.restricted || d.contributions[sourceOwner].whitelisted, "DIGIL: Restricted");
 
         uint256 value = msg.value;
         uint256 requiredValue = t.incrementalValue + d.incrementalValue;
@@ -2569,7 +2570,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Community Expansion: 25% Discount if linking to a different owner.
         // Discount = 1 / (Reduction^2) = 1/4 = 25%.
-        if (ownerOf(linkId) != _msgSender()) {
+        if (ownerOf(linkId) != sourceOwner) {
             unchecked {
                 coinCost -= coinCost / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
             }
