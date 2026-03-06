@@ -128,7 +128,7 @@ When validating `DigilToken` behavior in the Desktop Remix IDE, use this strict 
    - `role`: `0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6` (`MINTER_ROLE`),
    - `account`: the deployed `DigilToken` contract address.
 4. On the deployed `DigilCoin`, call `setSpendWeight` with:
-   - `account`: the deployed `DigilToken` contract address,
+   - `spender`: the deployed `DigilToken` contract address,
    - `weight`: `10000` (100%).
 5. After both deployments are complete, set helper address references as follows:
    - put the deployed `DigilCoin` address into `getCoins`
