@@ -834,11 +834,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Opt In / Opt Out
 
-    /// @notice Allows the sender to opt out of, or back into, Digil participation flows.
-    /// @dev    Requires sending a value equal to the current incremental-value floor at the current coin rate.
-    ///         Example: at 0.0001 ETH incremental value and 100 coin rate, the required payment is 0.01 ETH.
-    ///         This function only toggles blacklist status and routes the paid ETH into the protocol value pool.
-    ///         It does not modify any pending distribution timestamps or retroactively reset coin-bonus timing.
+    /// @notice Allows the sender to opt out or opt in to Digil participation.
+    ///         Requires sending a value equal to the current incremental value at the coin rate.
+    ///         For example, at 0.0001 ETH incremental value and 100 coin rate, this requires 0.01 ETH.
+    /// @dev    This function only toggles the account's blacklist status and routes the paid ETH
+    ///         into the protocol value pool via {_addValue}. It does not reset or modify any
+    ///         pending distribution timestamps or Coin bonus accrual checkpoints.
     /// @param  optOut True to opt out, false to opt back in.
     function setOptStatus(bool optOut) external payable {
         address account = _msgSender();
@@ -984,6 +985,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///     - Mints a new Digil to the caller and attaches provenance:
     ///         _contractTokens[account][digilTokenId].tokenId = externalTokenId
     ///         _tokens[digilTokenId].contractTokenAddress    = account
+    ///     - The wrapper is created with `activationThreshold = 0`.
     ///     - Updates the Digil URI with a `?ct=1` marker for front-end discovery.
     ///     - Populates the reverse index:
     ///         _vaultedTokenIds[account][externalTokenId] = digilTokenId
@@ -998,6 +1000,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///  - The caller is opted out (blacklisted).
     ///  - The external token is not currently held by this contract.
     ///  - The Coin vault fee cannot be collected.
+    ///
+    ///  Note:
+    ///  - Because the wrapper is created with a zero activation threshold, it can satisfy
+    ///    the normal activation threshold check without requiring additional inactive charge.
+    ///    Any later recallability is governed by the attachment's stored `recallable` flag,
+    ///    which is updated during distribution processing elsewhere in the lifecycle.
     ///
     /// @param  account The external ERC721 contract address.
     /// @param  externalTokenId The external ERC721 tokenId being vaulted.
@@ -1060,6 +1068,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///      * `account == _tokens[digilTokenId].contractTokenAddress`
     ///      * `_contractTokens[account][digilTokenId].tokenId == externalTokenId`
     ///      * `_contractTokens[account][digilTokenId].recallable == true`
+    ///  - Recallability semantics:
+    ///      * Recallability is not derived directly inside this function.
+    ///      * It is a stored attachment flag that is updated during the token's
+    ///        activation/distribution/discharge lifecycle.
+    ///      * This function only enforces the current stored value.
     ///  - Effects (performed before the external call):
     ///      * Clears `recallable` for this Digil’s attachment
     ///      * Clears `_contractTokenAddresses[account][externalTokenId]` to `address(0)` (unvault)
@@ -1207,8 +1220,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Retrieves buff and appearance information for a token.
     /// @dev    The buff is considered active iff `block.timestamp < expiresAt`.
-    ///         `appearance` is stored in `BuffState.appearance` and is intentionally
-    ///         preserved across full discharges (see {dischargeToken}).
+    ///         `appearance` is stored in `BuffState.appearance` as persistent rendering metadata
+    ///         and is intentionally preserved across full discharges (see {dischargeToken}),
+    ///         even though the temporary buff fields themselves are cleared.
     /// @return expiresAt        Unix timestamp when the current temporary buff expires (0 if inactive/never set).
     /// @return efficiencyBonus  Temporary bonus added to outgoing link base efficiency while buff is active.
     /// @return attunement       Planar ID mimicked for affinity while buff is active (1–17, or 0 for none).
@@ -1547,9 +1561,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - Reverts if a batch activation/discharge distribution is in progress
     ///           (`distributionIndex != 0`).
     ///
-    ///         Parameter mutability:
-    ///         - If the token has any inactive `charge > 0`, then `incrementalValue` and
-    ///           `activationThreshold` are immutable and must match the stored values.
+    ///         Economic parameter update restrictions:
+    ///         - If the token currently has pending inactive `charge > 0`, then
+    ///           `incrementalValue` and `activationThreshold` are frozen for this call
+    ///           and must exactly match the stored values.
+    ///         - If `charge == 0`, these values may be changed even if the token
+    ///           was previously used in an earlier lifecycle.
     ///         - For planar tokens (IDs 0..PLANAR_TRANSFER_MAX_ID), `incrementalValue` and
     ///           `activationThreshold` must remain 0.
     ///
@@ -1568,7 +1585,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - If neither `uri` nor `data` is updated (both empty), no minimum ETH is required.
     ///         - If either `uri` or `data` is updated, the call must include at least:
     ///               minimumValue = max(t.incrementalValue, incrementalValue, _incrementalValue)
-    ///           Any ETH sent is routed into the protocol value pool via `{_addValue}`.
+    ///           The required ETH must be sent exactly, and is routed into the protocol value pool
+    ///           via {_addValue} rather than being stored directly on the token.
     ///
     ///         State updates:
     ///         - Updates `t.incrementalValue` and `t.activationThreshold` after validation.
@@ -2205,9 +2223,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///             * The contributors array is cleared and `contributionEpoch` is
     ///               incremented, logically resetting per-contributor state on
     ///               next touch without looping over all mappings.
-    ///             * Any temporary buff (including ANCHORED) is cleared.
+    ///             * Any temporary buff state is cleared, while `buff.appearance`
+    ///               is preserved as persistent appearance metadata.
     ///             * If a contract token is attached, its recallability is reset
     ///               and its address may be reinserted as a placeholder contributor.
+    ///         - Completing discharge clears the `discharging` flag but does not
+    ///           automatically deactivate an active token. Callers who want the token
+    ///           powered down must use {deactivateToken} separately.
     ///
     ///         This function never transfers ownership of the token itself; it only
     ///         settles contributions and redistributes value/active charge according
@@ -2494,6 +2516,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         based on the foundational Planes (planar links) of the two Digils
     ///         involved. Cannot link directly to foundational planar tokens
     ///         (IDs 0–PLANAR_MAX_ID).
+    ///         If the destination token is restricted, the source token's owner must
+    ///         already be whitelisted on the destination before the link can be created.
+    ///         This structural check is separate from the runtime contributor whitelist
+    ///         enforced during actual charging/propagation into restricted tokens.
     /// @param  tokenId    The source token ID.
     /// @param  linkId     The destination token ID to link to.
     /// @param  efficiency The efficiency of the link (percentage based).
@@ -2568,7 +2594,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             }
         }
 
-        // Community Expansion: 25% Discount if linking to a different owner.
+        // Community Expansion: 25% discount if the destination token has a different owner
+        // than the source token.
         // Discount = 1 / (Reduction^2) = 1/4 = 25%.
         if (ownerOf(linkId) != sourceOwner) {
             unchecked {
