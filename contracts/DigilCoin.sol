@@ -764,8 +764,8 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         return ep;
     }
 
-    /// @notice Returns the caller's per-epoch data for `epochId`.
-    /// @dev Reverts if the caller has no data for that epoch (never earned points) or the epoch is not stored.
+    /// @notice Returns the stored per-epoch data for `user` and `epochId`.
+    /// @dev Reverts if that user has no data for the epoch (never earned points) or the epoch is not stored.
     /// @param user Address to fetch.
     /// @param epochId Epoch to fetch.
     function getUserEpoch(address user, uint32 epochId) external view returns (UserEpoch memory) {
