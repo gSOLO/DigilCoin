@@ -739,6 +739,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The token ID to which the value is added.
     /// @param  value The amount of value (in wei) to add.
     function createValue(uint256 tokenId, uint256 value) external payable onlyOwner {
+        _checkTokenExists(tokenId);
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
         _requireNoBatch(t);
@@ -833,10 +834,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Opt In / Opt Out
 
-    /// @notice Allows the sender to opt out or opt in to token transfers.
-    ///         Requires sending a value equal to the current incremental value at the coin rate.
-    ///         For example at 0.0001ETH incremental value and 100 coin rate, requires .01ETH
-    /// @param  optOut Send true to opt out, false to opt in
+    /// @notice Allows the sender to opt out of, or back into, Digil participation flows.
+    /// @dev    Requires sending a value equal to the current incremental-value floor at the current coin rate.
+    ///         Example: at 0.0001 ETH incremental value and 100 coin rate, the required payment is 0.01 ETH.
+    ///         This function only toggles blacklist status and routes the paid ETH into the protocol value pool.
+    ///         It does not modify any pending distribution timestamps or retroactively reset coin-bonus timing.
+    /// @param  optOut True to opt out, false to opt back in.
     function setOptStatus(bool optOut) external payable {
         address account = _msgSender();
         require(_blacklisted[account] != optOut, "DIGIL: No Change");
@@ -2288,8 +2291,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                         _addActiveCharge(linkId, _tokens[linkId], share);
                     }
 
-                    // Any rounding remainder (from integer division) is implicitly lost,
-                    // remaining as untracked power in the contract balance.
+                    // Any rounding remainder from proportional integer division is left undistributed.
                 }
             }
 
