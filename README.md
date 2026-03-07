@@ -62,6 +62,7 @@ The on-chain governance contract for DigilCoin that executes approved proposals.
 - **Raw Vote Power Composition**: Delegated liquid votes plus time-locked coin power and a lock-duration bonus.
 - **Locking & Outcome Staking**: Users can lock coins for a time-based voting bonus. They can also stake on proposal outcomes while proposals are pending/active, then claim a market-settled payout after finalization (winner takes proportional share of the losing side, canceled or expired proposals refund both sides, and orphaned losing pools can be burned; burners receive a 1% bounty).
 - **Execution Safety**: Proposals execute through timelock controls, preserving review windows for privileged actions.
+- **Economic Control Path**: Governor changes Digil economics indirectly—by governing privileged calls once ownership/admin roles are handed to the timelock/governance stack.
 
 ### Digil Timelock
 A standard timelock controller that acts as the execution layer for the Governor. Privileged actions in the ecosystem should ultimately be owned and executed by this timelock.
@@ -138,6 +139,7 @@ To empower the sigil, participants offer material value (ETH) and energetic valu
 - **Inactive Tokens**: Charging builds "Potential Energy." Participants supply coins and the required minimum ETH.
 - **Active Tokens**: If the token has no links, coins become "Kinetic Energy" (Active Charge). If the token is linked, the energy is distributed across the network based on the strength and affinity of those links. Unused ETH goes to the token's owner.
 - **Proxy Contribution Support**: `chargeTokenAs` allows sponsored or delegated contribution flows while preserving the canonical contributor ledger.
+- **Participation Definition**: In `chargeTokenAs`, participation means who receives contribution attribution (`contributor`), not who pays gas/calls. A blacklisted caller may still trigger `chargeTokenAs` for another, non-blacklisted contributor.
 
 ### 3. Activating
 `activateToken(uint256 tokenId)`
@@ -211,6 +213,7 @@ A direct conversion feature for owners. You can pay a premium ETH fee to inject 
 Digils can act as "spirit vessels" for other NFTs.
 
 - **Step 1 — Pending Deposit**: Transfer an external ERC-721 into `DigilToken` via `safeTransferFrom`. This records the depositor as the pending owner for that `(externalCollection, externalTokenId)` pair.
+- **Deposit Mode Requirement**: Only `safeTransferFrom` deposits are supported; direct safe-mint to DigilToken is rejected.
 - **Step 2 — Finalize Vault**: `vaultToken(address account, uint256 tokenId, bytes data)`  
   Only the recorded depositor can finalize. Finalization charges the Coin vault fee, mints a new Digil wrapper, marks the external NFT as fully vaulted, and stores a reverse index from `(account, externalTokenId)` to the minted Digil id. The wrapper is created with an activation threshold of `0`.
 - **Unified Exit / Recall**: `recallToken(address account, uint256 externalTokenId)`  
@@ -231,6 +234,7 @@ Digils can act as "spirit vessels" for other NFTs.
 When ETH or Coins are owed to you (from activation payouts, refunds, or system rewards), they sit in a pending distribution pool. Calling withdraw pulls these assets to your wallet.
 - **Time Bonuses**: If you hold any Digils, pending Coins accrue a time-based bonus every 15 minutes until a per-withdraw cap is reached (the accrual slope is sized using a 7-day yield denominator).
 - **Single Settlement Surface**: Pending ETH and DIGIL from different flows (charging, activation, discharge, keeper rewards) are consolidated behind one user-level withdrawal path.
+- **Best-Effort Coin Payout**: Coin transfer is best-effort. If mint/transfer of DIGIL fails in the ERC20 path, `withdraw()` does not revert for that reason and can return `0` coins while still paying ETH.
 
 ### Contributor Reclaim
 `reclaimContribution(uint256 tokenId)`
@@ -244,6 +248,8 @@ A non-custodial safety hatch. If you contributed to a token that has been comple
 `setOptStatus(bool optOut)`
 
 Accounts can willingly blacklist themselves via this function by paying a small fee. Blacklisted accounts cannot send/receive Digils, participate in charging, or withdraw pending Coins while opted out. They can, however, always withdraw their pending ETH. Opting out does not itself reset any already-accumulated pending Coin bonus timing state. This is useful for individuals who wish to permanently exit the gameplay loop.
+- **Transfer Lock While Opted Out**: Opted-out accounts cannot transfer their Digils until they opt back in by paying the opt-in fee.
+- **Approvals Are Not Retroactively Revoked**: Opt-out blocks direct actions by the opted-out account but does not invalidate previously granted ERC-721 operator approvals; approved operators can still act where contract checks allow.
 
 ---
 
