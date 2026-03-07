@@ -567,6 +567,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
     /// @dev    Bonus coins are calculated based on the time since the last distribution.
+    ///         Coin payout is best-effort: if ERC20 minting/transfer fails, the function
+    ///         does not revert for that failure and may return `coins = 0` while still
+    ///         succeeding for the ETH withdrawal path.
     /// @return coins The number of coin units transferred to the sender.
     /// @return value The native Ether value transferred to the sender.
     function withdraw() external nonReentrant returns (uint256 coins, uint256 value) {
@@ -840,6 +843,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    This function only toggles the account's blacklist status and routes the paid ETH
     ///         into the protocol value pool via {_addValue}. It does not reset or modify any
     ///         pending distribution timestamps or Coin bonus accrual checkpoints.
+    ///         While opted out, the account cannot transfer Digils until it opts back in,
+    ///         because sender/receiver blacklist checks are enforced in {_update}.
     /// @param  optOut True to opt out, false to opt back in.
     function setOptStatus(bool optOut) external payable {
         address account = _msgSender();
@@ -955,15 +960,22 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // ERC721 Receiver
 
     /// @inheritdoc IERC721Receiver
-    /// @dev Records a pending vault deposit for (msg.sender = external contract, tokenId = external tokenId).
+    /// @dev Records a pending vault deposit for
+    ///      (`msg.sender` = external contract, `tokenId` = external tokenId)
+    ///      when this contract receives an NFT via `safeTransferFrom`.
+    ///      Direct ERC721 safe-mint-to-vault is intentionally unsupported and rejected,
+    ///      because minted callbacks use `from == address(0)` and do not represent a
+    ///      depositor who can later finalize or cancel the pending vault.
     function onERC721Received(address, address from, uint256 tokenId, bytes calldata) external nonReentrant returns (bytes4) {
         address account = _msgSender();
         
         // Ensure the token isn't already fully vaulted or pending by someone else
         require(_contractTokenAddresses[account][tokenId] == address(0), "DIGIL: Token Already Vaulted"); 
         
-        // Securely record the user as the pending depositor
+         // Reject direct mint-to-vault deposits; only safeTransferFrom deposits are supported.
         require(from != address(0), "DIGIL: Mint-To-Contract Unsupported");
+
+        // Securely record the user as the pending depositor
         _contractTokenAddresses[account][tokenId] = from;
         
         return this.onERC721Received.selector;
@@ -973,6 +985,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev
     ///  Vault lifecycle:
     ///  1) User deposits an external ERC721 via `safeTransferFrom(..., address(this), externalTokenId, ...)`.
+    ///     Direct safe-mint to this contract is not supported.
     ///     The ERC721 callback {onERC721Received} records the depositor as:
     ///         _contractTokenAddresses[account][externalTokenId] = depositor
     ///     This is the "Pending Vault" state.
@@ -1957,6 +1970,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Charges a token on behalf of another contributor.
     ///         Requires a value sent greater than or equal to the token's incremental value for each coin.
     /// @dev    Requires that the contributor is not blacklisted and the token exists.
+    ///         Participation attribution is based on `contributor`. The caller may be
+    ///         blacklisted and can still trigger this function for a non-blacklisted
+    ///         contributor, but the caller is not attributed as the participant.
     ///         If token.incrementalValue == 0, charging does not require ETH; any ETH sent is treated as surplus value
     ///         (credited as token value or distributed per the active/inactive path). If token.incrementalValue > 0,
     ///         ETH must satisfy the per-charge minimum derived from incrementalValue.
