@@ -90,6 +90,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @param amount The amount of tokens staked.
     event Stake(uint256 indexed proposalId, address indexed user, bool supportFor, uint256 amount);
     /// @notice Emitted when a user claims their winnings or refund.
+    /// @dev    `amount` is the post-bounty burn amount, after any 1% caller bounty is paid.
     /// @param proposalId The ID of the proposal.
     /// @param user The address of the user claiming.
     /// @param amount The total amount of tokens sent back to the user (principal + winnings).
