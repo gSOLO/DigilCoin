@@ -963,6 +963,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(_contractTokenAddresses[account][tokenId] == address(0), "DIGIL: Token Already Vaulted"); 
         
         // Securely record the user as the pending depositor
+        require(from != address(0), "DIGIL: Mint-To-Contract Unsupported");
         _contractTokenAddresses[account][tokenId] = from;
         
         return this.onERC721Received.selector;
