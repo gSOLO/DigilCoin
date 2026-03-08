@@ -1908,7 +1908,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
             if (value < minimumValue) _revertInsufficientFunds(minimumValue);
             
-            // Transfer coins from the contributor to this contract.
+            // Transfer coins from the caller (sponsor) to this contract.
             _coinsFromSender(coins);
 
         }
@@ -1969,10 +1969,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Charges a token on behalf of another contributor.
     ///         Requires a value sent greater than or equal to the token's incremental value for each coin.
-    /// @dev    Requires that the contributor is not blacklisted and the token exists.
-    ///         Participation attribution is based on `contributor`. The caller may be
-    ///         blacklisted and can still trigger this function for a non-blacklisted
-    ///         contributor, but the caller is not attributed as the participant.
+    /// @dev    Requires that both the caller and `contributor` are not blacklisted,
+    ///         and the token exists. Participation attribution is based on
+    ///         `contributor`.
     ///         If token.incrementalValue == 0, charging does not require ETH; any ETH sent is treated as surplus value
     ///         (credited as token value or distributed per the active/inactive path). If token.incrementalValue > 0,
     ///         ETH must satisfy the per-charge minimum derived from incrementalValue.
@@ -1981,6 +1980,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  coins The coin units used in the charge.
     /// @return True if the token was successfully charged.
     function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) public payable returns(bool) {
+        _notOnBlacklist(_msgSender());
         _notOnBlacklist(contributor);
         _checkTokenExists(tokenId);
         
