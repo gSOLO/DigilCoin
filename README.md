@@ -139,7 +139,7 @@ To empower the sigil, participants offer material value (ETH) and energetic valu
 - **Inactive Tokens**: Charging builds "Potential Energy." Participants supply coins and the required minimum ETH.
 - **Active Tokens**: If the token has no links, coins become "Kinetic Energy" (Active Charge). If the token is linked, the energy is distributed across the network based on the strength and affinity of those links. Unused ETH goes to the token's owner.
 - **Proxy Contribution Support**: `chargeTokenAs` allows sponsored or delegated contribution flows while preserving the canonical contributor ledger.
-- **Participation Definition**: In `chargeTokenAs`, participation means who receives contribution attribution (`contributor`), not who pays gas/calls. A blacklisted caller may still trigger `chargeTokenAs` for another, non-blacklisted contributor.
+- **Participation Definition**: In `chargeTokenAs`, participation means who receives contribution attribution (`contributor`), not who pays gas/calls. Both caller and contributor must be opted in (not blacklisted) for the charge to proceed.
 
 ### 3. Activating
 `activateToken(uint256 tokenId)`

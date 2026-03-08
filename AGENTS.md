@@ -107,6 +107,13 @@ For any logic change, agents should validate using the strongest available check
 - Verify no obvious formatting regressions.
 - Provide exact commands run and outcomes.
 
+### Security review checklist (for behavior changes)
+
+- Check role/admin boundaries for new and modified state-changing functions.
+- Check reentrancy surfaces around ETH/ERC20/ERC721 interactions and verify CEI ordering.
+- Check batching/replay flags and epoch/ring-buffer rollover behavior for edge-case regressions.
+- Check that NatSpec/README claims match implemented revert behavior and access policy.
+
 ### Test targeting guidance
 
 - `DigilCoin.sol` changes → run `tests/DigilCoin_test.sol` first.
