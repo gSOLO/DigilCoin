@@ -2547,10 +2547,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         //_checkTokenExists(tokenId);
         _checkTokenExists(linkId);        
         _authorizeAndTouch(tokenId, t);
-        require(t.links.length < MAX_LINKS, "DIGIL: Too Many Links");
 
         // Existing link state
         uint8 baseEfficiency = t.linkEfficiency[linkId].base;
+        bool isNewLink = (baseEfficiency == 0);
+        if (isNewLink) {
+            require(t.links.length < MAX_LINKS, "DIGIL: Too Many Links");
+        }
 
         // Validate link: tokens must be different, destination must be non-planar,
         // and the new efficiency must strictly improve on the current base.
@@ -2584,8 +2587,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Update base efficiency in storage.
         t.linkEfficiency[linkId].base = efficiency;
 
-        // If this is a brand-new link (no previous baseEfficiency), add it to the list.
-        bool isNewLink = (baseEfficiency == 0);
+        // If this is a brand-new link, add it to the list.
         if (isNewLink) {
             t.links.push(linkId);
         }
