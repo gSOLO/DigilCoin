@@ -248,6 +248,7 @@ A non-custodial safety hatch. If you contributed to a token that has been comple
 `setOptStatus(bool optOut)`
 
 Accounts can willingly blacklist themselves via this function by paying a small fee. Blacklisted accounts cannot send/receive Digils, participate in charging, or withdraw pending Coins while opted out. They can, however, always withdraw their pending ETH. Opting out does not itself reset any already-accumulated pending Coin bonus timing state. This is useful for individuals who wish to permanently exit the gameplay loop.
+- **Event Surface**: Opt state transitions emit `OptStatus(address account, bool optOut)` for both opt-in and opt-out transitions.
 - **Transfer Lock While Opted Out**: Opted-out accounts cannot transfer their Digils until they opt back in by paying the opt-in fee.
 - **Approvals Are Not Retroactively Revoked**: Opt-out blocks direct actions by the opted-out account but does not invalidate previously granted ERC-721 operator approvals; approved operators can still act where contract checks allow.
 
@@ -266,6 +267,10 @@ Accounts can willingly blacklist themselves via this function by paying a small 
   - `tokenLinkAt(uint256 tokenId, uint256 index)`
   - `tokenAttachment(uint256 tokenId)`
   - `configuration()`
+- **Lifecycle/Event ABI Notes**:
+  - Batch lifecycle continuation emits `Batch(uint256 tokenId)` while activation/discharge are in progress.
+  - Buff application emits `Buff(uint256 tokenId)`; buff parameters are read through `tokenBuff(uint256 tokenId)`.
+  - Priming emits `Prime(uint256 tokenId)`.
 - **Batch Safety**: Sensitive lifecycle transitions are protected by batch-locks. If a token is mid-activation, it cannot be transferred, charged, or updated until the community finishes the batch processing.
 
 ---
