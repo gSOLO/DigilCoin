@@ -507,35 +507,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         emit Configure(_coinRate, _incrementalValue, _transferValue, batchSize);
     }
 
-    /// @notice Returns the current global economic configuration.
-    /// @dev    This is a lightweight view helper for front-ends, indexers,
-    ///         and explorers that want to understand the system-wide economic
-    ///         parameters without parsing events.
-    ///
-    ///         - `coinRate` is the fully scaled ERC20 Coin rate (already
-    ///           multiplied by `_coinMultiplier`), used by charging, bonuses,
-    ///           and various coin-priced operations.
-    ///         - `incrementalValue` is the global minimum ETH-per-coin value
-    ///           (in wei) currently enforced by the protocol, and serves as
-    ///           the lower bound for per-token incrementalValue in
-    ///           {createToken} and {updateToken}. It is constrained at
-    ///           configuration time to be within:
-    ///           `(VALUE_MULTIPLIER, MAX_INCREMENTAL_VALUE]`.
-    ///         - `transferValue` is the portion of each incremental unit that
-    ///           is routed back to users via distributions, with the remainder
-    ///           retained as protocol fee.
-    ///         - `batchSize` controls how many contributors can be processed
-    ///           per batch step in {activateToken} and {dischargeToken}.
-    ///
-    /// @return coinRate         Current global coin rate, in the smallest ERC20
-    ///                          units (i.e. already scaled by `_coinMultiplier`).
-    /// @return incrementalValue Current global minimum incremental value, in wei.
-    /// @return transferValue    Current per-increment transfer value, in wei.
-    /// @return batchSize        Current global batch size for distributions.
-    function configuration() external view returns (uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) {
-        return (_coinRate, _incrementalValue, _transferValue, _batchSize);
-    }
-
     // Coin Transfers
 
     /// @dev    Internal function that attempts to transfer coins from the message sender to this contract.

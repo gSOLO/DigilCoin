@@ -37,7 +37,6 @@ interface IDigilToken is IERC721, IERC721Receiver {
 
     // Configuration
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external;
-    function configuration() external view returns (uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize);
 
     // Withdraw
     function withdraw() external returns (uint256 coins, uint256 value);
