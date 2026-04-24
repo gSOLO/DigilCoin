@@ -32,6 +32,10 @@
           ]
         }
       },
+      "metadata": {
+        "bytecodeHash": "none",
+        "appendCBOR": true
+      },
       "evmVersion": "prague",
       "debug": {
         "revertStrings": "strip",
