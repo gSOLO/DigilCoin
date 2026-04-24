@@ -104,6 +104,7 @@ For any logic change, agents should validate using the strongest available check
 
 - Compile the touched contracts (or verify syntax/consistency if compiler unavailable).
 - Run the most relevant Solidity tests in `tests/`.
+- If an interface file exists (`I*.sol`/`*Interface*.sol`), verify it matches implementation signatures and events.
 - Verify no obvious formatting regressions.
 - Provide exact commands run and outcomes.
 
@@ -118,6 +119,7 @@ For any logic change, agents should validate using the strongest available check
 
 - `DigilCoin.sol` changes → run `tests/DigilCoin_test.sol` first.
 - `DigilToken.sol` changes → run matching `tests/DigilToken*_test.sol` files.
+- `contracts/IDigilToken.sol` or `contracts/DigilToken.sol` changes → also run interface-using tests that depend on `IDigilToken` compatibility.
 - Shared interfaces/libs changes → run all impacted suites.
 
 ### Desktop Remix IDE deployment order for `DigilToken` testing
@@ -166,6 +168,7 @@ When adding new contract files, follow existing naming style (`PascalCase.sol`, 
 - Use clear, imperative commit messages.
 - Group related code and test updates in the same commit when practical.
 - Do not include generated artifacts unless requested.
+- When public ABI changes, update `README.md` and any relevant API docs in the same change.
 
 ### PR expectations
 
@@ -176,6 +179,11 @@ PR descriptions should include:
 3. Risk/safety notes.
 4. Validation commands + results.
 5. Any environment limitations encountered.
+
+### Common drift risks
+
+- Event signature changes that are not mirrored in interface files and downstream tests.
+- Removed or renamed admin methods that break operator runbooks and integration assumptions.
 
 ---
 
