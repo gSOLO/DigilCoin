@@ -814,8 +814,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    This function only toggles the account's blacklist status and routes the paid ETH
     ///         into the protocol value pool via {_addValue}. It does not reset or modify any
     ///         pending distribution timestamps or Coin bonus accrual checkpoints.
-    ///         While opted out, the account cannot transfer Digils until it opts back in,
-    ///         because sender/receiver blacklist checks are enforced in {_update}.
+    ///         While opted out, the account cannot directly transfer Digils, receive Digils,
+    ///         charge tokens, be attributed as a contributor, or withdraw Coin distributions.
+    ///         Opting out does not revoke ERC-721 approvals. A non-opted-out approved operator
+    ///         may still operate Digils owned by the opted-out account unless approvals are
+    ///         revoked before opting out.
     /// @param  optOut True to opt out, false to opt back in.
     function setOptStatus(bool optOut) external payable {
         address account = _msgSender();
