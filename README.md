@@ -162,6 +162,13 @@ The final release dismantling the construct. First call requires owner/approved 
 - **Active Discharge**: Behaves like activation—ETH is settled proportionally. However, any remaining active power is forcefully pushed outward along the token's link graph, strengthening its neighbors before contributor/distribution state is cleared. Active discharge does **not** itself deactivate the Digil; call `deactivateToken(uint256 tokenId)` separately if you want it powered down.
 - **Wrapped NFT Recallability**: If this Digil wraps an external ERC721, an *inactive* discharge clears recallability; an *active* discharge preserves it (the external NFT remains vaulted until recalled).
 
+### Maintenance During Lifecycle
+`updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes data, string uri)`
+
+- When `uri` and `data` are both empty, `msg.value` must equal exactly `0`.
+- When either `uri` or `data` is non-empty, `msg.value` must equal exactly `max(currentIncrementalValue, newIncrementalValue, globalIncrementalValue)`.
+- Required ETH from this call is routed into the protocol value pool.
+
 ---
 
 ## Linking & Affinity
@@ -256,7 +263,7 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 ## Admin & Security Notes
 
 - **Metadata Updates**: `updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes data, string uri)`  
-  Token URIs and internal arbitrary data can be updated by paying the required Coin cost and, when metadata/data is actually being changed, the required ETH amount based on the applicable incremental-value floor. Economic parameters are frozen only while the token currently has pending inactive `charge > 0`; if current charge is zero, they may be changed even if the token was used in an earlier lifecycle.
+  Token URIs and internal arbitrary data can be updated by paying the required Coin cost. When `uri` and `data` are both empty, `msg.value` must equal exactly `0`. When either `uri` or `data` is non-empty, `msg.value` must equal exactly `max(currentIncrementalValue, newIncrementalValue, globalIncrementalValue)`. Required ETH from this call is routed into the protocol value pool. Economic parameters are frozen only while the token currently has pending inactive `charge > 0`; if current charge is zero, they may be changed even if the token was used in an earlier lifecycle.
 - **Restriction Controls**: `restrictToken(uint256 tokenId, address[] whitelisted)` allows owners of restricted Digils to curate and update contributor access lists with explicit on-chain events.
 - **Read-Only Views**: The contract exposes various functions to allow front-ends to easily read the complex, packed state of any Digil:
   - `tokenCharge(uint256 tokenId)`

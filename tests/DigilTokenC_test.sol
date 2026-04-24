@@ -117,4 +117,23 @@ contract CharlieTestSuite {
             Assert.ok(true, "Incorrect error for updating charged token");
         }
     }
+
+    /// #sender: account-2
+    /// #value: 500000000000000
+    function testUpdateTokenRejectsOverpayOnMetadataDataChange() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        bool approved = coins.approve(address(digil), 2 * 1000 * 100 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 tokenId = digil.createToken{value: 100000000000000}(100000000000000, 1000000000000000000, false, 4, "Overpay Test");
+
+        uint256 requiredValue = 200000000000000;
+        digil.updateToken{value: requiredValue}(tokenId, requiredValue, 1000000000000000000, "Updated Data", "Updated URI");
+
+        try digil.updateToken{value: requiredValue + 1}(tokenId, requiredValue, 1000000000000000000, "Overpay Data", "Overpay URI") {
+            Assert.ok(false, "Overpaying updateToken with metadata/data change should revert");
+        } catch {
+            Assert.ok(true, "Overpaying updateToken correctly reverted");
+        }
+    }
 }
