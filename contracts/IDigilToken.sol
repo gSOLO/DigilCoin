@@ -3,18 +3,17 @@ pragma solidity ^0.8.34;
 
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @title Interface for Digil Token (NFT)
 /// @notice Interface for the DigilToken contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
 interface IDigilToken is IERC721, IERC721Receiver {
     // Events
     event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize);
-    event OptOut(address indexed account);
-    event OptIn(address indexed account);
+    event OptStatus(address indexed account, bool optOut);
     event Whitelist(address indexed account, uint256 indexed tokenId);
     event Restrict(uint256 indexed tokenId);
     event Update(uint256 indexed tokenId);
+    event Batch(uint256 indexed tokenId);
     event Activate(uint256 indexed tokenId);
     event Deactivate(uint256 indexed tokenId);
     event Charge(address indexed addr, uint256 indexed tokenId, uint256 coins, uint256 value);
@@ -22,9 +21,9 @@ interface IDigilToken is IERC721, IERC721Receiver {
     event Discharge(uint256 indexed tokenId);
     event Link(uint256 indexed tokenId, uint256 indexed linkId, uint8 efficiency, uint256 affinityBonus);
     event Unlink(uint256 indexed tokenId, uint256 indexed linkId);
-    event Buff(uint256 indexed tokenId, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint256 duration);
+    event Buff(uint256 indexed tokenId);
     event Stabilize(uint256 indexed tokenId);
-    event PendingDistribution(address indexed addr, uint256 coins, uint256 value);
+    event Prime(uint256 indexed tokenId);
     event Contribute(address indexed addr, uint256 indexed tokenId, uint256 value);
     event Enrich(uint256 indexed tokenId, uint256 value);
     event Reclaim(address indexed addr, uint256 indexed tokenId, uint256 value);
@@ -40,11 +39,8 @@ interface IDigilToken is IERC721, IERC721Receiver {
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external;
     function configuration() external view returns (uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize);
 
-    // Sweep (Admin Function)
-    function sweep(address token) external;
-
     // Withdraw
-    function withdraw() external payable returns (uint256 coins, uint256 value);
+    function withdraw() external returns (uint256 coins, uint256 value);
 
     // Opt In / Opt Out
     function setOptStatus(bool optOut) external payable;
@@ -52,8 +48,14 @@ interface IDigilToken is IERC721, IERC721Receiver {
     // ERC721 Receiver
     function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata data) external override returns (bytes4);
 
+    // Reclaim Contribution
+    function reclaimContribution(uint256 tokenId) external payable;
+
+    // Vault Token
+    function vaultToken(address account, uint256 externalTokenId, bytes calldata data) external;
+
     // Recall Token
-    function recallToken(address account, uint256 tokenId) external;
+    function recallToken(address account, uint256 externalTokenId) external;
 
     // Token Information
     function tokenURI(uint256 tokenId) external view returns (string memory);
@@ -84,7 +86,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     function activateToken(uint256 tokenId) external returns (bool);
 
     // Deactivate Token
-    function deactivateToken(uint256 tokenId) external payable;
+    function deactivateToken(uint256 tokenId) external;
 
     // Link Token
     function linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency) external payable;
