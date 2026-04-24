@@ -1596,11 +1596,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///           >= 5 to preserve planar affinity encoding.
     ///
     ///         ETH requirement:
-    ///         - If neither `uri` nor `data` is updated (both empty), no minimum ETH is required.
-    ///         - If either `uri` or `data` is updated, the call must include at least:
+    ///         - If neither `uri` nor `data` is updated (both empty), required ETH is exactly 0.
+    ///         - If either `uri` or `data` is updated, the call must send exactly:
     ///               minimumValue = max(t.incrementalValue, incrementalValue, _incrementalValue)
-    ///           The required ETH must be sent exactly, and is routed into the protocol value pool
-    ///           via {_addValue} rather than being stored directly on the token.
+    ///           The required ETH is routed into the protocol value pool via {_addValue}
+    ///           rather than being stored directly on the token.
     ///
     ///         State updates:
     ///         - Updates `t.incrementalValue` and `t.activationThreshold` after validation.
