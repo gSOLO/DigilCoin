@@ -266,4 +266,44 @@ contract BetaTestSuite {
             Assert.ok(true, "Incorrect error for zero value");
         }
     }
+
+    // #sender: account-0
+    /// #value: 1200000000000000
+    function testLinkTokenAtMaxLinksUpgradeBehavior() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+
+        bool approved = coins.approve(address(digil), 200000 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 tokenId = digil.createToken{value: 100000000000000}(0, 0, false, 0, "Max Link Source");
+        uint256[] memory destinations = new uint256[](11);
+        for (uint256 i; i < destinations.length; ++i) {
+            destinations[i] = digil.createToken{value: 100000000000000}(0, 0, false, 0, "Max Link Destination");
+        }
+
+        // Fill up to MAX_LINKS (10) with new links.
+        digil.linkToken(tokenId, destinations[0], 10);
+        for (uint256 i = 1; i < 10; ++i) {
+            digil.linkToken(tokenId, destinations[i], 10);
+        }
+
+        (, , , , uint256 links, , , , ) = digil.tokenData(tokenId);
+        Assert.equal(links, 10, "Token should be at MAX_LINKS");
+
+        // Upgrading an existing link at max links should succeed.
+        digil.linkToken(tokenId, destinations[0], 20);
+        (, , , , links, , , , ) = digil.tokenData(tokenId);
+        Assert.equal(links, 10, "Upgrading should not change link count");
+
+        (uint256 linkId, uint8 baseEfficiency, ) = digil.tokenLinkAt(tokenId, 0);
+        Assert.equal(linkId, destinations[0], "Unexpected upgraded link id");
+        Assert.equal(baseEfficiency, 20, "Existing link should upgrade at MAX_LINKS");
+
+        // Adding a new 11th link should still revert.
+        try digil.linkToken(tokenId, destinations[10], 10) {
+            Assert.ok(false, "Adding a new link at MAX_LINKS should fail");
+        } catch {
+            Assert.ok(true, "Expected Too Many Links revert for new link");
+        }
+    }
 }
