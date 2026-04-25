@@ -7,9 +7,9 @@ pragma solidity ^0.8.34;
 library DigilFlags {
     // Buff Bitmasks
     uint16 internal constant STABILIZED       = uint16(1) << 0;  // Anti-Bleed - Prevents one bleed event; consumed on deactivation/recall bleed
-    uint16 internal constant ANCHORED         = uint16(1) << 1;  // Retain Charge - On discharge, retain a fraction of activeCharge if buff still activ
+    uint16 internal constant ANCHORED         = uint16(1) << 1;  // Retain Charge - On discharge, retain a fraction of activeCharge if buff still active
     uint16 internal constant PRIMED           = uint16(1) << 2;  // Half Activation - Next activation threshold is halved once; consumed on successful activation
-    uint16 internal constant REVERBERATED     = uint16(1) << 3;  // Reflect Propogated Charge - While buff is active, reflect a fraction of *propagated* link charge back as activeCharge
+    uint16 internal constant REVERBERATED     = uint16(1) << 3;  // Reflect Propagated Charge - While buff is active, reflect a fraction of *propagated* link charge back as activeCharge
 
     // Tier / tag flags
     uint16 internal constant ELEMENTAL        = uint16(1) << 4;  // Tier 1 tag
