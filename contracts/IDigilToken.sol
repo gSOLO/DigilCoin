@@ -22,8 +22,6 @@ interface IDigilToken is IERC721, IERC721Receiver {
     event Link(uint256 indexed tokenId, uint256 indexed linkId, uint8 efficiency, uint256 affinityBonus);
     event Unlink(uint256 indexed tokenId, uint256 indexed linkId);
     event Buff(uint256 indexed tokenId);
-    event Stabilize(uint256 indexed tokenId);
-    event Prime(uint256 indexed tokenId);
     event Contribute(address indexed addr, uint256 indexed tokenId, uint256 value);
     event Enrich(uint256 indexed tokenId, uint256 value);
     event Reclaim(address indexed addr, uint256 indexed tokenId, uint256 value);

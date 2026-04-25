@@ -32,7 +32,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Constants for bonus interval and multiplier
     uint256 private constant YIELD_PERIOD = 7;                  // Number of days required for a holder to earn 100% of their NFT balance in bonus coins (denominator for holder-yield sizing).
-    uint256 private constant BONUS_INTERVAL = 15 minutes;       // Bonus accrual interval (1% of the per-withdraw cap per interval; reaches cap in ~25 hours and then saturates until next withdrawal).
+    uint256 private constant BONUS_INTERVAL = 15 minutes;       // Collector-yield interval. Each full interval earns 1% of the checkpoint cap; yield saturates at the cap until the next checkpoint.
     uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
 
     // Configuration values for incremental and transfer values
@@ -82,7 +82,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev Structure to hold pending coin and value distributions for a user, and
     ///      the timestamp of the last bonus accrual checkpoint (used by {withdraw}).
     struct Distribution {
-        uint256 time;   // Timestamp of the last successful bonus accrual (not every withdrawal)
+        uint256 time;   // Collector-yield checkpoint timestamp. Resets on yield checkpoints, even if no bonus is accrued.
         uint256 coins;  // Pending ERC20 coins to be withdrawn
         uint256 value;  // Pending Ether value to be withdrawn
     }
@@ -243,17 +243,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  linkId The ID of the token that was unlinked from
     event Unlink(uint256 indexed tokenId, uint256 indexed linkId);
 
-    /// @notice Emitted when a temporary buff is applied to a token.
-    /// @param  tokenId The ID of the token that was buffed.
+    /// @notice Emitted when a token's buff state changes.
+    /// @dev Emitted for temporary buffs, stabilization, and priming.
+    ///      Consumers can inspect {tokenBuff} after this event to determine the
+    ///      current flags, expiry, appearance, and temporary buff parameters.
+    /// @param tokenId The token whose buff state changed.
     event Buff(uint256 indexed tokenId);
-
-    /// @notice Emitted when a token is stabilized to prevent active charge bleed.
-    /// @param  tokenId The ID of the token being stabilized.
-    event Stabilize(uint256 indexed tokenId);
-
-    /// @notice Emitted when a token is primed to reduce activation threshold.
-    /// @param  tokenId The ID of the token being primed.
-    event Prime(uint256 indexed tokenId);
 
     /// @notice Emitted when value is reclaimed from a token.
     /// @dev    This event is specifically tied to the reclaiming of a contribution after a period of inactivity. 
@@ -456,8 +451,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///           transaction during batch activation / discharge.
     ///
     ///         Reverts if:
-    ///         - `coins` is not strictly between `MIN_COIN_RATE` and
-    ///           `MAX_COIN_RATE` (inclusive of the upper bound).
+    ///         - `coins` is outside the inclusive
+    ///           `[MIN_COIN_RATE, MAX_COIN_RATE]` range.
     ///         - `incrementalValue` is not strictly greater than
     ///           `VALUE_MULTIPLIER` or exceeds `MAX_INCREMENTAL_VALUE`.
     ///         - `transferValue` is not between 90% and 99% of
@@ -536,87 +531,162 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(msg.value);
     }
 
-    /// @notice Withdraws any pending coin and value distributions for the sender, and optionally provides bonus coins.
-    /// @dev    Bonus coins are calculated based on the time since the last distribution.
-    ///         Coin payout is best-effort: if ERC20 minting/transfer fails, the function
-    ///         does not revert for that failure and may return `coins = 0` while still
-    ///         succeeding for the ETH withdrawal path.
-    /// @return coins The number of coin units transferred to the sender.
-    /// @return value The native Ether value transferred to the sender.
+    /// @dev Checkpoints collector-yield for `account` using the supplied eligible
+    ///      Digil balance, then restarts the account's yield timer.
+    ///
+    ///      This helper is used in two contexts:
+    ///      - During {_update}, it is called before the ERC721 balance changes, so
+    ///        `balance` is the account's pre-transfer balance.
+    ///      - During {withdraw}, it is called with the sender's current balance.
+    ///
+    ///      Only accounts with a nonzero eligible Digil balance accrue collector-yield.
+    ///      A zero-balance account may still have its timer reset, but it does not earn
+    ///      the base `_coinRate` bonus.
+    ///
+    ///      If `welcome` is true and this is a first-time zero-balance recipient,
+    ///      the account receives the one-coin welcome credit before its timer is
+    ///      initialized.
+    ///
+    ///      Partial intervals are intentionally discarded on every checkpoint. This
+    ///      keeps the invariant simple: an elapsed yield timer only applies to the
+    ///      balance supplied for that checkpoint.
+    ///
+    /// @param account The account to checkpoint. Must not be address(0).
+    /// @param balance The eligible Digil balance for the period being settled.
+    /// @param welcome True only when checkpointing a transfer/mint recipient.
+    function _checkpointYield(address account, uint256 balance, bool welcome) internal {
+        Distribution storage d = _distributions[account];
+
+        uint256 nowTs = block.timestamp;
+        uint256 oldTime = d.time;
+
+        if (oldTime == 0) {
+            if (welcome && balance == 0) {
+                d.coins += _coinMultiplier;
+            }
+            d.time = nowTs;
+            return;
+        }
+
+        unchecked {
+            uint256 intervals = (nowTs - oldTime) / BONUS_INTERVAL;
+
+            if (intervals != 0 && balance != 0) {
+                uint256 dailyCap = _coinRate + (balance * _coinMultiplier / YIELD_PERIOD);
+                uint256 bonus = intervals * dailyCap / BONUS_RATE_DIVISOR;
+
+                d.coins += bonus < dailyCap ? bonus : dailyCap;
+            }
+        }
+
+        d.time = nowTs;
+    }
+
+    /// @notice Withdraws pending native-value and Coin distributions for the sender.
+    /// @dev    ETH and Coin withdrawals are handled through the same user-facing
+    ///         function, but with different participation rules.
+    ///
+    ///         ETH path:
+    ///         - Pending native value is always withdrawable, even if the account
+    ///           has opted out.
+    ///         - The ETH amount is zeroed before the external call.
+    ///
+    ///         Coin path:
+    ///         - Opted-out accounts cannot withdraw Coins.
+    ///         - For non-opted-out accounts, this function first checkpoints
+    ///           collector-yield using the sender's current unchanged-balance period.
+    ///         - Then it attempts to pay all pending Coins.
+    ///
+    ///         Collector-yield:
+    ///         - Calling {withdraw} is itself a checkpoint. If fewer than
+    ///           `BONUS_INTERVAL` seconds have elapsed since the previous checkpoint,
+    ///           no collector-yield is credited and the partial interval is discarded.
+    ///         - Yield is no longer calculated ad hoc only from the current balance
+    ///           at withdrawal time.
+    ///         - Instead, {_checkpointYield} is used both on transfers and on
+    ///           withdrawal.
+    ///         - This prevents temporary NFT concentration from applying an old
+    ///           timer to a newly increased balance.
+    ///
+    ///         Coin payout behavior:
+    ///         - If the contract does not hold enough Coins, it attempts to mint the
+    ///           shortfall.
+    ///         - If minting or transfer fails, the Coin withdrawal fails softly:
+    ///             * pending Coins are restored;
+    ///             * the function still succeeds for the ETH path;
+    ///             * returned `coins` is 0.
+    ///         - This preserves the existing best-effort Coin payout model.
+    ///
+    /// @return coins The number of Coin units successfully transferred to the sender.
+    /// @return value The native ETH value transferred to the sender.
     function withdraw() external nonReentrant returns (uint256 coins, uint256 value) {
         address addr = _msgSender();
         bool optedOut = _blacklisted[addr];
 
         Distribution storage distribution = _distributions[addr];
 
-        // --- ETH path: always withdrawable, even if blacklisted ---
+        // --- ETH accounting path ---
+        //
+        // ETH is always withdrawable, even by opted-out accounts.
+        // Zero it before the external call to prevent re-withdrawal.
         value = distribution.value;
         distribution.value = 0;
 
+        // --- Coin + collector-yield accounting path ---
+        //
+        // Snapshot and clear Coin state before performing the ETH external call.
+        // This prevents a receiver hook from changing NFT balances mid-withdraw
+        // and affecting the current Coin calculation.
+        if (!optedOut) {
+            _checkpointYield(addr, balanceOf(addr), false);
+
+            coins = distribution.coins;
+            distribution.coins = 0;
+        }
+
+        // --- ETH interaction ---
+        //
+        // Perform the ETH transfer after all local accounting has been snapshotted.
         if (value > 0) {
             (bool ok, ) = payable(addr).call{value: value}("");
             if (!ok) revert();
         }
 
-        // Blacklisted accounts cannot withdraw coins or earn bonus coins.
+        // Opted-out accounts cannot receive Coins or collector-yield.
         if (optedOut) {
             return (0, value);
         }
 
-        // --- Coin + bonus path ---
-        uint256 nowTs = block.timestamp;
-        uint256 oldTime = distribution.time;
-
-        // Base pending coins (from prior distributions)
-        uint256 baseCoins = distribution.coins;
-        distribution.coins = 0;
-
-        // Compute time-based bonus *without* mutating state.
-        uint256 bonus;
-        uint256 balance = balanceOf(addr);
-        if (balance > 0 && nowTs > oldTime) {
-            // COLLECTOR'S YIELD: 
-            // The daily cap increases by (Balance / YIELD_PERIOD).
-            // This ensures that over the course of 7 days, the bonus pool 
-            // generates exactly 100% of the user's NFT balance.
-            unchecked { 
-                uint256 dailyCap = _coinRate + (balance * _coinMultiplier / YIELD_PERIOD);
-
-                // Speed calculation: (Intervals elapsed) * (Daily Revenue / 100)
-                // Precision: Multiply by dailyCap before dividing by BONUS_RATE_DIVISOR (100).
-                uint256 rawBonus = ((nowTs - oldTime) / BONUS_INTERVAL) * dailyCap / BONUS_RATE_DIVISOR;
-                
-                bonus = rawBonus < dailyCap ? rawBonus : dailyCap;
-            }
-        }
-        uint256 total = baseCoins + bonus;
-
-        if (total == 0) {
-            // Nothing to pay in coins; ETH may still have been withdrawn above.
+        // Nothing to pay in Coins.
+        if (coins == 0) {
             return (0, value);
         }
 
-        // Ensure the contract has enough coins; try to mint the shortfall.
+        // Ensure this contract has enough Coins. If not, try to mint the shortfall.
         uint256 contractBalance = _coins.balanceOf(address(this));
-        if (contractBalance < total) {
-            uint256 needed = total - contractBalance;
-            // Best-effort mint; failure is tolerated.
+        if (contractBalance < coins) {
+            uint256 needed = coins - contractBalance;
+
+            // Best-effort mint; failure is tolerated so the ETH path can still
+            // succeed. If minting fails and the later transfer fails, pending Coins
+            // are restored below.
             try _coins.mint(address(this), needed) {
-                // ok
-            } catch { }   // mint failed; we'll still attempt transfer with whatever balance exists
+                // Mint succeeded.
+            } catch {
+                // Mint failed; continue to attempt transfer with available balance.
+            }
         }
 
-        // Attempt to transfer the coins (base + bonus)
-        if (_transferCoinsFrom(address(this), addr, total)) {
-            // Success: commit the bonus + time
-            coins = total;
-
-            if (bonus > 0) {
-                distribution.time = nowTs;
+        // Attempt to transfer Coins.
+        //
+        // This uses the existing `_transferCoinsFrom` helper so behavior remains
+        // consistent with the rest of the contract.
+        if (!_transferCoinsFrom(address(this), addr, coins)) {
+            // Restore the snapshotted Coin amount without overwriting any Coins that
+            // may have been credited to this account during the ETH receiver callback.
+            unchecked {
+                distribution.coins += coins;
             }
-        } else {
-            // Failure: restore original state (no bonus consumed).
-            distribution.coins = baseCoins;
             coins = 0;
         }
 
@@ -734,59 +804,70 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // ERC721 Updates
 
     /// @inheritdoc ERC721
-    /// @dev    Overrides the ERC721 _update function to perform additional checks and actions.
-    ///         Enforces planar policy:
-    ///         - Planar tokens cannot be burned (`to != address(0)`),
-    ///          - Outside of transfer ownership, planar tokens must always be held by the admin (`to == owner()`),
-    ///          - During transfer ownership (`_planarTransferActive == true`), movement is allowed so the
-    ///         current owner can pass custody to the new admin.
-    ///         Non-planar tokens are unaffected.
-    /// @param  to The address receiving the token.
-    /// @param  tokenId The token ID being transferred.
-    /// @param  auth Authorization address.
-    /// @return The previous owner address.
+    /// @dev    Overrides the ERC721 {_update} function to perform Digil-specific
+    ///         transfer accounting and policy checks.
+    ///
+    ///         Responsibilities:
+    ///         1. Enforce opt-out restrictions for the caller and recipient.
+    ///         2. Enforce planar-token custody rules.
+    ///         3. Prevent transfers while a token-level batch operation is active.
+    ///         4. Checkpoint collector-yield for sender and recipient before the
+    ///            ERC721 balance change occurs.
+    ///         5. Maintain first-time holder welcome-coin behavior.
+    ///         6. Update token activity and automatically whitelist the new owner.
+    ///
+    ///         Collector-yield checkpointing:
+    ///         - Yield must be settled before balances change.
+    ///         - Non-opted-out senders earn yield on their old balance before losing
+    ///           the token.
+    ///         - Recipients earn yield on their old balance before receiving the token.
+    ///         - Opted-out previous owners do not accrue collector-yield during the
+    ///           transfer checkpoint.
+    ///         - After checkpointing, both accounts' timers restart from now.
+    ///         - This prevents temporary NFT concentration immediately before
+    ///           {withdraw}.
+    ///
+    ///         Planar token policy:
+    ///         - Planar tokens cannot be freely moved.
+    ///         - Outside the temporary ownership-transfer window, planar tokens must
+    ///           remain with the current contract owner.
+    ///         - During {transferOwnership}, `_planarTransferActive` allows the old
+    ///           owner to transfer planar custody to the new owner.
+    ///
+    /// @param  to      The address receiving the token.
+    /// @param  tokenId The token ID being minted, transferred, or burned.
+    /// @param  auth    The authorization address passed through to OpenZeppelin ERC721.
+    /// @return from    The previous owner address.
     function _update(address to, uint256 tokenId, address auth) internal override(ERC721) returns (address) {
-        // Ensure neither the sender nor the recipient are blacklisted.
         _notOnBlacklist(_msgSender());
         _notOnBlacklist(to);
 
-        // Sybil Prevention Logic
-        //      1. If 'to' holds 0 tokens, they are either New or Returning.
-        //      2. If 'd.time' is 0, they are New. Give them 1 Welcome Coin to start.
-        //      3. Regardless, reset their timer to NOW. This prevents "Hot Potato"
-        //         attacks where users bounce tokens to claim history they didn't earn.
-        if (to != address(0) && balanceOf(to) == 0) {
-            Distribution storage d = _distributions[to];
-            if (d.time == 0) {
-                // First time ever holding a token: Welcome Gift
-                d.coins += _coinMultiplier;
-            }
-            // Always reset the timer for 0->1 transitions.
-            // This ensures strictly linear time accrual moving forward.
-            d.time = block.timestamp;
-        }
-
         Token storage t = _tokens[tokenId];
-
-        // Pre-transfer checks (skip on mint: prev == address(0))
         address prev = _ownerOf(tokenId);
+
         if (prev != address(0)) {
-            // Prevent token transfers while a batch operation is in progress.
             _requireNoBatch(t);
 
-            // Outside of transfer ownership, planar tokens must remain with the admin.
             if (tokenId <= PLANAR_TRANSFER_MAX_ID && !_planarTransferActive) {
                 require(to == owner(), "DIGIL: Planar Locked to Owner");
             }
+
+            // If you keep the current "approved operators may act for opted-out owners"
+            // policy, skip yield accrual for opted-out owners.
+            if (!_blacklisted[prev]) {
+                _checkpointYield(prev, balanceOf(prev), false);
+            }
         }
 
-        // Perform the standard ERC721 token update (transfer).
-        address from = super._update(to, tokenId, auth);
-        
-        // Update last activity
-        t.lastActivity = block.timestamp;
+        if (to != address(0)) {
+            // Recipient is already known not blacklisted from _notOnBlacklist(to).
+            // Called before super._update, so balanceOf(to) is the old balance.
+            _checkpointYield(to, balanceOf(to), true);
+        }
 
-        // Automatically whitelist the new owner for this token.
+        address from = super._update(to, tokenId, auth);
+
+        t.lastActivity = block.timestamp;
         t.contributions[to].whitelisted = true;
 
         return from;
@@ -1019,7 +1100,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         uint256 tokenId = _createToken(user, _incrementalValue, 0, data);   
         _contractTokens[account][tokenId].tokenId = externalTokenId;
-        // Reverse index for option-A recall lookup
+        // Reverse index used by recall lookup.
         _vaultedTokenIds[account][externalTokenId] = tokenId;
 
         Token storage t = _tokens[tokenId];
@@ -1275,6 +1356,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///   - `_contractTokenAddresses[contractTokenAddress][externalTokenId]` (whether the external token is currently held here),
     ///   - `_vaultedTokenIds[contractTokenAddress][externalTokenId]` (reverse index: which Digil currently wraps it).
     ///
+    ///  Note:
+    ///  - `externalTokenId` may legitimately be 0 for ERC721 collections that use
+    ///    token ID 0. The absence of provenance is indicated by
+    ///    `contractTokenAddress == address(0)`, not by `externalTokenId == 0` alone.
+    ///
     ///  Lifecycle states (as observed through this view):
     ///
     ///  1. Never wrapped / no provenance
@@ -1286,7 +1372,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///  2. Wrapped historically, but not currently vaulted (recalled or otherwise unvaulted)
     ///     - `contractTokenAddress != address(0)`
-    ///     - `externalTokenId != 0`
+    ///     - `externalTokenId` may be any value, including 0
     ///     - `_contractTokenAddresses[contractTokenAddress][externalTokenId] != address(this)`
     ///       ⇒ `vaulted == false`
     ///     - `recallable == false` (typically; may be stale only if state was never updated, but recall clears it)
@@ -1298,7 +1384,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///  3. Vaulted, not yet recallable
     ///     - `contractTokenAddress != address(0)`
-    ///     - `externalTokenId != 0`
     ///     - `_contractTokenAddresses[contractTokenAddress][externalTokenId] == address(this)`
     ///       ⇒ `vaulted == true`
     ///     - `recallable == false`
@@ -1309,7 +1394,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///  4. Vaulted and recallable
     ///     - `contractTokenAddress != address(0)`
-    ///     - `externalTokenId != 0`
     ///     - `_contractTokenAddresses[contractTokenAddress][externalTokenId] == address(this)`
     ///       ⇒ `vaulted == true`
     ///     - `recallable == true`
@@ -1334,7 +1418,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     /// @param  tokenId The internal Digil token ID being queried.
     /// @return contractTokenAddress The ERC721 contract address of the attached token (zero if none).
-    /// @return externalTokenId      The external ERC721 tokenId attached to this Digil (zero if none).
+    /// @return externalTokenId      The external ERC721 tokenId attached to this Digil.
+    ///                              Meaningful only when `contractTokenAddress != address(0)`;
+    ///                              may legitimately be 0 for collections that use token ID 0.
     /// @return recallable           True if the attached token can currently be recalled via {recallToken}.
     /// @return vaulted              True if the external token is still held (“vaulted”) in this contract.
     function tokenAttachment(uint256 tokenId) external view	returns (address contractTokenAddress, uint256 externalTokenId,	bool recallable, bool vaulted) {
@@ -1495,6 +1581,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _requireNoBatch(t);
     }
 
+    /// @dev    Validates that the caller is authorized for `tokenId`, ensures the token
+    ///         is not in a batch operation, and records the current block timestamp as
+    ///         token activity.
+    /// @param  tokenId The token ID being operated on.
+    /// @param  t       Storage reference to the token being operated on.
     function _authorizeAndTouch(uint256 tokenId, Token storage t) internal {
         _checkApprovedAndNoBatch(tokenId, t);
         t.lastActivity = block.timestamp;
@@ -1653,7 +1744,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Charging
 
     /// @dev    Computes the effective base efficiency for a given link, taking into account
-    ///         any temporary buff applied via {buffLinks}. If no buff is active or the buff
+    ///         any temporary buff applied via {buffToken}. If no buff is active or the buff
     ///         has expired, this returns the stored base efficiency.
     /// @param  linkId The destination token ID (or plane ID) for this link.
     /// @param  t The source token storage reference.
@@ -1930,7 +2021,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Charges a token.
     ///         Requires a value sent greater than or equal to the token's incremental value for each coin.
-    //          If token.incrementalValue == 0, charging does not require ETH; any ETH sent is treated as surplus value
+    ///         If token.incrementalValue == 0, charging does not require ETH; any ETH sent is treated as surplus value
     ///         (credited as token value or distributed per the active/inactive path). If token.incrementalValue > 0,
     ///         ETH must satisfy the per-charge minimum derived from incrementalValue.
     /// @param  tokenId The token ID to charge.
@@ -1971,8 +2062,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// High-level behavior (post-Fusaka optimized version):
     /// - Captures the full remaining `charge` and `value` into `distributionCharge`
     ///   and `distributionValue` **once per cycle** (on the very first call).
-    /// - Processes contributors in fixed-size batches using a memory snapshot
-    ///   to eliminate repeated cold SLOADs on the contributors array.
+    /// - Processes contributors in fixed-size batches using cached storage
+    ///   references for the contributors array and contribution mapping.
     /// - Activation path: pays proportional value to each contributor and
     ///   accumulates the remainder for the final owner distribution.
     /// - Discharge path: returns the contributor’s full recorded value and
@@ -1982,8 +2073,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// - When the final batch completes: resets all batch state, converts
     ///   captured charge to `activeCharge` (activation), marks attached
     ///   contract tokens recallable (while active/activating), and distributes remaining value.
-    /// - After a full cycle the caller clears the contributors array and
-    ///   bumps `contributionEpoch` (logical reset of all records).
+    /// - When this function returns `true`, the caller is expected to clear the
+    ///   contributors array and bump `contributionEpoch` to complete the logical reset.
     ///
     /// @param tokenId The ID of the token whose contributions are being processed.
     /// @param discharge True = discharge mode (full unwind to contributors),
@@ -2083,7 +2174,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param incrementalValuePerCharge Value per coin unit (activation path only).
     /// @param discharge True = discharge mode, false = activation mode.
     /// @return ownerDistributionAmount Total value accumulated for the token owner
-    ///                                 in activation mode (always 0 in discharge mode).
+    ///                                 in activation mode; always 0 in discharge mode.
+    /// @return batchVolume Total charge/discharge volume processed in this batch,
+    ///                     used to size the keeper bounty.
     function _processBatch(Token storage t, uint256 startIndex, uint256 toProcess, uint256 incrementalValuePerCharge, bool discharge) private returns (uint256 ownerDistributionAmount, uint256 batchVolume) {
         // Cache both storage references once at the function entry.
         // This eliminates repeated slot derivations inside the hot loop.
@@ -2172,12 +2265,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///           permanently stuck if the owner disappears.
     ///
     ///         Fee behavior:
-    ///         - On the first call only, the caller must provide a minimum amount of ETH
-    ///           proportional to the token’s complexity:
+    ///         - On the first call only, the caller must provide exactly the required
+    ///           amount of ETH proportional to the token’s complexity:
     ///               required = max(_incrementalValue, token.incrementalValue)
     ///                          × max(1, links.length)
-    ///           If `msg.value` is below this threshold, the call reverts.
-    ///         - Subsequent calls in the same discharge cycle do not require additional ETH.
+    ///           If `msg.value` is not exactly this amount, the call reverts.
+    ///         - Subsequent calls in the same discharge cycle must send exactly 0 ETH.
     ///         - All ETH supplied is routed into the protocol’s value pool via {_addValue}.
     ///
     ///         Distribution behavior:
@@ -2216,8 +2309,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///               next touch without looping over all mappings.
     ///             * Any temporary buff state is cleared, while `buff.appearance`
     ///               is preserved as persistent appearance metadata.
-    ///             * If a contract token is attached, its recallability is reset
-    ///               and its address may be reinserted as a placeholder contributor.
+    ///             * If a contract token is attached, recallability is refreshed by
+    ///               {_distribute}: active/activating settlement can make it recallable,
+    ///               while inactive settlement clears recallability.
     ///         - Completing discharge clears the `discharging` flag but does not
     ///           automatically deactivate an active token. Callers who want the token
     ///           powered down must use {deactivateToken} separately.
@@ -2264,7 +2358,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             return false;
         }
 
-        /// Redistribute this sigil's remaining activeCharge into its links
+        // Redistribute this sigil's remaining activeCharge into its links
         uint256 ac = t.activeCharge;
         if (ac > 0) {
             uint256 retained = 0;
@@ -2301,7 +2395,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                         uint256 share = (ac * baseEfficiency) / sumOfEfficiencies;
                         if (share == 0) continue;
                         
-                        _addActiveCharge(linkId, _tokens[linkId], share);
+                        Token storage linkedToken = _tokens[linkId];
+
+                        // Keep discharge redistribution consistent with linked charging:
+                        // do not mutate a linked token while it is in an activation/discharge batch.
+                        if (linkedToken.distributionIndex != 0) continue;
+                        
+                        _addActiveCharge(linkId, linkedToken, share);
                     }
 
                     // Any rounding remainder from proportional integer division is left undistributed.
@@ -2460,10 +2560,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         efficiency and current link count, including early-link discounts.
     ///         - Base cost is still derived from efficiency and link count
     ///           (using the existing triangular scale logic).
-    ///         - If this is a brand new link:
-    ///             * First link on the token: 50% of base cost.
-    ///             * Second link on the token: 50% of base cost.
-    ///           All subsequent new links pay full base cost.
+    ///         - If this is a brand-new link and the token has no more than two
+    ///           stored links after insertion, the cost is reduced by 50%.
+    ///           A foundational planar link counts toward this stored-link count.
     /// @param  efficiency  The link efficiency (percentage).
     /// @param  linkCount   The total number of links on the token *after* this call.
     /// @param  isNewLink   True if this is the first time linking to `linkId`.
@@ -2483,7 +2582,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         if (isNewLink && linkCount <= 2) {
-            // First and second user-defined links are 50% off, regardless of planar status.
+            // Discount applies only when this new link leaves the token with
+            // no more than two stored links total. A foundational planar link
+            // counts toward that total.
             cost = cost / AFFINITY_REDUCTION;
         }
     }
@@ -2495,9 +2596,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         between and added to the source and destination token.
     ///         The coin cost for linking scales with efficiency and number of links,
     ///         with the following discounts applied:
-    ///             - Early-link: First two new links on a token are 50% of the base cost.
-    ///             - Community Expansion: Linking to a token owned by a different address
-    ///               grants a 25% discount on the final coin cost.
+    ///             - Early-link: A brand-new link receives a 50% discount when the
+    ///               token has no more than two stored links after insertion. A
+    ///               foundational planar link counts toward this total.
+    ///             - Community Expansion: after new-link or upgrade pricing is
+    ///               calculated, linking to a token owned by a different address
+    ///               receives a 25% discount on the final Coin cost.
     ///         An efficiency of 1 indicates ~1% transfer; 100 indicates 100%; 200
     ///         indicates 200%, etc.
     /// @dev    A token's foundational Plane link (its "element") can only be set at
@@ -2519,8 +2623,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // _checkApproved calls ownerOf(tokenId).
         // ownerOf(tokenId) reverts if the token does not exist.
         //_checkTokenExists(tokenId);
-        _checkTokenExists(linkId);        
+        //_checkTokenExists(linkId);        
         _authorizeAndTouch(tokenId, t);
+
+        Token storage d = _tokens[linkId];
+        _requireNoBatch(d);
 
         // Existing link state
         uint8 baseEfficiency = t.linkEfficiency[linkId].base;
@@ -2533,11 +2640,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // and the new efficiency must strictly improve on the current base.
         require(tokenId != linkId && linkId > PLANAR_MAX_ID && efficiency > baseEfficiency, "DIGIL: Invalid Link" );
 
-        // If a temporary buff is active, charge additional activeCharge
-        // for adding a new outgoing link while the buff is still running.
-        _chargeBuffForNewLink(t);
+        // If a temporary buff is active, charge additional activeCharge only when
+        // adding a brand-new outgoing link. Existing links were already included in
+        // the original buff's link-count pricing, so upgrades only pay the normal
+        // link-upgrade Coin cost below.
+        if (isNewLink) {
+            _chargeBuffForNewLink(t);
+        }
 
-        Token storage d = _tokens[linkId];
         address sourceOwner = ownerOf(tokenId);
         require(!d.restricted || d.contributions[sourceOwner].whitelisted, "DIGIL: Restricted");
 
@@ -2623,7 +2733,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @dev    Charges additional activeCharge when a new link is created while a temporary
     ///         buff is active for the given token. Uses the remaining buff duration
-    ///         and the same cost model as {buffLinks}, but per-link (linkCount = 1).
+    ///         and the same cost model as {buffToken}, but per-link (linkCount = 1).
     ///         No-op if no active buff or the buff has expired.
     /// @param  t The source token storage reference whose buff should be charged.
     function _chargeBuffForNewLink(Token storage t) internal {
@@ -2697,6 +2807,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         return _bonus;
     }
 
+    /// @dev    Updates the stored affinity bonus for a link if the newly computed bonus
+    ///         is greater than the existing stored bonus.
+    ///         The calculation considers up to two source identities and two destination
+    ///         identities:
+    ///         - each token's foundational planar link, if present; and
+    ///         - each token's active attunement, if present and unexpired.
+    ///         The function keeps the maximum bonus found and never lowers an existing
+    ///         affinity bonus.
+    /// @param  t          Storage reference to the source token.
+    /// @param  d          Storage reference to the destination token.
+    /// @param  linkId     The destination token ID being linked.
+    /// @param  efficiency The proposed base link efficiency.
     function _updateLinkAffinity(Token storage t, Token storage d, uint256 linkId, uint8 efficiency) internal {
         // 1. Get Source Candidates
         uint256 s1 = (t.links.length > 0 && t.links[0] <= PLANAR_MAX_ID) ? t.links[0] : 0;
@@ -2747,7 +2869,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // ownerOf(tokenId) reverts if the token does not exist.
         //_checkTokenExists(tokenId);
         _authorizeAndTouch(tokenId, t);
-        _checkTokenExists(linkId);
 
         // Disallow unlinking foundational planes (IDs 0..PLANAR_MAX_ID)
         // so the token's elemental identity cannot be removed.
@@ -2774,13 +2895,22 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     // Buffs
 
-    /// @dev Returns the active buff bonus, or 0 if expired/inactive.
+    /// @dev    Returns the active buff bonus, or 0 if expired/inactive.
     function _activeBuffBonus(Token storage t) internal view returns (uint8) {
-        // If inactive, expiresAt is 0, and timestamp < 0 is false.
+        // If inactive, expiresAt is 0, so block.timestamp < expiresAt is false.
         if (block.timestamp < t.buff.expiresAt) {
             return t.buff.efficiencyBonus;
         }
         return 0;
+    }
+
+    /// @dev    Emits the unified buff-state-change event.
+    ///         Used by {buffToken}, {primeToken}, and {stabilizeToken}. Consumers should
+    ///         inspect {tokenBuff} after this event if they need to distinguish the
+    ///         resulting buff flags, expiry, appearance, or temporary effect values.
+    /// @param  tokenId The token whose buff state changed.
+    function _emitBuff(uint256 tokenId) internal {
+        emit Buff(tokenId);
     }
 
     /// @notice Applies/updates a temporary buff on an **active** token.
@@ -2932,7 +3062,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             t.buff.appearance = appearance;
         }
 
-        emit Buff(tokenId);
+        _emitBuff(tokenId);
     }
 
     /// @notice Primes an inactive token to temporarily reduce its activation threshold
@@ -2962,7 +3092,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Update last activity
         t.lastActivity = block.timestamp;
 
-        emit Prime(tokenId);
+        _emitBuff(tokenId);
     }
 
     /// @notice Pays ERC20 Coins to protect the token from "bleed" during the next
@@ -3006,7 +3136,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Update last activity
         t.lastActivity = block.timestamp;
         
-        emit Stabilize(tokenId);
+        _emitBuff(tokenId);
     }
 
     /// @notice Overcharges an active token by converting ETH directly into activeCharge.
