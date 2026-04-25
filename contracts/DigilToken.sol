@@ -62,7 +62,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Buff configuration
     uint256 private constant MAX_BUFF_BONUS = 100;               // Maximum temporary bonus
     uint256 private constant MAX_BUFF_DURATION_MIN = 7 * 24 * 60;// Maximum duration of buffs (7 days)
-    uint256 private constant LINK_BUFF_COST_FACTOR = 24 * 60;    // The cost per bonus-point-hour per link
+    uint256 private constant LINK_BUFF_COST_FACTOR = 24 * 60;    // Minutes per pricing unit; 1440 means one magnitude-point-day per link costs _coinRate.
 
     // Mappings for token data, blacklisted addresses, distributions, and contract tokens
     mapping(uint256 => Token) private _tokens;                                      // Mapping from token ID to its detailed Token struct
@@ -87,7 +87,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 value;  // Pending Ether value to be withdrawn
     }
 
-    /// @dev Structure to represent the efficiency of a link between two tokens
+    /// @dev Contribution/accounting state for one contributor on one token.
     struct TokenContribution {
         uint256 charge;     // Coins contributed to the token's charge, including coins from affinity bonus
         uint256 discharge;  // Coins contributed to the token's charge, excluding coins from affinity bonus
@@ -1570,24 +1570,28 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
-    /// @dev    Combined validation helper to reduce bytecode size.
-    ///         Checks that the caller is authorized (owner/operator) and that
-    ///         no batch operation (activation/discharge) is currently in progress.
-    ///         Reverts with "DIGIL: Not Approved" or "DIGIL: Batch Operation In Progress".
-    /// @param  tokenId The token ID to validate permissions for.
-    /// @param  t The storage reference to the Token struct.
-    function _checkApprovedAndNoBatch(uint256 tokenId, Token storage t) internal view {
-        _checkApproved(tokenId);
-        _requireNoBatch(t);
-    }
-
-    /// @dev    Validates that the caller is authorized for `tokenId`, ensures the token
-    ///         is not in a batch operation, and records the current block timestamp as
-    ///         token activity.
+    /// @dev    Validates that the caller is authorized to operate `tokenId`,
+    ///         requires that the token is not in an activation/discharge batch,
+    ///         and records the current block timestamp as token activity.
+    ///         
+    ///         This helper combines the common precondition pattern used by
+    ///         user-facing token operations:
+    ///         - {_checkApproved}: caller must be the token owner, an approved
+    ///           operator, or otherwise authorized under the planar-token policy.
+    ///         - {_requireNoBatch}: token must not have a batch operation in
+    ///           progress (`distributionIndex == 0`).
+    ///         - activity touch: `lastActivity` is updated on successful validation.
+    ///         
+    ///         Reverts with:
+    ///         - "DIGIL: Opted Out" if the caller is blacklisted.
+    ///         - "DIGIL: Not Approved" if the caller is not authorized.
+    ///         - "DIGIL: Batch Operation In Progress" if the token is mid-batch.
+    ///         
     /// @param  tokenId The token ID being operated on.
     /// @param  t       Storage reference to the token being operated on.
-    function _authorizeAndTouch(uint256 tokenId, Token storage t) internal {
-        _checkApprovedAndNoBatch(tokenId, t);
+    function _authorizeIdleAndTouch(uint256 tokenId, Token storage t) internal {
+        _checkApproved(tokenId);
+        _requireNoBatch(t);
         t.lastActivity = block.timestamp;
     }
 
@@ -1602,7 +1606,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function restrictToken(uint256 tokenId, address[] memory whitelisted) external payable {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        _authorizeAndTouch(tokenId, t);
+        _authorizeIdleAndTouch(tokenId, t);
 
         uint256 value = msg.value;
 
@@ -1682,7 +1686,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
-        _authorizeAndTouch(tokenId, t);
+        _authorizeIdleAndTouch(tokenId, t);
 
         // If token already has charge, its incremental value and activation threshold cannot be modified.
         if (t.charge > 0) {
@@ -1805,7 +1809,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             BuffState storage buff = t.buff;
             if (buff.amplification > 0 && block.timestamp < buff.expiresAt) {
                 // Calculate bonus: (Total * Multiplier) / 100
-                totalIncoming += (totalIncoming * t.buff.amplification) / 100;
+                totalIncoming += (totalIncoming * buff.amplification) / 100;
             }
             
             _addActiveCharge(tokenId, t, totalIncoming);
@@ -2397,11 +2401,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                         
                         Token storage linkedToken = _tokens[linkId];
 
-                        // Keep discharge redistribution consistent with linked charging:
-                        // do not mutate a linked token while it is in an activation/discharge batch.
-                        if (linkedToken.distributionIndex != 0) continue;
-                        
-                        _addActiveCharge(linkId, linkedToken, share);
+                        // Do not mutate a linked token while it is in an activation/discharge batch.
+                        // Preserve the skipped share on the source token instead of burning it.
+                        if (linkedToken.distributionIndex == 0) {
+                            _addActiveCharge(linkId, linkedToken, share);
+                        } else {
+                            unchecked {
+                                retained += share;
+                            }
+                        }
                     }
 
                     // Any rounding remainder from proportional integer division is left undistributed.
@@ -2545,7 +2553,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
         require(t.active && t.charge == 0, "DIGIL: Token Cannot Be Deactivated");
         // Make sure the token isn't currently being discharged or activated
-        _authorizeAndTouch(tokenId, t);
+        _authorizeIdleAndTouch(tokenId, t);
 
         // Thematic bleed: lose 1 / AFFINITY_REDUCTION of activeCharge on each deactivation.
         _applyActiveChargeBleed(t);
@@ -2624,7 +2632,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // ownerOf(tokenId) reverts if the token does not exist.
         //_checkTokenExists(tokenId);
         //_checkTokenExists(linkId);        
-        _authorizeAndTouch(tokenId, t);
+        _authorizeIdleAndTouch(tokenId, t);
 
         Token storage d = _tokens[linkId];
         _requireNoBatch(d);
@@ -2649,6 +2657,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         address sourceOwner = ownerOf(tokenId);
+        address destinationOwner = ownerOf(linkId);
         require(!d.restricted || d.contributions[sourceOwner].whitelisted, "DIGIL: Restricted");
 
         uint256 value = msg.value;
@@ -2700,7 +2709,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Community Expansion: 25% discount if the destination token has a different owner
         // than the source token.
         // Discount = 1 / (Reduction^2) = 1/4 = 25%.
-        if (ownerOf(linkId) != sourceOwner) {
+        if (destinationOwner != sourceOwner) {
             unchecked {
                 coinCost -= coinCost / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
             }
@@ -2868,7 +2877,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // _checkApproved calls ownerOf(tokenId).
         // ownerOf(tokenId) reverts if the token does not exist.
         //_checkTokenExists(tokenId);
-        _authorizeAndTouch(tokenId, t);
+        _authorizeIdleAndTouch(tokenId, t);
 
         // Disallow unlinking foundational planes (IDs 0..PLANAR_MAX_ID)
         // so the token's elemental identity cannot be removed.
@@ -2960,7 +2969,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
 
         require(t.active, "DIGIL: Token Not Active");
-        _authorizeAndTouch(tokenId, t);
+        _authorizeIdleAndTouch(tokenId, t);
 
         // Sanitize input: Only allow user flags (remove Stabilized/Primed if user tried to sneak them in)
         uint16 requestedFlags = flags & DigilFlags.USER_FLAGS_MASK;
@@ -3161,7 +3170,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
 
         // Do not interfere with batch operations or activation/discharge flows.
-        _authorizeAndTouch(tokenId, t);
+        _authorizeIdleAndTouch(tokenId, t);
         require(t.active, "DIGIL: Token Not Active");
 
         // Use the greater of the token's incremental value or the global minimum.
