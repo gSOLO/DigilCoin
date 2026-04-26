@@ -175,7 +175,9 @@ The final release dismantling the construct. First call requires owner/approved 
 
 By calling `linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency)`, you establish a flow of value between two Digils. The strength of this connection relies on **Planar Affinity**—how well the elemental nature of the source aligns with the destination (e.g., Fire to Air vs. Fire to Water).
 
-- Linking splits the required ETH evenly between the two tokens.
+- Link creation computes `requiredValue = source.incrementalValue + destination.incrementalValue`, then splits that required ETH evenly between the two tokens.
+- If both tokens have `incrementalValue == 0`, link creation requires `0` ETH.
+- The DIGIL coin link fee still applies even when required ETH is `0`.
 - Creating links costs Coins. You receive an **Early-Link Discount** (50% off) for the first two new links on a token.
 - You can unlink peer-to-peer Digils via `unlinkToken(uint256 tokenId, uint256 linkId)`, but foundational planar alignments chosen at creation are permanent.
 - Link quality combines base efficiency, temporary efficiency bonuses, and affinity bonuses from the planar matrix.
@@ -284,7 +286,7 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 
 ## Economics & Costs Summary
 
-- **Operations costing ETH**: Creating restricted tokens, proxy-charging, establishing new links, updating metadata, overcharging, and reclaiming abandoned contributions.
+- **Operations costing ETH**: Creating restricted tokens, proxy-charging, establishing new links **when `source.incrementalValue + destination.incrementalValue > 0`**, updating metadata, overcharging, and reclaiming abandoned contributions.
 - **Operations costing Coins (DIGIL)**: Aligning with rare planar archetypes, linking to other nodes, applying temporary buffs, priming, stabilizing, vaulting external NFTs, and updating restricted contributor lists.
 - **Operations that are free (gas only)**: Activating, Deactivating, unlinking, and standard internal transfers.
 
