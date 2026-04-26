@@ -178,7 +178,17 @@ PR descriptions should include:
 2. Why it changed.
 3. Risk/safety notes.
 4. Validation commands + results.
-5. Any environment limitations encountered.
+5. Documentation parity:
+   - what docs were checked,
+   - what was updated,
+   - any intentional temporary divergence.
+6. Any environment limitations encountered.
+
+### Doc parity checklist (minimum)
+
+- Verify value/coin costs documented for touched user-facing flows match implementation constants/logic.
+- Verify role/approval requirements in docs match access checks, ownership checks, and required approvals.
+- Verify lifecycle transitions and recallability rules in docs match reachable state transitions and constraints.
 
 ### Common drift risks
 
@@ -230,6 +240,7 @@ Before finalizing:
 - [ ] Read README + touched contracts/tests.
 - [ ] Kept behavior changes minimal and explicit.
 - [ ] Reviewed and updated NatSpec + inline comments so they match new behavior.
+- [ ] For every changed user-facing function, confirm README claims on costs, permissions, and state transitions match implementation.
 - [ ] Ran relevant validation commands (or documented environment blockers).
 - [ ] Updated README when behavior/setup/flows changed.
 - [ ] Summarized risks, assumptions, and follow-ups in final output.
