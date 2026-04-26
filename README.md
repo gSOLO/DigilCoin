@@ -176,7 +176,9 @@ The final release dismantling the construct. First call requires owner/approved 
 By calling `linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency)`, you establish a flow of value between two Digils. The strength of this connection relies on **Planar Affinity**—how well the elemental nature of the source aligns with the destination (e.g., Fire to Air vs. Fire to Water).
 
 - Linking splits the required ETH evenly between the two tokens.
-- Creating links costs Coins. You receive an **Early-Link Discount** (50% off) for the first two new links on a token.
+- Creating links costs Coins. You receive an **Early-Link Discount** (50% off) when a new link leaves the token with **`<= 2` total stored links**.
+- A foundational plane alignment link (set during creation) **counts toward that stored-link total**.
+- Therefore, aligned tokens will usually get the early-link discount on **only their first peer-to-peer Digil link**.
 - You can unlink peer-to-peer Digils via `unlinkToken(uint256 tokenId, uint256 linkId)`, but foundational planar alignments chosen at creation are permanent.
 - Link quality combines base efficiency, temporary efficiency bonuses, and affinity bonuses from the planar matrix.
 
