@@ -572,10 +572,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             uint256 intervals = (nowTs - oldTime) / BONUS_INTERVAL;
 
             if (intervals != 0 && balance != 0) {
-                uint256 dailyCap = _coinRate + (balance * _coinMultiplier / YIELD_PERIOD);
-                uint256 bonus = intervals * dailyCap / BONUS_RATE_DIVISOR;
+                uint256 checkpointCap = _coinRate + (balance * _coinMultiplier / YIELD_PERIOD);
+                uint256 bonus = intervals * checkpointCap / BONUS_RATE_DIVISOR;
 
-                d.coins += bonus < dailyCap ? bonus : dailyCap;
+                d.coins += bonus < checkpointCap ? bonus : checkpointCap;
             }
         }
 
@@ -600,13 +600,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Collector-yield:
     ///         - Calling {withdraw} is itself a checkpoint. If fewer than
     ///           `BONUS_INTERVAL` seconds have elapsed since the previous checkpoint,
-    ///           no collector-yield is credited and the partial interval is discarded.
-    ///         - Yield is no longer calculated ad hoc only from the current balance
-    ///           at withdrawal time.
-    ///         - Instead, {_checkpointYield} is used both on transfers and on
-    ///           withdrawal.
-    ///         - This prevents temporary NFT concentration from applying an old
-    ///           timer to a newly increased balance.
+    ///           no collector-yield is credited and that partial interval is
+    ///           discarded because the timer is reset at checkpoint time.
+    ///         - For each full `BONUS_INTERVAL`, the account accrues 1% of its
+    ///           checkpoint cap (`_coinRate + balance * _coinMultiplier / YIELD_PERIOD`).
+    ///         - Accrual saturates at the checkpoint cap for that checkpoint.
+    ///         - `_checkpointYield` always resets the timer to `block.timestamp`,
+    ///           even when no bonus is accrued (including zero-balance checkpoints).
+    ///         - Yield is checkpoint-based (transfer/withdraw), preventing old elapsed
+    ///           time from being retroactively applied to a newly increased balance.
     ///
     ///         Coin payout behavior:
     ///         - If the contract does not hold enough Coins, it attempts to mint the
