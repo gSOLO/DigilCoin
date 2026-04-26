@@ -105,6 +105,7 @@ For any logic change, agents should validate using the strongest available check
 - Compile the touched contracts (or verify syntax/consistency if compiler unavailable).
 - Run the most relevant Solidity tests in `tests/`.
 - If an interface file exists (`I*.sol`/`*Interface*.sol`), verify it matches implementation signatures and events.
+- When `contracts/IDigilToken.sol` or `contracts/DigilToken.sol` changes, explicitly verify ABI and event compatibility between the interface, implementation, and interface-using tests.
 - Verify no obvious formatting regressions.
 - Provide exact commands run and outcomes.
 
@@ -126,7 +127,8 @@ For any logic change, agents should validate using the strongest available check
 
 When validating `DigilToken` behavior in the Desktop Remix IDE, use this strict bootstrap sequence:
 
-- `DigilTestLibrary.sol`, `IDigilToken.sol`, and `NFT.sol` are testing-only contracts/files and should be treated as test support.
+- `DigilTestLibrary.sol` and `NFT.sol` are testing-only contracts/files and should be treated as test support.
+- `IDigilToken.sol` is a production integration interface and must stay ABI/event compatible with `DigilToken.sol`.
 
 1. Deploy `DigilCoin` first with the default admin account (generally Remix account 0: `0x5B38Da6a701c568545dCfcB03FcB875f56beddC4`).
 2. Deploy `DigilToken` with:
@@ -184,6 +186,7 @@ PR descriptions should include:
 
 - Event signature changes that are not mirrored in interface files and downstream tests.
 - Removed or renamed admin methods that break operator runbooks and integration assumptions.
+- Interface contract changes without corresponding `README.md` and API documentation updates.
 
 ---
 
