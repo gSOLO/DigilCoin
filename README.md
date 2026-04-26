@@ -87,7 +87,12 @@ At deployment, the contract mints **21 foundational planar tokens** to the admin
 - **Ethereal**: Aether, World
 - **Extended**: Virtual, ILXR
 
-End-user Digils may **align** to a foundational plane during creation. This alignment acts as a permanent hidden attribute that dictates how well your sigil resonates with others in the network.
+Only planes **1..18** are user-alignable during `createToken`.
+
+- **User-alignable planes (1..18)**: Void through World.
+- **Extended/admin planes (19..20)**: Virtual and ILXR; minted at deploy and reserved for extended/admin planar behavior.
+
+End-user Digils may **align** to a user-alignable foundational plane during creation. This alignment acts as a permanent hidden attribute that dictates how well your sigil resonates with others in the network.
 
 ---
 
