@@ -272,7 +272,8 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 
 - **Metadata Updates**: `updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes data, string uri)`  
   Token URIs and internal arbitrary data can be updated by paying the required Coin cost. When `uri` and `data` are both empty, `msg.value` must equal exactly `0`. When either `uri` or `data` is non-empty, `msg.value` must equal exactly `max(currentIncrementalValue, newIncrementalValue, globalIncrementalValue)`. Required ETH from this call is routed into the protocol value pool. Economic parameters are frozen only while the token currently has pending inactive `charge > 0`; if current charge is zero, they may be changed even if the token was used in an earlier lifecycle.
-- **Restriction Controls**: `restrictToken(uint256 tokenId, address[] whitelisted)` allows owners of restricted Digils to curate and update contributor access lists with explicit on-chain events.
+- **Restriction Controls**: Restriction management allows approved operators to manage a token’s restricted/open mode and contributor allowlist with explicit on-chain events. Switching from open to restricted mode may require ETH (`max(token.incrementalValue, globalIncrementalValue)`), while allowlist additions/removals do **not** charge DIGIL coin transfers.
+- **Whitelist Directionality**: In the current implementation, whitelist flags are one-way at storage level: once an address is marked whitelisted for a token, that mapping entry is not cleared by later `restrictToken` calls.
 - **Read-Only Views**: The contract exposes various functions to allow front-ends to easily read the complex, packed state of any Digil:
   - `tokenCharge(uint256 tokenId)`
   - `tokenData(uint256 tokenId)`
@@ -291,8 +292,8 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 
 ## Economics & Costs Summary
 
-- **Operations costing ETH**: Creating restricted tokens, proxy-charging, establishing new links, updating metadata, overcharging, and reclaiming abandoned contributions.
-- **Operations costing Coins (DIGIL)**: Aligning with rare planar archetypes, linking to other nodes, applying temporary buffs, priming, stabilizing, vaulting external NFTs, and updating restricted contributor lists.
+- **Operations costing ETH**: Creating restricted tokens, proxy-charging, establishing new links, updating metadata, overcharging, reclaiming abandoned contributions, and switching a token from open mode into restricted mode.
+- **Operations costing Coins (DIGIL)**: Aligning with rare planar archetypes, linking to other nodes, applying temporary buffs, priming, stabilizing, and vaulting external NFTs. Restriction-list updates do not trigger DIGIL coin transfers.
 - **Operations that are free (gas only)**: Activating, Deactivating, unlinking, and standard internal transfers.
 
 *(Note: Exact values fluctuate based on the `configure` dials managed by the Digil Governor).*
