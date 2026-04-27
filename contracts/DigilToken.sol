@@ -41,8 +41,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // The portion of incremental value distributed to users
 
     // Planar token policy
-    uint256 private constant PLANAR_MAX_ID = 18;                // Highest planar token ID that can be linked.
-    uint256 private constant PLANAR_TRANSFER_MAX_ID = 20;       // Highest planar token ID that can be transferred. The planar set is [0 .. PLANAR_TRANSFER_MAX_ID] inclusive.
+    uint256 private constant PLANAR_MAX_ID = 18;                // Highest user-alignable plane ID.
+    uint256 private constant PLANAR_TRANSFER_MAX_ID = 20;       // Highest minted/admin planar ID. The planar set is [0 .. PLANAR_TRANSFER_MAX_ID] inclusive.
     bool private _planarTransferActive;                         // When true, a temporary transfer window is open to move planar tokens from the current owner to the new owner during `transferOwnership`.
 
     // Batch operations limiter
@@ -1489,9 +1489,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///                          all supplied ETH is added to the token's intrinsic value.
     /// @param  activationThreshold The number of coins required for token activation.
     /// @param  restricted Whether the token is restricted to whitelisted addresses for charging.
-    /// @param  plane The chosen planar token (numeric index) to link with. This becomes the immutable
-    ///               foundational plane for this token. Must be 0 (no plane) or in the planar range
-    ///               [1 .. PLANAR_MAX_ID]. Foundational planes cannot be linked or changed later.
+    /// @param  plane The chosen user-alignable plane ID. This becomes the immutable foundational
+    ///               plane for this token. Must be 0 (no plane) or in the user alignment range
+    ///               [1 .. PLANAR_MAX_ID]. Foundational plane choice cannot be changed later.
     /// @param  data Optional arbitrary data to store with the token.
     /// @return tokenId The ID of the newly created token.
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable returns(uint256) {
