@@ -246,9 +246,15 @@ Digils can act as "spirit vessels" for other NFTs.
 `withdraw()`
 
 When ETH or Coins are owed to you (from activation payouts, refunds, or system rewards), they sit in a pending distribution pool. Calling withdraw pulls these assets to your wallet.
-- **Time Bonuses**: If you hold any Digils, pending Coins accrue a time-based bonus every 15 minutes until a per-withdraw cap is reached (the accrual slope is sized using a 7-day yield denominator).
+- **Time Bonuses (Checkpoint-Based)**: If you hold Digils, each full 15-minute interval (`BONUS_INTERVAL`) since your last checkpoint adds 1% of your checkpoint cap, where `checkpoint cap = _coinRate + (balance * _coinMultiplier / YIELD_PERIOD)`. Accrual saturates at that checkpoint cap, then stops until the next checkpoint.
+- **Timer Reset Semantics**: `withdraw()` and qualifying ERC-721 balance updates both checkpoint yield. At each checkpoint, the timer resets to the current timestamp, so partial intervals are discarded and never carried forward.
 - **Single Settlement Surface**: Pending ETH and DIGIL from different flows (charging, activation, discharge, keeper rewards) are consolidated behind one user-level withdrawal path.
 - **Best-Effort Coin Payout**: Coin transfer is best-effort. If mint/transfer of DIGIL fails in the ERC20 path, `withdraw()` does not revert for that reason and can return `0` coins while still paying ETH.
+
+**Example (inside vs. outside one interval):**
+- Suppose your checkpoint cap is **500 DIGIL** and your last checkpoint was just set.
+- If you call `withdraw()` again after **10 minutes** (< 15 minutes), bonus from that call is **0** and the timer resets at that call.
+- If you then wait **20 minutes** and call `withdraw()` again, exactly **1** full interval has elapsed, so bonus is **1% of 500 = 5 DIGIL** (well below the 500 DIGIL checkpoint cap).
 
 ### Contributor Reclaim
 `reclaimContribution(uint256 tokenId)`
