@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.34;
 
-import "./IDigilToken.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IDigilToken} from "./IDigilToken.sol";
 
 library DigilTestLibrary {
     function getCoins() public pure returns (IERC20) {
