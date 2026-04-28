@@ -181,6 +181,8 @@ The final release dismantling the construct. First call requires owner/approved 
 By calling `linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency)`, you establish a flow of value between two Digils. The strength of this connection relies on **Planar Affinity**—how well the elemental nature of the source aligns with the destination (e.g., Fire to Air vs. Fire to Water).
 
 - Linking splits the required ETH evenly between the two tokens.
+- Exact link ETH minimum:
+  - `requiredValue = source.incrementalValue + destination.incrementalValue`
 - Creating links costs Coins. You receive an **Early-Link Discount** (50% off) when a new link leaves the token with **`<= 2` total stored links**.
 - A foundational plane alignment link (set during creation) **counts toward that stored-link total**.
 - Therefore, aligned tokens will usually get the early-link discount on **only their first peer-to-peer Digil link**.
@@ -299,6 +301,9 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 ## Economics & Costs Summary
 
 - **Operations costing ETH**: Creating restricted tokens, proxy-charging, establishing new links, updating metadata, overcharging, reclaiming abandoned contributions, and switching a token from open mode into restricted mode.
+- **Link ETH requirement formula**: For `linkToken(source, destination, efficiency)`, minimum ETH is:
+  - `source.incrementalValue + destination.incrementalValue`.
+  - Sent ETH is split between the two linked tokens (`floor(value/2)` to source, remainder to destination).
 - **Operations costing Coins (DIGIL)**: Aligning with rare planar archetypes, linking to other nodes, applying temporary buffs, priming, stabilizing, and vaulting external NFTs. Restriction-list updates do not trigger DIGIL coin transfers.
 - **Operations that are free (gas only)**: Activating, Deactivating, unlinking, and standard internal transfers.
 

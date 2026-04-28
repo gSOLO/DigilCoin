@@ -197,4 +197,89 @@ contract EchoTestSuite {
         // Activate the token
         digil.activateToken(tokenId);
     }
+
+    /// #sender: account-4
+    /// #value: 1000000000000000
+    function testLinkTokenRequiredValueBothZeroIncremental() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        uint256 floorValue = 100000000000000;
+
+        bool approved = coins.approve(address(digil), 500 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 sourceTokenId = digil.createToken{value: floorValue}(0, 0, false, 4, "Link Zero Source");
+        uint256 destinationTokenId = digil.createToken{value: floorValue}(0, 0, false, 5, "Link Zero Destination");
+
+        // With both incrementalValue values at zero, required ETH is zero.
+        uint256 acceptedValue = 1;
+        digil.linkToken{value: acceptedValue}(sourceTokenId, destinationTokenId, 10);
+
+        (, , uint256 sourceValue, , ) = digil.tokenCharge(sourceTokenId);
+        (, , uint256 destinationValue, , ) = digil.tokenCharge(destinationTokenId);
+
+        Assert.equal(sourceValue, floorValue + (acceptedValue / 2), "Invalid zero/zero source split");
+        Assert.equal(destinationValue, floorValue + (acceptedValue - (acceptedValue / 2)), "Invalid zero/zero destination split");
+    }
+
+    /// #sender: account-4
+    /// #value: 2000000000000000
+    function testLinkTokenRequiredValueOneZeroOneNonzero() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        uint256 floorValue = 100000000000000;
+        uint256 nonzeroIncrementalValue = floorValue * 3;
+
+        bool approved = coins.approve(address(digil), 500 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 sourceTokenId = digil.createToken{value: floorValue}(0, 0, false, 4, "Link Mixed Source");
+        uint256 destinationTokenId = digil.createToken{value: nonzeroIncrementalValue}(nonzeroIncrementalValue, 0, true, 5, "Link Mixed Destination");
+
+        uint256 requiredValue = nonzeroIncrementalValue;
+
+        try digil.linkToken{value: requiredValue - 1}(sourceTokenId, destinationTokenId, 10) {
+            Assert.ok(false, "Link should revert when token incremental requirement is underpaid");
+        } catch {
+            Assert.ok(true, "Correctly reverted for mixed zero/nonzero underpayment");
+        }
+
+        uint256 acceptedValue = requiredValue + 1;
+        digil.linkToken{value: acceptedValue}(sourceTokenId, destinationTokenId, 10);
+
+        (, , uint256 sourceValue, , ) = digil.tokenCharge(sourceTokenId);
+        (, , uint256 destinationValue, , ) = digil.tokenCharge(destinationTokenId);
+
+        Assert.equal(sourceValue, floorValue + (acceptedValue / 2), "Invalid mixed-case source split");
+        Assert.equal(destinationValue, nonzeroIncrementalValue + (acceptedValue - (acceptedValue / 2)), "Invalid mixed-case destination split");
+    }
+
+    /// #sender: account-4
+    /// #value: 3000000000000000
+    function testLinkTokenRequiredValueBothNonzeroAboveFloor() external payable {
+        uint256 coinMultiplier = 10 ** 18;
+        uint256 floorValue = 100000000000000;
+        uint256 sourceIncrementalValue = floorValue * 2;
+        uint256 destinationIncrementalValue = floorValue * 3;
+
+        bool approved = coins.approve(address(digil), 500 * coinMultiplier);
+        Assert.ok(approved, "Coin approval failed");
+
+        uint256 sourceTokenId = digil.createToken{value: sourceIncrementalValue}(sourceIncrementalValue, 0, true, 4, "Link High Source");
+        uint256 destinationTokenId = digil.createToken{value: destinationIncrementalValue}(destinationIncrementalValue, 0, true, 5, "Link High Destination");
+
+        uint256 requiredValue = sourceIncrementalValue + destinationIncrementalValue;
+
+        try digil.linkToken{value: requiredValue - 1}(sourceTokenId, destinationTokenId, 10) {
+            Assert.ok(false, "Link should revert when both-side nonzero requirement is underpaid");
+        } catch {
+            Assert.ok(true, "Correctly reverted for nonzero/nonzero underpayment");
+        }
+
+        digil.linkToken{value: requiredValue}(sourceTokenId, destinationTokenId, 10);
+
+        (, , uint256 sourceValue, , ) = digil.tokenCharge(sourceTokenId);
+        (, , uint256 destinationValue, , ) = digil.tokenCharge(destinationTokenId);
+
+        Assert.equal(sourceValue, sourceIncrementalValue + (requiredValue / 2), "Invalid nonzero source split");
+        Assert.equal(destinationValue, destinationIncrementalValue + (requiredValue / 2), "Invalid nonzero destination split");
+    }
 }
