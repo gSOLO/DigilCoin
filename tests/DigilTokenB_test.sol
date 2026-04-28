@@ -282,25 +282,25 @@ contract BetaTestSuite {
         }
 
         // Fill up to MAX_LINKS (10) with new links.
-        digil.linkToken(tokenId, destinations[0], 10);
+        digil.linkToken(tokenId, destinations[0], 1);
         for (uint256 i = 1; i < 10; ++i) {
-            digil.linkToken(tokenId, destinations[i], 10);
+            digil.linkToken(tokenId, destinations[i], 1);
         }
 
         (, , , , uint256 links, , , , ) = digil.tokenData(tokenId);
         Assert.equal(links, 10, "Token should be at MAX_LINKS");
 
         // Upgrading an existing link at max links should succeed.
-        digil.linkToken(tokenId, destinations[0], 20);
+        digil.linkToken(tokenId, destinations[0], 2);
         (, , , , links, , , , ) = digil.tokenData(tokenId);
         Assert.equal(links, 10, "Upgrading should not change link count");
 
         (uint256 linkId, uint8 baseEfficiency, ) = digil.tokenLinkAt(tokenId, 0);
         Assert.equal(linkId, destinations[0], "Unexpected upgraded link id");
-        Assert.equal(baseEfficiency, 20, "Existing link should upgrade at MAX_LINKS");
+        Assert.equal(baseEfficiency, 2, "Existing link should upgrade at MAX_LINKS");
 
         // Adding a new 11th link should still revert.
-        try digil.linkToken(tokenId, destinations[10], 10) {
+        try digil.linkToken(tokenId, destinations[10], 1) {
             Assert.ok(false, "Adding a new link at MAX_LINKS should fail");
         } catch {
             Assert.ok(true, "Expected Too Many Links revert for new link");
