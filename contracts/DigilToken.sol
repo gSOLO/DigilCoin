@@ -964,6 +964,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     /// @param  tokenId The token ID from which the caller is reclaiming their contribution.
     function reclaimContribution(uint256 tokenId) external payable {
+        _checkTokenExists(tokenId);
+
         address addr = _msgSender();
         Token storage t = _tokens[tokenId];
 
