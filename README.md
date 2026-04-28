@@ -294,8 +294,7 @@ Accounts can willingly blacklist themselves via this function by paying a small 
   - `tokenAttachment(uint256 tokenId)`
 - **Lifecycle/Event ABI Notes**:
   - Batch lifecycle continuation emits `Batch(uint256 tokenId)` while activation/discharge are in progress.
-  - Buff application emits `Buff(uint256 tokenId)`; buff parameters are read through `tokenBuff(uint256 tokenId)`.
-  - Priming emits `Prime(uint256 tokenId)`.
+  - Priming, stabilization, and temporary buff changes emit `Buff(uint256 tokenId)`; consumers should query `tokenBuff(uint256 tokenId)` to interpret the active buff state.
 - **Batch Safety**: Sensitive lifecycle transitions are protected by batch-locks. If a token is mid-activation, it cannot be transferred, charged, or updated until the community finishes the batch processing.
 
 ---
