@@ -2601,9 +2601,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Links two tokens together to facilitate coin generation or transfers.
     ///         A token can have no more than 10 links.
-    ///         Requires a value greater than or equal to the sum of the source and
-    ///         destination token's incremental value. Any value contributed is split
-    ///         between and added to the source and destination token.
+    ///         Requires a value greater than or equal to:
+    ///             source.incrementalValue + destination.incrementalValue
+    ///         Any value contributed is split between and added to the source and
+    ///         destination token.
     ///         The coin cost for linking scales with efficiency and number of links,
     ///         with the following discounts applied:
     ///             - Early-link: A brand-new link receives a 50% discount when the
