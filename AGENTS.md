@@ -189,6 +189,8 @@ PR descriptions should include:
 - Verify value/coin costs documented for touched user-facing flows match implementation constants/logic.
 - Verify role/approval requirements in docs match access checks, ownership checks, and required approvals.
 - Verify lifecycle transitions and recallability rules in docs match reachable state transitions and constraints.
+- Verify `chargeToken` vs `chargeTokenAs` ETH floors are documented distinctly (proxy/sponsored charging has stricter ETH requirements).
+- Verify transfer-side behaviors that affect restriction UX (e.g., recipient auto-whitelisting) are reflected in docs/comments when relevant.
 
 ### Common drift risks
 
