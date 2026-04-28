@@ -145,6 +145,7 @@ To empower the sigil, participants offer material value (ETH) and energetic valu
 - **Active Tokens**: If the token has no links, coins become "Kinetic Energy" (Active Charge). If the token is linked, the energy is distributed across the network based on the strength and affinity of those links. Unused ETH goes to the token's owner.
 - **Proxy Contribution Support**: `chargeTokenAs` allows sponsored or delegated contribution flows while preserving the canonical contributor ledger.
 - **Participation Definition**: In `chargeTokenAs`, participation means who receives contribution attribution (`contributor`), not who pays gas/calls. Both caller and contributor must be opted in (not blacklisted) for the charge to proceed.
+- **Proxy ETH Floor**: For sponsored/proxy charging (`contributor != msg.sender`), the call must provide at least `max(token.incrementalValue, globalIncrementalValue)` in ETH, even if `token.incrementalValue == 0`. By contrast, direct self-charging on a token with `token.incrementalValue == 0` can be done with `0` ETH.
 
 ### 3. Activating
 `activateToken(uint256 tokenId)`
@@ -282,6 +283,7 @@ Accounts can willingly blacklist themselves via this function by paying a small 
   Token URIs and internal arbitrary data can be updated by paying the required Coin cost. When `uri` and `data` are both empty, `msg.value` must equal exactly `0`. When either `uri` or `data` is non-empty, `msg.value` must equal exactly `max(currentIncrementalValue, newIncrementalValue, globalIncrementalValue)`. Required ETH from this call is routed into the protocol value pool. Economic parameters are frozen only while the token currently has pending inactive `charge > 0`; if current charge is zero, they may be changed even if the token was used in an earlier lifecycle.
 - **Restriction Controls**: Restriction management allows approved operators to manage a token’s restricted/open mode and contributor allowlist with explicit on-chain events. Switching from open to restricted mode may require ETH (`max(token.incrementalValue, globalIncrementalValue)`), while allowlist additions/removals do **not** charge DIGIL coin transfers.
 - **Whitelist Directionality**: In the current implementation, whitelist flags are one-way at storage level: once an address is marked whitelisted for a token, that mapping entry is not cleared by later `restrictToken` calls.
+- **Owner Auto-Whitelist on Transfer**: On mint/transfer, the recipient is automatically marked whitelisted for that token in the internal contributor mapping. This is intentional and persists across epochs.
 - **Read-Only Views**: The contract exposes various functions to allow front-ends to easily read the complex, packed state of any Digil:
   - `tokenURI(uint256 tokenId)`
   - `tokenCharge(uint256 tokenId)`
