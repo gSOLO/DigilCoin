@@ -871,10 +871,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         t.lastActivity = block.timestamp;
         // Auto-whitelist the current owner address for future restricted charging.
-        // Skip burn path (`to == address(0)`) to avoid writing meaningless whitelist state.
-        if (to != address(0)) {
-            t.contributions[to].whitelisted = true;
-        }
+        t.contributions[to].whitelisted = true;
 
         return from;
     }
