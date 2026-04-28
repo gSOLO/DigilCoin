@@ -281,13 +281,13 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 - **Restriction Controls**: Restriction management allows approved operators to manage a token’s restricted/open mode and contributor allowlist with explicit on-chain events. Switching from open to restricted mode may require ETH (`max(token.incrementalValue, globalIncrementalValue)`), while allowlist additions/removals do **not** charge DIGIL coin transfers.
 - **Whitelist Directionality**: In the current implementation, whitelist flags are one-way at storage level: once an address is marked whitelisted for a token, that mapping entry is not cleared by later `restrictToken` calls.
 - **Read-Only Views**: The contract exposes various functions to allow front-ends to easily read the complex, packed state of any Digil:
+  - `tokenURI(uint256 tokenId)`
   - `tokenCharge(uint256 tokenId)`
   - `tokenData(uint256 tokenId)`
   - `tokenBuff(uint256 tokenId)`
   - `tokenContribution(uint256 tokenId, address contributor)`
   - `tokenLinkAt(uint256 tokenId, uint256 index)`
   - `tokenAttachment(uint256 tokenId)`
-  - `configuration()`
 - **Lifecycle/Event ABI Notes**:
   - Batch lifecycle continuation emits `Batch(uint256 tokenId)` while activation/discharge are in progress.
   - Buff application emits `Buff(uint256 tokenId)`; buff parameters are read through `tokenBuff(uint256 tokenId)`.
