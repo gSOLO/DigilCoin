@@ -870,7 +870,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         address from = super._update(to, tokenId, auth);
 
         t.lastActivity = block.timestamp;
-        t.contributions[to].whitelisted = true;
+        // Auto-whitelist the current owner address for future restricted charging.
+        // Skip burn path (`to == address(0)`) to avoid writing meaningless whitelist state.
+        if (to != address(0)) {
+            t.contributions[to].whitelisted = true;
+        }
 
         return from;
     }
@@ -2029,9 +2033,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
     /// @notice Charges a token.
     ///         Requires a value sent greater than or equal to the token's incremental value for each coin.
-    ///         If token.incrementalValue == 0, charging does not require ETH; any ETH sent is treated as surplus value
-    ///         (credited as token value or distributed per the active/inactive path). If token.incrementalValue > 0,
-    ///         ETH must satisfy the per-charge minimum derived from incrementalValue.
+    ///         If token.incrementalValue == 0, direct charging (`chargeToken`) does not require ETH;
+    ///         any ETH sent is treated as surplus value (credited as token value or distributed per
+    ///         the active/inactive path). If token.incrementalValue > 0, ETH must satisfy the
+    ///         per-charge minimum derived from incrementalValue.
     /// @param  tokenId The token ID to charge.
     /// @param  coins The number of coin units to use.
     /// @return True if the token was successfully charged.
@@ -2045,9 +2050,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    Requires that both the caller and `contributor` are not blacklisted,
     ///         and the token exists. Participation attribution is based on
     ///         `contributor`.
-    ///         If token.incrementalValue == 0, charging does not require ETH; any ETH sent is treated as surplus value
-    ///         (credited as token value or distributed per the active/inactive path). If token.incrementalValue > 0,
-    ///         ETH must satisfy the per-charge minimum derived from incrementalValue.
+    ///         Proxy contributions (`contributor != msg.sender`) always require at least one
+    ///         incremental-value unit of ETH:
+    ///             max(token.incrementalValue, globalIncrementalValue).
+    ///         This sponsored-charge floor applies even when token.incrementalValue == 0.
+    ///         For self-attributed charging (`contributor == msg.sender`), ETH minimum is derived
+    ///         from token.incrementalValue as documented on {chargeToken}.
     /// @param  contributor The address contributing the charge.
     /// @param  tokenId The token ID to charge.
     /// @param  coins The coin units used in the charge.
