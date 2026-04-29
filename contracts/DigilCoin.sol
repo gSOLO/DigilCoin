@@ -273,7 +273,10 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         uint256 maxMultBps = uint256(BASE_BPS) + uint256(_maxActiveDays) * uint256(_dayBonusBps);
         if (maxMultBps > 50_000) revert BadParameters(); // hard cap: 5.0x effective multiplier
 
-        if (_dailyCap == 0 || _epochCap == 0 || _dailyCap > _epochCap) revert BadParameters();
+        if (
+            _dailyCap == 0 || _epochCap == 0 || _dailyCap > _epochCap || _dailyCap > type(uint128).max
+                || _epochCap > type(uint128).max
+        ) revert BadParameters();
 
         _syncEpoch(); // ensure we are configuring for future epochs, not a stale "current" one
 
@@ -565,7 +568,9 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         uint256 counted = _min3(amount, dailyRemain, epochRemain);
         if (counted == 0) return;
 
-        // Update counted spend counters
+        // Update counted spend counters.
+        // Safe casts: caps are bounded to uint128 in `setRewardParameters`, and `counted`
+        // is clamped by both remaining caps, so each sum cannot exceed uint128 max.
         ue.countedDaySpend = uint128(uint256(ue.countedDaySpend) + counted);
         ue.countedEpochSpend = uint128(uint256(ue.countedEpochSpend) + counted);
 
