@@ -249,8 +249,8 @@ Digils can act as "spirit vessels" for other NFTs.
 
 - **Step 1 — Pending Deposit**: Transfer an external ERC-721 into `DigilToken` via `safeTransferFrom`. This records the depositor as the pending owner for that `(externalCollection, externalTokenId)` pair.
 - **Deposit Mode Requirement**: Only `safeTransferFrom` deposits are supported; direct safe-mint to DigilToken is rejected.
-- **Step 2 — Finalize Vault**: `vaultToken(address account, uint256 tokenId, bytes data)`  
-  Only the recorded depositor can finalize. Finalization charges the Coin vault fee, mints a new Digil wrapper, marks the external NFT as fully vaulted, and stores a reverse index from `(account, externalTokenId)` to the minted Digil id. The wrapper is created with an activation threshold of `0`.
+- **Step 2 — Finalize Vault**: `vaultToken(address account, uint256 externalTokenId, bytes data)`  
+  Only the recorded depositor can finalize. Finalization charges the Coin vault fee, mints a new Digil wrapper, marks the external NFT as fully vaulted, and stores a reverse index from `(account, externalTokenId)` to the minted Digil id. The wrapper is created with an activation threshold of `0`. `externalTokenId` refers to the deposited token ID from the external ERC721 collection (`account`), not a Digil token ID.
 - **Unified Exit / Recall**: `recallToken(address account, uint256 externalTokenId)`  
   This function now handles both flows:
   - **Cancel pending deposit**: If the NFT is still pending (not fully vaulted), only the depositor can cancel and receive the NFT back.
