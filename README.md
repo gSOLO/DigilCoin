@@ -170,7 +170,12 @@ A purely stateful operation that powers down an active construct. No ETH moves. 
 
 The final release dismantling the construct. First call requires owner/approved operator; continuation calls are open to anyone not blacklisted.
 - **Inactive Discharge**: Contributors receive a full refund of their ETH and Coins. The owner gets any leftover value.
-- **Active Discharge**: Behaves like activation—ETH is settled proportionally. However, any remaining active power is forcefully pushed outward along the token's link graph, strengthening its neighbors before contributor/distribution state is cleared. Active discharge does **not** itself deactivate the Digil; call `deactivateToken(uint256 tokenId)` separately if you want it powered down.
+- **Active Discharge**: Uses activation-style settlement (`_distribute(..., false)`): contributor ETH is distributed proportionally from token value, and captured contribution charge is converted into `activeCharge` before final active-power propagation. Any remaining active power is then pushed outward along the token's link graph, strengthening neighbors before contributor/distribution state is cleared. Active discharge does **not** itself deactivate the Digil; call `deactivateToken(uint256 tokenId)` separately if you want it powered down.
+- **ETH Bootstrap Rules (exactly as implemented)**:
+  - Inactive-path first call and active-path first call both require exact ETH:
+    - `msg.value == max(token.incrementalValue, globalIncrementalValue) * max(links.length, 1)`.
+  - This required first-call ETH is enforced only when `discharging == false` (the cycle bootstrap call), and is routed to the protocol value pool.
+  - Continuation batch calls in the same discharge cycle must send exactly `0` ETH. Any non-zero `msg.value` on continuation reverts.
 - **Wrapped NFT Recallability**: If this Digil wraps an external ERC721, an *inactive* discharge clears recallability; an *active* discharge preserves it (the external NFT remains vaulted until recalled).
 
 ### Maintenance During Lifecycle
@@ -308,6 +313,11 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 ## Economics & Costs Summary
 
 - **Operations costing ETH**: Token creation (always at least global `_incrementalValue`; restricted tokens may require higher), proxy-charging, establishing new links, updating metadata, overcharging, reclaiming abandoned contributions, and switching a token from open mode into restricted mode.
+- **Discharge ETH bootstrap (first-call only)**:
+  - `dischargeToken` first call (inactive or active path) requires exact ETH:
+    - `msg.value == max(token.incrementalValue, global _incrementalValue) * max(links.length, 1)`.
+  - Continuation discharge calls require `msg.value == 0`.
+  - So, inactive discharge does **not** require any extra active-only ETH bootstrap; it uses the same first-call formula as active discharge.
 - **Creation ETH floor logic**:
   - Base minimum: `msg.value >= global _incrementalValue`.
   - Restricted token override: if `restricted == true` and `incrementalValue > global _incrementalValue`, then `msg.value >= incrementalValue`.
