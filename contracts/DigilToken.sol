@@ -1029,10 +1029,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function onERC721Received(address, address from, uint256 tokenId, bytes calldata) external nonReentrant returns (bytes4) {
         address account = _msgSender();
         
+        // Only external ERC721 collections are supported for vault callbacks.
+        require(account != address(this), "DIGIL: Self Vault Callback Unsupported");
+
         // Ensure the token isn't already fully vaulted or pending by someone else
-        require(_contractTokenAddresses[account][tokenId] == address(0), "DIGIL: Token Already Vaulted"); 
-        
-         // Reject direct mint-to-vault deposits; only safeTransferFrom deposits are supported.
+        require(_contractTokenAddresses[account][tokenId] == address(0), "DIGIL: Token Already Vaulted");
+
+        // Reject direct mint-to-vault deposits; only safeTransferFrom deposits are supported.
         require(from != address(0), "DIGIL: Mint-To-Contract Unsupported");
 
         // Securely record the user as the pending depositor
@@ -1042,6 +1045,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Finalizes a pending external ERC721 vault deposit by minting a new Digil wrapper.
+    /// @dev Only external ERC721 collections are supported; `account == address(this)` is rejected.
     /// @dev
     ///  Vault lifecycle:
     ///  1) User deposits an external ERC721 via `safeTransferFrom(..., address(this), externalTokenId, ...)`.
@@ -1085,6 +1089,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  externalTokenId The external ERC721 tokenId being vaulted.
     /// @param  data    Optional data to store with the newly minted Digil token.
     function vaultToken(address account, uint256 externalTokenId, bytes calldata data) external nonReentrant {
+        require(account != address(this), "DIGIL: Self Vault Collection Unsupported");
+
         address user = _msgSender();
 
         // Cache nested mapping to reduce repeated keccak(base) work.
@@ -1114,7 +1120,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @notice Cancels a pending external ERC721 vault deposit or recalls a vaulted external ERC721 from its Digil.
-    /// @dev Unified exit for external NFTs held by this contract:
+    /// @dev Unified exit for external NFTs held by this contract. Only external ERC721 collections are supported.
     ///
     ///  State detection:
     ///  - `holder = _contractTokenAddresses[account][externalTokenId]`
