@@ -273,10 +273,10 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         uint256 maxMultBps = uint256(BASE_BPS) + uint256(_maxActiveDays) * uint256(_dayBonusBps);
         if (maxMultBps > 50_000) revert BadParameters(); // hard cap: 5.0x effective multiplier
 
-        if (
-            _dailyCap == 0 || _epochCap == 0 || _dailyCap > _epochCap || _dailyCap > type(uint128).max
-                || _epochCap > type(uint128).max
-        ) revert BadParameters();
+        if (_dailyCap == 0 || _epochCap == 0 || _dailyCap > _epochCap ||
+            _dailyCap > type(uint128).max || _epochCap > type(uint128).max) {
+            revert BadParameters();
+        }
 
         _syncEpoch(); // ensure we are configuring for future epochs, not a stale "current" one
 
