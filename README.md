@@ -160,6 +160,12 @@ Once an inactive token reaches its activation threshold, it can be activated (fi
 - Contributors only receive a proportional ETH distribution if there is distributable surplus value in the token.
 - If there are many contributors, this processes in batches. Anyone can step in to pay gas and finish a batch, earning a **keeper bounty** in DIGIL for doing so.
 
+**Activation timeline (permission split):**
+- **Step A — First call (`activating == false`)**: only owner/approved operator can start activation; token must satisfy threshold and be inactive.
+- **Step B — Mid-batch (`activating == true`)**: any non-blacklisted address can submit continuation calls.
+- **Step C — Completion**: final continuation call flips token to active, clears activation lock, and consumes PRIMED if present.
+
+
 ### 4. Deactivating
 `deactivateToken(uint256 tokenId)`
 
@@ -172,6 +178,13 @@ The final release dismantling the construct. First call requires owner/approved 
 - **Inactive Discharge**: Contributors receive a full refund of their ETH and Coins. The owner gets any leftover value.
 - **Active Discharge**: Behaves like activation—ETH is settled proportionally. However, any remaining active power is forcefully pushed outward along the token's link graph, strengthening its neighbors before contributor/distribution state is cleared. Active discharge does **not** itself deactivate the Digil; call `deactivateToken(uint256 tokenId)` separately if you want it powered down.
 - **Wrapped NFT Recallability**: If this Digil wraps an external ERC721, an *inactive* discharge clears recallability; an *active* discharge preserves it (the external NFT remains vaulted until recalled).
+
+**Discharge timeline (fee + continuation):**
+- **Step A — First call (`discharging == false`)**: only owner/approved operator can start; caller must send **exactly** `max(globalIncrementalValue, tokenIncrementalValue) * max(1, links.length)` ETH.
+- **Step B — Mid-batch (`discharging == true`)**: any non-blacklisted address can continue processing.
+- **Step C — Continuations fee rule**: every continuation call must send **exactly `0` ETH**.
+- **Step D — Completion**: lock clears; contributors are fully settled for that epoch; temporary buff fields are reset while persisted appearance payload remains.
+
 
 ### Maintenance During Lifecycle
 `updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes data, string uri)`
@@ -244,6 +257,14 @@ Digils can act as "spirit vessels" for other NFTs.
   - **Recall fully vaulted NFT**: If the NFT is fully vaulted, an approved operator of the wrapping Digil can recall it only when the attachment is currently marked recallable.
 - **Recallability Rules**: Recallability is enforced through the attachment's stored `recallable` flag. For vaulted wrappers, that flag is updated during the wrapper's lifecycle processing and can become true under the normal zero-threshold activation/distribution path. It stays sticky across deactivation, and is cleared only when either (a) recall succeeds, or (b) a full discharge settles while the Digil is inactive.
 - **Post-Recall Behavior**: Recalling transfers the external NFT to the current Digil owner, applies active-charge bleed to the Digil shell, and preserves attachment provenance metadata for historical indexing.
+
+**Recallability transition timeline (pending vs fully vaulted):**
+- **Pending vault** (`_contractTokenAddresses != address(0)` and `!= address(this)`): NFT is deposited but not wrapped; depositor can cancel via `recallToken`; recallability flag is not the gate here.
+- **Fully vaulted + not recallable** (`_contractTokenAddresses == address(this)` and `recallable == false`): wrapper exists, but recall is blocked.
+- **Fully vaulted + recallable** (`_contractTokenAddresses == address(this)` and `recallable == true`): approved wrapper operator can execute recall.
+- **After successful recall**: vault ownership mapping clears to unvaulted, `recallable` is cleared, and provenance fields on the Digil shell stay populated.
+- **After inactive full discharge of wrapper**: attachment recallability is cleared even though provenance metadata remains for indexing.
+
  
 
 ---
@@ -258,6 +279,13 @@ When ETH or Coins are owed to you (from activation payouts, refunds, or system r
 - **Timer Reset Semantics**: `withdraw()` and qualifying ERC-721 balance updates both checkpoint yield. At each checkpoint, the timer resets to the current timestamp, so partial intervals are discarded and never carried forward.
 - **Single Settlement Surface**: Pending ETH and DIGIL from different flows (charging, activation, discharge, keeper rewards) are consolidated behind one user-level withdrawal path.
 - **Best-Effort Coin Payout**: Coin transfer is best-effort. If mint/transfer of DIGIL fails in the ERC20 path, `withdraw()` does not revert for that reason and can return `0` coins while still paying ETH.
+
+### Known Operational Caveats
+
+- **Best-effort DIGIL payout**: `withdraw()` prioritizes preserving ETH settlement success. If DIGIL mint/transfer cannot complete, coin pending balances are restored for retry and the call can still succeed for ETH payout.
+- **Operator UX implication**: frontends/indexers should treat `(coins == 0, value > 0)` from `withdraw()` as a possible soft coin-payout failure rather than assuming no pending coin entitlement existed.
+- **Retry behavior**: users can call `withdraw()` again later when DIGIL transfer conditions recover; this does not require replaying prior lifecycle operations.
+
 
 **Example (inside vs. outside one interval):**
 - Suppose your checkpoint cap is **500 DIGIL** and your last checkpoint was just set.

@@ -619,6 +619,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///             * returned `coins` is 0.
     ///         - This preserves the existing best-effort Coin payout model.
     ///
+    ///         State before/after:
+    ///         - Before: `distribution.value` / `distribution.coins` may hold pending payouts.
+    ///         - After: ETH pending is always zeroed before transfer attempt.
+    ///         - After: Coin pending is zeroed only for non-opted-out users; on soft Coin
+    ///           payout failure, the pending amount is restored.
+    ///
     /// @return coins The number of Coin units successfully transferred to the sender.
     /// @return value The native ETH value transferred to the sender.
     function withdraw() external nonReentrant returns (uint256 coins, uint256 value) {
@@ -1081,6 +1087,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///    Any later recallability is governed by the attachment's stored `recallable` flag,
     ///    which is updated during distribution processing elsewhere in the lifecycle.
     ///
+    ///  State before/after:
+    ///  - Before: external NFT is pending with a depositor marker in `_contractTokenAddresses`.
+    ///  - After: marker becomes `address(this)`, reverse index is populated, and wrapper
+    ///    provenance fields are initialized on the Digil shell.
+    ///
     /// @param  account The external ERC721 contract address.
     /// @param  externalTokenId The external ERC721 tokenId being vaulted.
     /// @param  data    Optional data to store with the newly minted Digil token.
@@ -1156,6 +1167,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///  - Interaction:
     ///      * Transfers the external ERC721 back to the current Digil owner:
     ///          IERC721(account).safeTransferFrom(address(this), ownerOf(digilTokenId), externalTokenId, t.data)
+    ///
+    ///
+    ///  State before/after:
+    ///  - Before (pending cancel): holder marker equals depositor.
+    ///  - After (pending cancel): holder marker and reverse index are cleared.
+    ///  - Before (fully vaulted recall): holder marker is `address(this)` and `recallable` gates exit.
+    ///  - After (successful recall): holder marker and `recallable` clear, while attachment provenance
+    ///    fields remain sticky on the Digil for historical indexing.
     ///
     /// @param  account          The external ERC721 contract address.
     /// @param  externalTokenId  The external ERC721 tokenId to cancel/recall.
@@ -2337,6 +2356,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         settles contributions and redistributes value/active charge according
     ///         to the protocol rules.
     ///
+    ///         State before/after:
+    ///         - Before first call: requires owner/approved caller, not activating, and first-call fee.
+    ///         - Mid-cycle: `discharging == true` allows continuation by any non-blacklisted caller with 0 ETH.
+    ///         - After completion: `discharging == false`, epoch advances, temporary buff fields are cleared,
+    ///           and persisted appearance/attachment provenance fields remain.
+    ///
     /// @param  tokenId The token ID to discharge.
     /// @return completed True if this call finished the discharge; false if more
     ///                   calls are required to process remaining contributors.
@@ -2477,6 +2502,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///         No Ether is required for activation itself; all ETH-related costs occur
     ///         during charging and other value-manipulating operations.
+    ///
+    ///         State before/after:
+    ///         - Before first call: token must be inactive and not discharging.
+    ///         - Mid-cycle: `activating == true` allows continuation by any non-blacklisted caller.
+    ///         - After completion: `active == true`, `activating == false`, and PRIMED is consumed if set.
     ///
     /// @param  tokenId The ID of the token to activate.
     /// @return completed True if this call finished the activation; false if more
