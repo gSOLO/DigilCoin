@@ -243,6 +243,7 @@ Before finalizing:
 - [ ] Kept behavior changes minimal and explicit.
 - [ ] Reviewed and updated NatSpec + inline comments so they match new behavior.
 - [ ] For every changed user-facing function, confirm README claims on costs, permissions, and state transitions match implementation.
+- [ ] Trust-model parity: any privileged transfer path is documented consistently across code comments, interface docs, and README.
 - [ ] Ran relevant validation commands (or documented environment blockers).
 - [ ] Updated README when behavior/setup/flows changed.
 - [ ] Summarized risks, assumptions, and follow-ups in final output.

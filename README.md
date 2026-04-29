@@ -284,6 +284,7 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 - **Restriction Controls**: Restriction management allows approved operators to manage a token’s restricted/open mode and contributor allowlist with explicit on-chain events. Switching from open to restricted mode may require ETH (`max(token.incrementalValue, globalIncrementalValue)`), while allowlist additions/removals do **not** charge DIGIL coin transfers.
 - **Whitelist Directionality**: In the current implementation, whitelist flags are one-way at storage level: once an address is marked whitelisted for a token, that mapping entry is not cleared by later `restrictToken` calls.
 - **Owner Auto-Whitelist on Transfer**: On mint/transfer, the recipient is automatically marked whitelisted for that token in the internal contributor mapping. This is intentional and persists across epochs.
+- **Planar Custody Model**: Planar tokens are protocol/admin artifacts, not user-sovereign collectibles. Admin may recover or enforce custody of planar tokens consistent with current contract ownership. Integrators should treat planar token possession as non-final custody unless they also control contract ownership/governance.
 - **Read-Only Views**: The contract exposes various functions to allow front-ends to easily read the complex, packed state of any Digil:
   - `tokenURI(uint256 tokenId)`
   - `tokenCharge(uint256 tokenId)`
