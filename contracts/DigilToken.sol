@@ -393,9 +393,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @inheritdoc ERC721
-    /// @dev    For planar tokens, only the contract owner or this contract itself
-    ///         is authorized to operate. Operator approvals and per-token approvals
-    ///         are intentionally ignored for these IDs.
+    /// @dev    For planar IDs (`0..PLANAR_TRANSFER_MAX_ID`), custody is controlled by
+    ///         the current contract owner (or this contract itself). Standard ERC-721
+    ///         operator approvals and per-token approvals are intentionally bypassed
+    ///         for those IDs.
     function _isAuthorized(address owner_, address spender, uint256 tokenId) internal view override returns (bool) {
         if (tokenId <= PLANAR_TRANSFER_MAX_ID) {
             // Only the contract owner (admin) or this contract can operate planar tokens
@@ -405,12 +406,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     }
 
     /// @inheritdoc Ownable
-    /// @dev    Transfers ownership of the contract and planar tokens to a new account.
-    ///         During this call, we briefly enable a "transfer window" that allows
-    ///         planar tokens (IDs 0..20) currently held by the caller (current admin)
-    ///         to be transferred to `newOwner`. This preserves the invariant that the
-    ///         admin always controls planar tokens (and thus the base-URI token #0),
-    ///         without seizing tokens from third parties (which is forbidden by ERC-721).
+    /// @dev    Transfers ownership of the contract and planar-token custody to a new
+    ///         account. During this call, we briefly enable a transfer window that
+    ///         allows planar tokens (IDs 0..20) currently held by the caller (current
+    ///         admin) to be moved to `newOwner`, so custodial planar control follows
+    ///         the ownership handoff intent.
     /// @param  newOwner the address to transfer ownership to
     function transferOwnership(address newOwner) public virtual override onlyOwner {
         // Before transferring contract ownership, also transfer all foundational Plane tokens.
@@ -831,8 +831,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///         Planar token policy:
     ///         - Planar tokens cannot be freely moved.
-    ///         - Outside the temporary ownership-transfer window, planar tokens must
-    ///           remain with the current contract owner.
+    ///         - Outside the temporary ownership-transfer window, planar token moves
+    ///           are constrained to owner-directed custody enforcement (`to == owner()`).
     ///         - During {transferOwnership}, `_planarTransferActive` allows the old
     ///           owner to transfer planar custody to the new owner.
     ///
