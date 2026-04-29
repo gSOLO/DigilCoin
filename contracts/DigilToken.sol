@@ -1082,7 +1082,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///    which is updated during distribution processing elsewhere in the lifecycle.
     ///
     /// @param  account The external ERC721 contract address.
-    /// @param  externalTokenId The external ERC721 tokenId being vaulted.
+    /// @param  externalTokenId The deposited token ID from the external ERC721 collection (`account`), not a Digil token ID.
     /// @param  data    Optional data to store with the newly minted Digil token.
     function vaultToken(address account, uint256 externalTokenId, bytes calldata data) external nonReentrant {
         address user = _msgSender();
@@ -1158,7 +1158,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///          IERC721(account).safeTransferFrom(address(this), ownerOf(digilTokenId), externalTokenId, t.data)
     ///
     /// @param  account          The external ERC721 contract address.
-    /// @param  externalTokenId  The external ERC721 tokenId to cancel/recall.
+    /// @param  externalTokenId  The deposited token ID from the external ERC721 collection (`account`), not a Digil token ID.
     function recallToken(address account, uint256 externalTokenId) external nonReentrant {
         address caller = _msgSender();
 
