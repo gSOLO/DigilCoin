@@ -136,6 +136,11 @@ The existence of a Digil follows a defined path: **Creating** â†’ **Charging** â
 
 You bring a Digil into existence by defining its required ETH increment and its activation threshold. You can choose to align it with a foundational plane (for an upfront coin fee) and choose whether it accepts open contributions or is restricted to a whitelist. Any ETH sent during creation becomes its foundational value.
 
+Creation ETH minimums are explicit:
+- Base required ETH is always at least the global `_incrementalValue` floor.
+- If `restricted == true` and `incrementalValue > global floor`, required ETH becomes that higher `incrementalValue`.
+- If `restricted == false`, setting a higher per-token `incrementalValue` does **not** raise the creation minimum above the global floor (it still affects later charging requirements).
+
 ### 2. Charging
 `chargeToken(uint256 tokenId, uint256 coins)`  
 `chargeTokenAs(address contributor, uint256 tokenId, uint256 coins)`
@@ -302,7 +307,11 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 
 ## Economics & Costs Summary
 
-- **Operations costing ETH**: Creating restricted tokens, proxy-charging, establishing new links, updating metadata, overcharging, reclaiming abandoned contributions, and switching a token from open mode into restricted mode.
+- **Operations costing ETH**: Token creation (always at least global `_incrementalValue`; restricted tokens may require higher), proxy-charging, establishing new links, updating metadata, overcharging, reclaiming abandoned contributions, and switching a token from open mode into restricted mode.
+- **Creation ETH floor logic**:
+  - Base minimum: `msg.value >= global _incrementalValue`.
+  - Restricted token override: if `restricted == true` and `incrementalValue > global _incrementalValue`, then `msg.value >= incrementalValue`.
+  - Unrestricted token behavior: higher per-token `incrementalValue` does not increase the creation minimum, but it can increase ETH required in later charge flows.
 - **Link ETH requirement formula**: For `linkToken(source, destination, efficiency)`, minimum ETH is:
   - `source.incrementalValue + destination.incrementalValue`.
   - Sent ETH is split between the two linked tokens (`floor(value/2)` to source, remainder to destination).

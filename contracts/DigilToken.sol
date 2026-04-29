@@ -1490,6 +1490,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     /// @param  incrementalValue The incremental value (in wei) required with each coin used for charging.
     ///                          Must be 0 or at least the global minimum incremental value.
+    ///                          Creation always requires at least the global floor (`_incrementalValue`).
+    ///                          If `restricted == true` and this value is higher than the global floor,
+    ///                          creation requires at least this higher value; otherwise unrestricted
+    ///                          creation keeps the global floor minimum even when this value is higher.
     ///                          Token creation accepts excess ETH above the minimum required deposit;
     ///                          all supplied ETH is added to the token's intrinsic value.
     /// @param  activationThreshold The number of coins required for token activation.
