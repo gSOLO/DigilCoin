@@ -184,6 +184,15 @@ PR descriptions should include:
    - any intentional temporary divergence.
 6. Any environment limitations encountered.
 
+### Mandatory PR checklist: Economic & Interface Invariants
+
+Reviewers must verify all of the following before approval:
+
+- `I*.sol` signatures, events, and errors match their corresponding implementation contracts.
+- Payout paths preserve intended accounting invariants across balances, pools, and claim/distribution state.
+- Opt-out/operator semantics are documented and covered by tests.
+- Vault `pending`, `fully-vaulted`, and `recallable` transitions are documented and covered by tests.
+
 ### Doc parity checklist (minimum)
 
 - Verify value/coin costs documented for touched user-facing flows match implementation constants/logic.
