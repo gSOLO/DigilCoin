@@ -661,12 +661,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Opted-out accounts cannot receive Coins or collector-yield.
-        if (optedOut) {
-            return (0, value);
-        }
-
-        // Nothing to pay in Coins.
-        if (coins == 0) {
+        // If there is no coin distribution, skip coin transfer.
+        if (optedOut || coins == 0) {
             return (0, value);
         }
 
