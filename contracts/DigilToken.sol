@@ -495,15 +495,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             batchSize <= MAX_BATCH_SIZE,
             "DIGIL: Invalid Configuration"
         );
-        
-        _coinRate = coins * _coinMultiplier;
 
+        uint256 coinRate = coins * _coinMultiplier;
+        
+        _coinRate = coinRate;
         _incrementalValue = incrementalValue;
         _transferValue = transferValue;
-
         _batchSize = batchSize;
-        
-        emit Configure(_coinRate, _incrementalValue, _transferValue, batchSize);
+
+        emit Configure(coinRate, incrementalValue, transferValue, batchSize);
     }
 
     // Coin Transfers
