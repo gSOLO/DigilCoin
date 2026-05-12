@@ -67,7 +67,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable returns (uint256 tokenId);
 
     // Restrict Token
-    function restrictToken(uint256 tokenId, address[] memory whitelisted) external payable;
+    function restrictToken(uint256 tokenId, address[] calldata whitelisted) external payable;
 
     // Update Token
     function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable;

@@ -1631,7 +1631,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Requires a value sent greater than or equal to the larger of the token's incremental value or the minimum incremental value. 
     /// @param  tokenId The token ID to update.
     /// @param  whitelisted An array of addresses to whitelist.
-    function restrictToken(uint256 tokenId, address[] memory whitelisted) external payable {
+    function restrictToken(uint256 tokenId, address[] calldata whitelisted) external payable {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
         _authorizeIdleAndTouch(tokenId, t);
