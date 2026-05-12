@@ -9,7 +9,7 @@ import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Recei
 interface IDigilToken is IERC721, IERC721Receiver {
     // Events
     event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize);
-    event OptStatus(address indexed account, bool optOut);
+    event OptStatus(address indexed account, bool indexed optOut);
     event Whitelist(address indexed account, uint256 indexed tokenId);
     event Restrict(uint256 indexed tokenId, bool indexed restricted);
     event Update(uint256 indexed tokenId);

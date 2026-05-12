@@ -186,7 +186,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @notice Emitted when an address toggles opt-out status.
     /// @param  account The address whose status changed
     /// @param  optOut  True if the account is now opted out
-    event OptStatus(address indexed account, bool optOut);
+    event OptStatus(address indexed account, bool indexed optOut);
 
     /// @notice Emitted when an address is added to a token’s whitelist.
     /// @param  account The address of the account that was whitelisted
