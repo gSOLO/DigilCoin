@@ -193,9 +193,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token whose whitelist was updated
     event Whitelist(address indexed account, uint256 indexed tokenId);
 
-    /// @notice Emitted when a token is restricted.
-    /// @param  tokenId The ID of the token that was restricted
-    event Restrict(uint256 indexed tokenId);
+    /// @notice Emitted when a token's restriction state changes.
+    /// @dev    `restricted` indicates the token's new restriction state after the update.
+    ///         When true, token interactions are limited to whitelisted accounts.
+    ///         When false, the token is unrestricted and no whitelist check is applied.
+    /// @param tokenId The ID of the token whose restriction state changed.
+    /// @param restricted The token's new restriction state.
+    event Restrict(uint256 indexed tokenId, bool indexed restricted);
 
     /// @notice Emitted when a token is updated.
     /// @param  tokenId The ID of the token that was updated
@@ -1545,7 +1549,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         if (restricted) {
             t.restricted = true;
-            emit Restrict(tokenId);
+            emit Restrict(tokenId, true);
         }
 
         // 5. ACCRUE VALUE
@@ -1644,8 +1648,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 // of token.incrementalValue or the global minimum.
                 uint256 required = _max(t.incrementalValue, _incrementalValue);
                 if (value < required) _revertInsufficientFunds(required);
-                emit Restrict(tokenId);
             }
+            emit Restrict(tokenId, restrict);
             // If restricting is being disabled, no additional payment is required.
         }
 
