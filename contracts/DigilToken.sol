@@ -1641,7 +1641,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 value = msg.value;
 
         // Determine if the token should be restricted based on provided addresses.
-        bool restrict = whitelisted.length > 0;
+        uint256 accountsLength = whitelisted.length;
+        bool restrict = accountsLength > 0;
         bool wasRestricted = t.restricted;
         if (restrict != wasRestricted) {
             t.restricted = restrict;
@@ -1667,7 +1668,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         
         // Loop through the provided addresses and whitelist them.
         mapping(address => TokenContribution) storage contributions = t.contributions;
-        uint256 accountsLength = whitelisted.length;
         for (uint256 accountIndex; accountIndex < accountsLength; accountIndex++) {
             address account = whitelisted[accountIndex];
             // Whitelisting is a one-way operation: once set, it is never cleared.
