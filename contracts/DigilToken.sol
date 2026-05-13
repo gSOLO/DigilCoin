@@ -2691,7 +2691,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _requireNoBatch(d);
 
         // Existing link state
-        uint8 baseEfficiency = t.linkEfficiency[linkId].base;
+        LinkEfficiency storage eff = t.linkEfficiency[linkId];
+        uint8 baseEfficiency = eff.base;
         bool isNewLink = (baseEfficiency == 0);
         if (isNewLink) {
             require(t.links.length < MAX_LINKS, "DIGIL: Too Many Links");
@@ -2731,16 +2732,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _updateLinkAffinity(t, d, linkId, efficiency);
 
         // Update base efficiency in storage.
-        t.linkEfficiency[linkId].base = efficiency;
+         eff.base = efficiency;
 
         // If this is a brand-new link, add it to the list.
         if (isNewLink) {
             t.links.push(linkId);
         }
 
-        // For the event and cost, read back the final stored efficiency.
-        LinkEfficiency storage eff = t.linkEfficiency[linkId];
-        emit Link(tokenId, linkId, eff.base, eff.affinityBonus);
+        emit Link(tokenId, linkId, efficiency, eff.affinityBonus);
 
         // Determine if a buff is currently active for the a discount.
         uint8 buffBonus = _activeBuffBonus(t);
