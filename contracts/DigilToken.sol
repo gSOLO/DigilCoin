@@ -1746,11 +1746,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             _coinsFromSender(_coinRate * 1000);
         }
 
-        bool overwriteData = bytes(data).length > 0;
+        bool overwriteData = data.length > 0;
         if (overwriteData) {
             if (tokenId <= PLANAR_TRANSFER_MAX_ID) {
                 // Planar tokens must preserve at least 5 bytes of data to keep affinity encoding valid.
-                require(bytes(data).length >= 5, "DIGIL: Invalid Data Length");
+                require(data.length >= 5, "DIGIL: Invalid Data Length");
             }
             // Updating data requires a coin fee to preserve the token's original intention.
             _coinsFromSender(_coinRate * 1000);
