@@ -193,13 +193,15 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  tokenId The ID of the token whose whitelist was updated
     event Whitelist(address indexed account, uint256 indexed tokenId);
 
-    /// @notice Emitted when a token's restriction state changes.
-    /// @dev    `restricted` indicates the token's new restriction state after the update.
-    ///         When true, token interactions are limited to whitelisted accounts.
-    ///         When false, the token is unrestricted and no whitelist check is applied.
-    /// @param tokenId The ID of the token whose restriction state changed.
-    /// @param restricted The token's new restriction state.
-    event Restrict(uint256 indexed tokenId, bool indexed restricted);
+    /// @notice Emitted when a token becomes restricted.
+    /// @dev    Restricted tokens may only be interacted with by whitelisted accounts.
+    /// @param  tokenId The ID of the token that became restricted.
+    event Restrict(uint256 indexed tokenId);
+
+    /// @notice Emitted when a token becomes unrestricted.
+    /// @dev    Unrestricted tokens no longer apply whitelist checks.
+    /// @param  tokenId The ID of the token that became unrestricted.
+    event Unrestrict(uint256 indexed tokenId);
 
     /// @notice Emitted when a token is updated.
     /// @param  tokenId The ID of the token that was updated
@@ -1549,7 +1551,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         if (restricted) {
             t.restricted = true;
-            emit Restrict(tokenId, true);
+            emit Restrict(tokenId);
         }
 
         // 5. ACCRUE VALUE
@@ -1644,13 +1646,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (restrict != wasRestricted) {
             t.restricted = restrict;
             if (restrict) {
+
                 // Switching into restricted mode requires paying at least the higher
                 // of token.incrementalValue or the global minimum.
                 uint256 required = _max(t.incrementalValue, _incrementalValue);
                 if (value < required) _revertInsufficientFunds(required);
+
+                emit Restrict(tokenId);
+
+            } else {
+
+                // If restricting is being disabled, no additional payment is required.
+                emit Unrestrict(tokenId);
             }
-            emit Restrict(tokenId, restrict);
-            // If restricting is being disabled, no additional payment is required.
+            
         }
 
         // Add any sent Ether as token value (even if toggle did not change).
