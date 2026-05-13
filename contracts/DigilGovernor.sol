@@ -101,8 +101,9 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     event Burn(uint256 indexed proposalId, uint256 amount);
 
     // Errors
-    /// @notice Thrown when vote params are missing (tokenId is required for NFT-gated voting)
-    ///         or when a lock operation would overflow the checkpointed locked amount type (uint208)
+    /// @notice Thrown when vote params are missing (tokenId is required for NFT-gated voting),
+    ///         a lock operation would overflow the checkpointed locked amount type (uint208),
+    ///         or a staking amount is zero.
     error InvalidParams();
     /// @notice Thrown when the same NFT tokenId is reused on the same proposal.
     error AlreadyUsedNft(uint256 tokenId);
@@ -401,8 +402,12 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         uint208 newAmount = currentAmount;
         if (amount > 0) {
             // Guard: amount must fit in uint208, and currentAmount + amount must not overflow uint208.
-            if (amount > type(uint208).max) revert InvalidParams();
-            newAmount = currentAmount + uint208(amount);
+            // Check in uint256 first so oversized additions revert with InvalidParams()
+            // instead of relying on Solidity's checked-arithmetic panic.
+            if (amount > type(uint208).max || uint256(currentAmount) + amount > type(uint208).max) {
+                revert InvalidParams();
+            }
+            newAmount = uint208(uint256(currentAmount) + amount);
         }
 
         // Proposed expiry is “now + duration” in the Governor’s clock units (timestamp-mode).
@@ -501,10 +506,13 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
 
     /// @notice Stakes coins on the outcome of a governance proposal (PvP Prediction Market).
     /// @dev    Tokens are transferred from the user to the Governor. Can only be called during Pending or Active states.
+    ///         Zero-amount stakes are rejected to avoid meaningless market entries and event spam.
     /// @param  proposalId The ID of the proposal to stake on.
     /// @param  supportFor Set to `true` to bet that the proposal will succeed. Set to `false` to bet it will fail.
-    /// @param  amount The amount of DigilCoin to stake.
+    /// @param  amount The non-zero amount of DigilCoin to stake.
     function stake(uint256 proposalId, bool supportFor, uint256 amount) external {
+        if (amount == 0) revert InvalidParams();
+
         ProposalState currentState = state(proposalId);
 
         // Can only enter the market while voting is pending or active
