@@ -2729,10 +2729,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _createValue(d, linkId, otherHalf);
 
         // Update affinity bonus in storage, if applicable.
-        _updateLinkAffinity(t, d, linkId, efficiency);
+        _updateLinkAffinity(t, d, eff, efficiency);
 
         // Update base efficiency in storage.
-         eff.base = efficiency;
+        eff.base = efficiency;
 
         // If this is a brand-new link, add it to the list.
         if (isNewLink) {
@@ -2878,9 +2878,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         affinity bonus.
     /// @param  t          Storage reference to the source token.
     /// @param  d          Storage reference to the destination token.
-    /// @param  linkId     The destination token ID being linked.
+    /// @param  eff        Storage reference to the link efficiency state.
     /// @param  efficiency The proposed base link efficiency.
-    function _updateLinkAffinity(Token storage t, Token storage d, uint256 linkId, uint8 efficiency) internal {
+    function _updateLinkAffinity(Token storage t, Token storage d, LinkEfficiency storage eff, uint8 efficiency) internal {
         // 1. Get Source Candidates
         uint256 s1 = (t.links.length > 0 && t.links[0] <= PLANAR_MAX_ID) ? t.links[0] : 0;
         // Check attunement/expiry
@@ -2904,8 +2904,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if (d2 != 0) bestBonus = _max(bestBonus, _affinityBonus(s2, d2, efficiency));
         }
 
-        if (bestBonus > t.linkEfficiency[linkId].affinityBonus) {
-            t.linkEfficiency[linkId].affinityBonus = bestBonus;
+        if (bestBonus > eff.affinityBonus) {
+            eff.affinityBonus = bestBonus;
         }
     }
 
