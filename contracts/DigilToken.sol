@@ -779,10 +779,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    Internal function that adds value to a token.
     /// @param  tokenId The token to which the value is added.
     /// @param  value The amount of value (in wei) to add.
-    function _createValue(uint256 tokenId, uint256 value) internal {
+    function _createValue(Token storage t, uint256 tokenId, uint256 value) internal {
         if (value > 0) {
             unchecked {
-                _tokens[tokenId].value += value;
+                t.value += value;
             }
             emit Enrich(tokenId, value);
         }
@@ -805,7 +805,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         _distributions[address(this)].value -= value;
 
-        _createValue(tokenId, value);
+        _createValue(t, tokenId, value);
 
         // Update last activity
         t.lastActivity = block.timestamp;
@@ -1556,7 +1556,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // 5. ACCRUE VALUE
         // We add the ENTIRE msg.value to the token. 
-        _createValue(tokenId, msg.value);
+        _createValue(t, tokenId, msg.value);
 
         // If a plane is specified (plane > 0), process the coin fee and link the token to the plane.
         if (plane > 0) {
@@ -1664,7 +1664,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         // Add any sent Ether as token value (even if toggle did not change).
-        _createValue(tokenId, value);
+        _createValue(t, tokenId, value);
         
         // Loop through the provided addresses and whitelist them.
         mapping(address => TokenContribution) storage contributions = t.contributions;
@@ -2719,13 +2719,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Split the contributed value evenly between the two tokens.
         uint256 half = value / 2;
-        _createValue(tokenId, half);
+        _createValue(t, tokenId, half);
         uint256 otherHalf;
         unchecked {
             // half = value / 2 guarantees `value - half` cannot underflow.
             otherHalf = value - half;
         }
-        _createValue(linkId, otherHalf);
+        _createValue(d, linkId, otherHalf);
 
         // Update affinity bonus in storage, if applicable.
         _updateLinkAffinity(t, d, linkId, efficiency);
