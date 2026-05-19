@@ -1,6 +1,6 @@
 # Digital Sigils on the Ethereum Blockchain
-The Web3 Layer of the [Digil Project](https://digil.app)  
-**Website**: [digil.co.in](https://digil.co.in)
+The Web3 Layer of [Digil Studio](https://digil.studio)  
+**Website**: [digil.xyz](https://digil.xyz)
 
 ## What is a Digil?
 A **Digil** (Digital Sigil) is an ERC-721 **dynamic NFT** that can hold **intrinsic value (ETH)** and accumulate **energy (ERC-20 “coins”)**. Owners and contributors can **charge**, **activate**, **link**, **buff**, **deactivate**, and **discharge** Digils; the contract fairly tracks and redistributes ETH/coins using on-chain rules and events.
