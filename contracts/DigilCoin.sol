@@ -31,7 +31,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 /// Donors fund ETH pools via `donate()` and `receive()`; users claim pro-rata by effective points.
 /// Effective points include a **days-active multiplier** (based on uncapped raw spend), while point-earning is
 /// capped daily and per-epoch to limit gaming. Remaining ETH is swept forward so it never becomes unclaimable.
-/// @custom:security-contact security@digil.co.in
+/// @custom:security-contact security@digil.xyz
 contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20Permit, ERC20Votes, ReentrancyGuard {
     // Roles
 
