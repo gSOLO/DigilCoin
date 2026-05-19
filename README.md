@@ -33,7 +33,7 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 
 ## Brand & Terminology
 
-- **Digil Project** – The broader ecosystem, including the on-chain protocol and frontends at `digil.app`, `digil.co.in`, and related domains.
+- **Digil Project** – The broader ecosystem, including the on-chain protocol and frontends at `digil.studio`, `digil.app`, `digil.xyz`, and related domains.
 - **Digital Sigils** – The name of the ERC-721 collection and contract that implements the dynamic NFT logic described in this document.
 - **Digil / Digils** – One NFT is called **a Digil**. Informally: “I charged three of my Digils today.”
 - **Digil Coin (ERC-20)** – The system’s ERC-20 currency, ticker **DIGIL**, used as “coins” inside the protocol for charging, fees, buffs, governance, and **donor-funded ETH rewards** earned via eligible *spend* (not holding).
