@@ -4,7 +4,6 @@ pragma solidity ^0.8.34;
 /// @title Digil Flags
 /// @author gSOLO
 /// @notice Bitmask constants used for Digil buffs / tier-tags.
-/// @custom:developer gSOLO Studio
 library DigilFlags {
     // Buff Bitmasks
     uint16 internal constant STABILIZED       = uint16(1) << 0;  // Anti-Bleed - Prevents one bleed event; consumed on deactivation/recall bleed
