@@ -5,7 +5,8 @@ import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {IERC721Receiver} from "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
 
 /// @title Interface for Digil Token (NFT)
-/// @notice Interface for the DigilToken contract used for the creation, charging, and activation of Digital Sigils on the Ethereum Blockchain
+/// @author gSOLO
+/// @custom:developer gSOLO Studio
 interface IDigilToken is IERC721, IERC721Receiver {
     // Events
     event Configure(uint256 coinRate, uint256 incrementalValue, uint256 transferValue, uint16 batchSize);

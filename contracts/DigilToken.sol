@@ -18,6 +18,7 @@ import {DigilAppearance} from "contracts/DigilAppearance.sol";
 /// @author gSOLO
 /// @notice NFT contract used for the creation, charging, and activation of Digital Sigils ("Digils")
 /// @dev Digital Sigils are powered by the Digil Coin ERC20 (symbol: DIGIL).
+/// @custom:developer gSOLO Studio
 /// @custom:security-contact security@digil.xyz
 contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Immutable contract-level variables set during construction

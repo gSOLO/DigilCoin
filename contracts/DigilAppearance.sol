@@ -11,6 +11,7 @@ pragma solidity ^0.8.34;
 ///      - colorStart:  bits 52..83  (32 bits; RRGGBBAA gradient start)
 ///      - colorEnd:    bits 84..115 (32 bits; RRGGBBAA gradient end)
 ///      - reserved:    bits 116..119 (4 bits)
+/// @custom:developer gSOLO Studio
 library DigilAppearance {
     // Shifts
     uint8 internal constant STYLE_SHIFT       = 0;

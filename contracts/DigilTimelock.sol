@@ -6,6 +6,7 @@ import {TimelockController} from "@openzeppelin/contracts/governance/TimelockCon
 /// @title Digil Timelock Controller
 /// @author gSOLO
 /// @notice This contract holds the funds and the "Owner" permissions for the DAO.
+/// @custom:developer gSOLO Studio
 /// @custom:security-contact security@digil.co.in
 contract DigilTimelock is TimelockController {
     /**
