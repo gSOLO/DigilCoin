@@ -304,7 +304,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _coinRate = 100 * _coinMultiplier;
         _coins.approve(address(this), type(uint256).max); // Approve this contract to spend its own coins for distributions.
         
-        string memory baseURI = "https://digil.co.in/token/";
+        string memory baseURI = "https://api.digil.xyz/v1/tokens/";
         
         // Define an array of plane names for the initial tokens
         string[21] memory plane;
