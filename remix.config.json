@@ -36,7 +36,7 @@
         "bytecodeHash": "none",
         "appendCBOR": true
       },
-      "evmVersion": "prague",
+      "evmVersion": "osaka",
       "debug": {
         "revertStrings": "strip",
         "debugInfo": [
@@ -45,5 +45,8 @@
         ]
       }
     }
+  },
+  "scenarios": {
+    "lastSavedScenario": "scenario.json"
   }
 }
