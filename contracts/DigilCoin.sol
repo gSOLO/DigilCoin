@@ -22,11 +22,9 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 ///
 /// ## Donor-funded ETH rewards (NOT holding-based)
 /// This contract implements an ETH rewards system that is intentionally **not dependent on holding** DigilCoin.
-/// Users earn points by *spending* DigilCoin into eligible contracts **only when those contracts pull funds via `transferFrom`**:
-/// - A spend is eligible iff:
-///   - `spendWeightBps[to] > 0` (allowlisted spender contract)
-///   - `msg.sender == to` (the spender contract initiated the pull)
-///   - `from != 0` and `to != 0` (not mint/burn)
+/// Users earn points when eligible contracts collect nonrefundable feature fees via `spendFrom`.
+/// Ordinary transfers and `transferFrom` deposits never earn points. Weighted spender contracts
+/// are trusted to distinguish fees from refundable principal and to attribute fees to their payer.
 ///
 /// Donors fund ETH pools via `donate()` and `receive()`; users claim pro-rata by effective points.
 /// Effective points include a **days-active multiplier** (based on uncapped raw spend), while point-earning is
@@ -251,7 +249,8 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// - Enabling a non-zero weight requires `spender` to be a deployed contract
     ///   (`spender.code.length > 0`), but disabling remains possible after code changes
     ///   or selfdestructs so stale allowlist entries can always be removed.
-    /// - Eligibility *also* requires `msg.sender == spender` so arbitrary user transfers do not earn points.
+    /// - Eligibility also requires the spender to collect the fee through `spendFrom`.
+    ///   Only enable contracts whose implementation excludes refundable deposits from this path.
     /// @param spender The deployed contract address that will be eligible to earn rewards for users who spend into it.
     /// @param weightBps Weight in basis points, must be <= 10,000. Use 0 to disable an existing entry.
     function setSpendWeight(address spender, uint16 weightBps) external onlyRole(CONFIG_ROLE) {
@@ -469,38 +468,30 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         emit Claim(msg.sender, epochId, payout, userEff, totalEff);
     }
 
-    // Rewards tracking (override ERC20 hook)
+    // Explicit fee rewards and token movement
+
+    /// @notice Collects an allowance-backed feature fee and records eligible spending for its payer.
+    /// @dev Only configured spenders earn points. Zero-weight callers can collect fees without rewards.
+    ///      Ordinary transfers, deposits, refunds, mints, and burns do not record spending.
+    function spendFrom(address payer, uint256 amount) external returns (bool) {
+        address spender = _msgSender();
+        _spendAllowance(payer, spender, amount);
+        _transfer(payer, spender, amount);
+        uint16 weight = spendWeightBps[spender];
+        if (weight != 0 && amount != 0) {
+            _syncEpoch();
+            _recordEligibleSpend(payer, weight, amount);
+        }
+        return true;
+    }
 
     /// @notice Central token movement hook (mint, burn, transfer).
     /// @dev Required override because ERC20Pausable and ERC20Votes both extend the transfer lifecycle.
-    ///      We also piggyback to record eligible spend-to-earn activity:
-    ///      - eligible spend is recorded only when `to` is allowlisted and `msg.sender == to`.
-    ///      - this pattern matches contract-driven `transferFrom(user, contract, amount)` pulls.
     /// @param from Sender (zero on mint).
     /// @param to Recipient (zero on burn).
     /// @param value Amount moved.
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Pausable, ERC20Votes) {
-        // First run the canonical OZ flow:
-        // - enforces pause rules (reverts if paused)
-        // - updates balances
-        // - updates vote checkpoints
         super._update(from, to, value);
-
-        // Only attempt rewards tracking for normal transfers (not mint/burn).
-        if (from == address(0) || to == address(0) || value == 0) return;
-
-        // Quick eligibility test before paying the cost of epoch sync.
-        uint16 w = spendWeightBps[to];
-        if (w == 0) return;
-
-        // Critical anti-farming rule: only count if the recipient contract initiated the transferFrom pull.
-        if (msg.sender != to) return;
-
-        // Ensure epoch math is correct at boundary transitions.
-        _syncEpoch();
-
-        // Record points + active-day progress for the spender's weight.
-        _recordEligibleSpend(from, w, value);
     }
 
     /// @dev Records eligible spend for a user:

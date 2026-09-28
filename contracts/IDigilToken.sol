@@ -49,7 +49,7 @@ interface IDigilToken is IERC721, IERC721Receiver {
     // Reclaim Contribution
     function reclaimContribution(uint256 tokenId) external payable;
 
-    // Vault Token
+    /// @notice Pays the nonrefundable vault fee and creates a wrapper; shares welcome eligibility with createToken.
     function vaultToken(address account, uint256 externalTokenId, bytes calldata data) external;
 
     // Recall Token
@@ -62,25 +62,26 @@ interface IDigilToken is IERC721, IERC721Receiver {
     function tokenBuff(uint256 tokenId) external view returns (uint40 expiresAt, uint8 efficiencyBonus, uint8 attunement, uint8 amplification, uint16 flags, uint120 appearance);
     function tokenContribution(uint256 tokenId, address contributor) external view returns (uint256 charge, uint256 discharge, uint256 value, bool exists, bool whitelisted, uint256 epoch);
     function tokenLinkAt(uint256 tokenId, uint256 index) external view returns (uint256 linkId, uint8 baseEfficiency, uint256 affinityBonus);
+    /// @notice Returns provenance; custody/recallability require this exact wrapper to own the current vault association.
     function tokenAttachment(uint256 tokenId) external view returns (address contractTokenAddress, uint256 externalTokenId, bool recallable, bool vaulted); 
 
-    // Token Creation
+    /// @notice Paid creation can grant one welcome DIGIL per account, shared with vaultToken; transfers never grant it.
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable returns (uint256 tokenId);
 
     // Restrict Token
     function restrictToken(uint256 tokenId, address[] calldata whitelisted) external payable;
 
-    // Update Token
+    /// @notice Applies paid metadata/economic updates; unchanged contents do not reset token inactivity.
     function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable;
 
     // Charge Token
     function chargeToken(uint256 tokenId, uint256 coins) external payable returns (bool);
     function chargeTokenAs(address contributor, uint256 tokenId, uint256 coins) external payable returns (bool);
 
-    // Discharge Token
+    /// @notice Settles contributions; multi-batch keepers share 10% of the first-call ETH fee, including the final batch.
     function dischargeToken(uint256 tokenId) external payable returns (bool);
 
-    // Activate Token
+    /// @notice Commits contributions; multi-batch keepers share 1% of directly deposited DIGIL, excluding linked charge.
     function activateToken(uint256 tokenId) external returns (bool);
 
     // Deactivate Token

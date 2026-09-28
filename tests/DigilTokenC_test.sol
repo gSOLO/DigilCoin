@@ -134,7 +134,7 @@ contract CharlieTestSuite {
 
         {
             string memory uri = digil.tokenURI(tokenId);
-            Assert.equal(uri, string.concat("https://digil.co.in/token/", tokenId.toString()), "Default token URI should not be empty");
+            Assert.equal(uri, string.concat("https://api.digil.xyz/v1/tokens/", tokenId.toString()), "Default token URI should match the configured base");
         }
 
         {

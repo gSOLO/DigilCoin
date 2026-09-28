@@ -49,8 +49,9 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 Used for charge units, feature fees (linking, metadata updates, buffs), and governance. DigilCoin implements **donor-funded ETH rewards** that are uniquely **spend-to-earn** rather than holding-based.
 
 - **Core Token Features**: ERC-20 transferability, burn support, pausable transfer controls, EIP-2612 permit approvals, and OpenZeppelin votes/checkpoint integration.
-- **Funding & Earning**: Anyone can fund rewards. Users earn points when an allowlisted spender contract (like the Digil NFT contract) pulls DIGIL from them.
-- **Eligibility Model**: Points only accrue for configured spender contracts and only when those contracts call `transferFrom` to pull coins from users.
+- **Funding & Earning**: Anyone can fund rewards. Users earn points when a configured spender contract collects a nonrefundable DIGIL feature fee through `spendFrom(address payer, uint256 amount)`.
+- **Eligibility Model**: The fee consumes the payer's allowance and transfers DIGIL to the caller. Its configured spend weight determines the payer's points. Ordinary `transfer` and `transferFrom` calls, all charging deposits (including those later activated), refunds, governance locks, and stakes earn no points. Paid plane alignment, vaulting, metadata changes, linking/upgrades, priming, and stabilization qualify. Free alignment choices and active-charge consumption do not create eligible DIGIL spending.
+- **Spender Trust**: `CONFIG_ROLE` must only enable contracts that distinguish nonrefundable fees from deposits. A zero weight disables rewards without disabling fee collection. External integrations must adopt `spendFrom`; an ordinary `transferFrom` pull is no longer eligible.
 - **Epochs & Claiming**: Rewards run in 30-day epochs. Users claim ETH based on their points, combined with a days-active multiplier to reward consistent usage over burst spending.
 - **Fairness Controls**: Daily and epoch spend caps reduce gaming; minimum daily spend gates active-day bonuses.
 - **No Value Trapping**: Unclaimed or unclaimable ETH rolls forward into later epochs so funds remain claimable by participants over time.
@@ -60,7 +61,9 @@ The on-chain governance contract for DigilCoin that executes approved proposals.
 
 - **Voting**: Uses quadratic counting (weight is the square root of held power) and is **NFT-gated** (voters must own or be approved for a Digil token to cast a ballot).
 - **Raw Vote Power Composition**: Delegated liquid votes plus time-locked coin power and a lock-duration bonus.
-- **Locking & Outcome Staking**: Users can lock coins for a time-based voting bonus. They can also stake on proposal outcomes while proposals are pending/active, then claim a market-settled payout after finalization (winner takes proportional share of the losing side, canceled or expired proposals refund both sides, and orphaned losing pools can be burned; burners receive a 1% bounty).
+- **Locking & Outcome Staking**: Users can lock coins for a time-based voting bonus and stake on proposal outcomes while proposals are pending/active. Markets predict the final ballot, not execution: a passing ballot settles For; ties, failed quorum, and defeated ballots settle Against. Only cancellation before voting finishes refunds both sides. Later cancellation, queueing, or execution never changes settlement. Winners receive principal plus their proportional share of the losing pool; orphaned losing pools can be burned with a 1% caller bounty.
+- **Market Finalization**: Anyone may call `finalizeMarket(proposalId)`; `claim` and `burn` also finalize lazily. `marketOutcome(proposalId)` returns `0` (unsettled), `1` (Against), `2` (For), or `3` (early-cancellation refund). `MarketFinalized(uint256 indexed proposalId, uint8 outcome)` is emitted once. The exact voting deadline is still an active timepoint; ordinary ballot finalization requires a later clock value. Early cancellation records its refund immediately, even if users claim much later.
+- **Accepted Governance Limitations**: NFT gating prevents reuse of a credential per proposal, not duplicate identities. Address splitting remains advantageous under quadratic counting; quorum remains 4% of the square root of snapshot supply, not 4% of raw tokens. Linear voting would remove the square-root splitting advantage but concentrate influence in large holders. Identity-backed quadratic voting would require additional uniqueness, privacy, recovery, and revocation infrastructure. The current model and lock bonuses are retained intentionally.
 - **Execution Safety**: Proposals execute through timelock controls, preserving review windows for privileged actions.
 - **Economic Control Path**: Governor changes Digil economics indirectly—by governing privileged calls once ownership/admin roles are handed to the timelock/governance stack.
 
@@ -140,6 +143,7 @@ Creation ETH minimums are explicit:
 - Base required ETH is always at least the global `_incrementalValue` floor.
 - If `restricted == true` and `incrementalValue > global floor`, required ETH becomes that higher `incrementalValue`.
 - If `restricted == false`, setting a higher per-token `incrementalValue` does **not** raise the creation minimum above the global floor (it still affects later charging requirements).
+- **Welcome gift**: Each account can earn one DIGIL on its first successful paid `createToken` or `vaultToken` call, with one shared eligibility flag. Transfers and constructor planar mints grant no gift. Previously receiving or selling NFTs neither consumes nor restores paid-creation eligibility. Collector-yield checkpoints are independent of this gift.
 
 ### 2. Charging
 `chargeToken(uint256 tokenId, uint256 coins)`  
@@ -158,7 +162,7 @@ To empower the sigil, participants offer material value (ETH) and energetic valu
 Once an inactive token reaches its activation threshold, it can be activated (first call requires owner/approved operator; continuation calls are open to anyone not blacklisted). This transmutes potential energy into active kinetic energy.
 - Required contribution ETH is settled to the token owner.
 - Contributors only receive a proportional ETH distribution if there is distributable surplus value in the token.
-- If there are many contributors, this processes in batches. Anyone can step in to pay gas and finish a batch, earning a **keeper bounty** in DIGIL for doing so.
+- If there are more contributors than the batch size when activation starts, every progressing batch, including the final batch, receives a **keeper bounty** totaling 1% of the actual DIGIL deposited directly by those contributors and committed by activation. Linked charge, affinity/synthetic charge, and reclaimed contributions do not fund this bounty. Cumulative rounding carries sub-unit remainders between batches. Single-batch activation receives no keeper bounty.
 
 **Activation timeline (permission split):**
 - **Step A — First call (`activating == false`)**: only owner/approved operator can start activation; token must satisfy threshold and be inactive.
@@ -180,9 +184,10 @@ The final release dismantling the construct. First call requires owner/approved 
 - **ETH Bootstrap Rules (exactly as implemented)**:
   - Inactive-path first call and active-path first call both require exact ETH:
     - `msg.value == max(token.incrementalValue, globalIncrementalValue) * max(links.length, 1)`.
-  - This required first-call ETH is enforced only when `discharging == false` (the cycle bootstrap call), and is routed to the protocol value pool.
+  - This required first-call ETH is enforced only when `discharging == false` (the cycle bootstrap call). If there are more contributors than the batch size at bootstrap, 10% is reserved for keepers and the remainder goes to the protocol value pool. Otherwise the entire fee goes to the protocol.
   - Continuation batch calls in the same discharge cycle must send exactly `0` ETH. Any non-zero `msg.value` on continuation reverts.
 - **Wrapped NFT Recallability**: If this Digil wraps an external ERC721, an *inactive* discharge clears recallability; an *active* discharge preserves it (the external NFT remains vaulted until recalled).
+- **Discharge keeper rewards**: The reserved ETH budget is divided by processed contributor count using cumulative rounding. Every progressing batch, including the final batch, earns its share through `withdraw()`. No DIGIL keeper bounty or ETH-derived bonus coins are added on discharge, and recorded contributor principal is refunded in full on the inactive path. Eligibility and the ETH budget are fixed at bootstrap even if the configured batch size changes. Empty continuations do not create rewards.
 
 **Discharge timeline (fee + continuation):**
 - **Step A — First call (`discharging == false`)**: only owner/approved operator can start; caller must send **exactly** `max(globalIncrementalValue, tokenIncrementalValue) * max(1, links.length)` ETH.
@@ -197,6 +202,7 @@ The final release dismantling the construct. First call requires owner/approved 
 - When `uri` and `data` are both empty, `msg.value` must equal exactly `0`.
 - When either `uri` or `data` is non-empty, `msg.value` must equal exactly `max(currentIncrementalValue, newIncrementalValue, globalIncrementalValue)`.
 - Required ETH from this call is routed into the protocol value pool.
+- Identical parameters or metadata do not reset inactivity. Existing metadata submission fees still apply when non-empty data or a URI is supplied, even if its contents are unchanged.
 
 ---
 
@@ -212,6 +218,7 @@ By calling `linkToken(uint256 tokenId, uint256 linkId, uint8 efficiency)`, you e
 - Therefore, aligned tokens will usually get the early-link discount on **only their first peer-to-peer Digil link**.
 - You can unlink peer-to-peer Digils via `unlinkToken(uint256 tokenId, uint256 linkId)`, but foundational planar alignments chosen at creation are permanent.
 - Link quality combines base efficiency, temporary efficiency bonuses, and affinity bonuses from the planar matrix.
+- **Permanent affinity upgrades are intentional**: Linking or upgrading while attuned can permanently increase the cached affinity bonus. Expiration or replacement of that attunement does not reduce the stored upgrade; only the separate temporary efficiency boost expires.
 
 ---
 
@@ -256,12 +263,14 @@ Digils can act as "spirit vessels" for other NFTs.
 - **Deposit Mode Requirement**: Only `safeTransferFrom` deposits are supported; direct safe-mint to DigilToken is rejected.
 - **Step 2 — Finalize Vault**: `vaultToken(address account, uint256 externalTokenId, bytes data)`  
   Only the recorded depositor can finalize. Finalization charges the Coin vault fee, mints a new Digil wrapper, marks the external NFT as fully vaulted, and stores a reverse index from `(account, externalTokenId)` to the minted Digil id. The wrapper is created with an activation threshold of `0`. `externalTokenId` refers to the deposited token ID from the external ERC721 collection (`account`), not a Digil token ID.
+- **Paid vault rewards**: The nonrefundable vault fee (`10 * coinRate`) earns donor-reward points and qualifies for the account's one-time welcome gift, shared with ordinary paid creation.
 - **Unified Exit / Recall**: `recallToken(address account, uint256 externalTokenId)`  
   This function now handles both flows:
   - **Cancel pending deposit**: If the NFT is still pending (not fully vaulted), only the depositor can cancel and receive the NFT back.
   - **Recall fully vaulted NFT**: If the NFT is fully vaulted, an approved operator of the wrapping Digil can recall it only when the attachment is currently marked recallable.
 - **Recallability Rules**: Recallability is enforced through the attachment's stored `recallable` flag. For vaulted wrappers, that flag is updated during the wrapper's lifecycle processing and can become true under the normal zero-threshold activation/distribution path. It stays sticky across deactivation, and is cleared only when either (a) recall succeeds, or (b) a full discharge settles while the Digil is inactive.
 - **Post-Recall Behavior**: Recalling transfers the external NFT to the current Digil owner, applies active-charge bleed to the Digil shell, and preserves attachment provenance metadata for historical indexing.
+- **Current wrapper identity**: `tokenAttachment` reports custody and recallability only when the reverse index identifies this exact wrapper. Recalled or superseded shells report both flags as false, even if the same external NFT is subsequently vaulted again; their provenance remains available.
 
 **Recallability transition timeline (pending vs fully vaulted):**
 - **Pending vault** (`_contractTokenAddresses != address(0)` and `!= address(this)`): NFT is deposited but not wrapped; depositor can cancel via `recallToken`; recallability flag is not the gate here.
@@ -300,7 +309,7 @@ When ETH or Coins are owed to you (from activation payouts, refunds, or system r
 ### Contributor Reclaim
 `reclaimContribution(uint256 tokenId)`
 
-A non-custodial safety hatch. If you contributed to a token that has been completely inactive for 90 days, you can unilaterally pull your ETH back out. This forfeits your associated Coins but ensures your ETH is never trapped by a negligent token owner.
+A conditional inactivity exit. If you contributed to an inactive token that has had no meaningful activity for 90 days and is not in a batch, you can reclaim your recorded ETH after paying the existing reclaim penalty, forfeiting associated Coins. Identical updates, redundant whitelist entries, self-transfers, and zero-value enrichment do not restart the clock. Genuine changes to ownership, parameters, metadata, restrictions, funding, charging, or lifecycle do restart it. This is token inactivity, not contribution age: genuine activity can postpone reclaim indefinitely.
 
 ---
 
@@ -353,12 +362,20 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 - **Link ETH requirement formula**: For `linkToken(source, destination, efficiency)`, minimum ETH is:
   - `source.incrementalValue + destination.incrementalValue`.
   - Sent ETH is split between the two linked tokens (`floor(value/2)` to source, remainder to destination).
-- **Operations costing Coins (DIGIL)**: Aligning with rare planar archetypes, linking to other nodes, applying temporary buffs, priming, stabilizing, and vaulting external NFTs. Restriction-list updates do not trigger DIGIL coin transfers.
+- **Operations costing Coins (DIGIL)**: Paid plane alignment, metadata updates, linking/upgrades, priming, stabilizing, and vaulting external NFTs. These nonrefundable fees earn donor-reward points when the spender weight is enabled. Temporary buffs consume active charge rather than transferring DIGIL. Restriction-list updates do not trigger DIGIL coin transfers.
 - **Operations that are free (gas only)**: Activating, Deactivating, unlinking, and standard internal transfers.
 
 *(Note: Exact values fluctuate based on the `configure` dials managed by the Digil Governor).*
 
 ---
+
+## Local Validation
+
+Use Node.js 24 and run `npm ci`, then `npm run check:size` and `npm test`. Dependencies are pinned in `package-lock.json`. Both runners read the compiler profile directly from `remix.config.json`, without changing optimizer settings or enabling via-IR. Tests use Osaka's 16,777,216 transaction gas limit. Large Remix setup and settlement scenarios are split into separate test calls; only test harness contracts may exceed deployment code-size limits.
+
+`npm run test:security` runs targeted accounting, permission, lifecycle, and interface regressions. `npm run test:remix` runs the existing Solidity suites with fixture addresses substituted in memory, leaving `DigilTestLibrary.sol` unchanged. For diagnosing behavior while a contract exceeds deployment size, `node scripts/security-tests.cjs --diagnostic` and `node scripts/remix-tests.cjs --diagnostic` explicitly waive code-size limits, but never the transaction gas limit. Passing diagnostic runs is **not** deployment approval; the normal size gate must pass before release.
+
+Deployment bootstrap remains: deploy DigilCoin, deploy DigilToken with that coin and 18 decimals, then grant the token `MINTER_ROLE` on DigilCoin and set its spend weight to `10000`. Minting permission enables rewards payouts; spend weight separately enables donor-reward eligibility for fees. These changes target fresh deployments, not migration of live contract storage.
 
 ## How it Works: End-to-End Examples
 

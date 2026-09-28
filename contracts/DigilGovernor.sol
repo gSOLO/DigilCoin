@@ -66,6 +66,17 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @dev Tracks the PvP staking markets per proposal.
     mapping(uint256 => ProposalMarket) public proposalMarkets;
 
+    uint8 private constant UNSETTLED = 0;
+    uint8 private constant AGAINST = 1;
+    uint8 private constant FOR = 2;
+    uint8 private constant REFUND = 3;
+
+    /// @notice Settlement result: 0 = unsettled, 1 = Against, 2 = For, 3 = early-cancellation refund.
+    mapping(uint256 => uint8) public marketOutcome;
+
+    /// @notice Emitted once when a ballot result or early-cancellation refund is fixed.
+    event MarketFinalized(uint256 indexed proposalId, uint8 outcome);
+
     /// @dev Internal support encoding used in `_countVote`.
     enum VoteType {
         Against,
@@ -221,7 +232,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // If lock existed and was valid at the snapshot
         if (lockedAmount > 0 && lockedExpiry > snapshot) {
             // Remaining lock time as-of the snapshot, capped at MAX_LOCK_DURATION for normalization.
-            uint256 timeRemaining = lockedExpiry - snapshot;
+            uint256 timeRemaining;
+            unchecked { timeRemaining = lockedExpiry - snapshot; } // Guarded by lockedExpiry > snapshot.
             if (timeRemaining > MAX_LOCK_DURATION) {
                 timeRemaining = MAX_LOCK_DURATION;
             }
@@ -229,10 +241,13 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
             // Bonus Model: LockedAmount + (LockedAmount * Time / MaxTime)
             // - If timeRemaining == 0 -> bonus = 0, power adds lockedAmount.
             // - If timeRemaining == MAX_LOCK_DURATION -> bonus = lockedAmount, power adds 2x lockedAmount.
-            uint256 timeBonus = (lockedAmount * timeRemaining) / MAX_LOCK_DURATION;
+            uint256 timeBonus;
+            // Checkpoint principal is uint208 and duration is capped below 2^27; the product fits uint256.
+            unchecked { timeBonus = (lockedAmount * timeRemaining) / MAX_LOCK_DURATION; }
             
             // Add both principal and bonus power to the liquid power.
-            rawWeight += (lockedAmount + timeBonus);
+            unchecked { lockedAmount += timeBonus; } // At most twice the uint208 principal.
+            rawWeight += lockedAmount;
         }
 
         return rawWeight;
@@ -363,18 +378,14 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
 
     /// @dev Timelock/Governor cancel hook.
     function _cancel(address[] memory targets, uint256[] memory values, bytes[] memory calldatas, bytes32 descriptionHash) internal override(Governor, GovernorTimelockControl) returns (uint256) {
-        return super._cancel(targets, values, calldatas, descriptionHash);
+        uint256 proposalId = super._cancel(targets, values, calldatas, descriptionHash);
+        finalizeMarket(proposalId);
+        return proposalId;
     }
 
     /// @dev Returns the execution authority (typically the timelock).
     function _executor() internal view override(Governor, GovernorTimelockControl) returns (address) {
         return super._executor();
-    }
-
-    /// @notice ERC165 support for interfaces exposed through Governor and AccessControl.
-    /// @dev Required because both parents implement supportsInterface; super() resolves correctly by linearization.
-    function supportsInterface(bytes4 interfaceId) public view override(Governor) returns (bool) {
-        return super.supportsInterface(interfaceId);
     }
 
     // Locking Coins
@@ -401,13 +412,11 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // Decide new state (no external calls yet)
         uint208 newAmount = currentAmount;
         if (amount > 0) {
-            // Guard: amount must fit in uint208, and currentAmount + amount must not overflow uint208.
-            // Check in uint256 first so oversized additions revert with InvalidParams()
-            // instead of relying on Solidity's checked-arithmetic panic.
-            if (amount > type(uint208).max || uint256(currentAmount) + amount > type(uint208).max) {
-                revert InvalidParams();
+            // A uint208 checkpoint bounds currentAmount; compare available capacity without overflowing.
+            unchecked {
+                if (amount > uint256(type(uint208).max) - currentAmount) revert InvalidParams();
+                newAmount = uint208(uint256(currentAmount) + amount);
             }
-            newAmount = uint208(uint256(currentAmount) + amount);
         }
 
         // Proposed expiry is “now + duration” in the Governor’s clock units (timestamp-mode).
@@ -486,22 +495,22 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         if (!success) revert TransferFailed(address(this), to, amount);
     }
 
-    /// @dev Burns DigilCoin held by this Governor.
-    function _burn(uint256 amount) internal {
-        IERC20Burnable(address(token())).burn(amount);
-    }
-
-    /// @notice Evaluates the current state of a proposal and translates it into a prediction market outcome.
-    /// @dev    Internal helper used by `claim` and `burn` to consolidate logic.
-    /// @param  proposalId The ID of the proposal being evaluated.
-    /// @return outcome An integer representing the market result: 1 = FOR won, 0 = AGAINST won, 2 = DRAW (Canceled or Expired).
-    /// @custom:reverts MarketNotFinalized if the proposal is still voting (Pending or Active).
-    function _getMarketOutcome(uint256 proposalId) internal view returns (uint8) {
-        ProposalState s = state(proposalId);
-        if (s == ProposalState.Succeeded || s == ProposalState.Queued || s == ProposalState.Executed) return 1;
-        if (s == ProposalState.Defeated) return 0;
-        if (s == ProposalState.Canceled || s == ProposalState.Expired) return 2;
-        revert MarketNotFinalized();
+    /// @notice Permanently settles a market from its completed ballot, irrespective of later execution or cancellation.
+    /// @dev Early cancellations are recorded by `_cancel`. Failed quorum and ties settle Against.
+    ///      Anyone may finalize; claims and orphan burns also finalize lazily.
+    function finalizeMarket(uint256 proposalId) public returns (uint8 outcome) {
+        outcome = marketOutcome[proposalId];
+        if (outcome != UNSETTLED) return outcome;
+        ProposalState current = state(proposalId); // Also validates proposal existence.
+        if (clock() <= proposalDeadline(proposalId)) {
+            if (current != ProposalState.Canceled) revert MarketNotFinalized();
+            outcome = REFUND;
+        } else {
+            outcome = _quorumReached(proposalId) && _voteSucceeded(proposalId)
+                ? FOR : AGAINST;
+        }
+        marketOutcome[proposalId] = outcome;
+        emit MarketFinalized(proposalId, outcome);
     }
 
     /// @notice Stakes coins on the outcome of a governance proposal (PvP Prediction Market).
@@ -540,12 +549,12 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
 
     /// @notice Claims winnings or a refund for a finalized proposal market.
     /// @dev    If the user bet correctly, they receive their principal plus a proportional share of the losing side's pool.
-    ///         If the proposal was canceled, the market is a DRAW and the user receives exactly their principal back.
+    ///         Only cancellation before voting finishes refunds principal. Later cancellation cannot change settlement.
     ///         Calculates payout dynamically and clears user balances before transfer (CEI pattern).
     ///         Integer division can leave small residual dust in the contract after all claims.
     /// @param  proposalId The ID of the finalized proposal to claim from.
     function claim(uint256 proposalId) external {
-        uint8 outcome = _getMarketOutcome(proposalId);
+        uint8 outcome = finalizeMarket(proposalId);
 
         address sender = _msgSender();
         ProposalMarket storage market = proposalMarkets[proposalId];
@@ -559,17 +568,15 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         market.stakeFor[sender] = 0;
         market.stakeAgainst[sender] = 0;
 
-        uint256 payout = 0;
-
-        if (outcome == 1) { // FOR Won
-            if (userFor > 0) payout = userFor + ((userFor * market.totalStakedAgainst) / market.totalStakedFor);
-        } else if (outcome == 0) { // AGAINST Won
-            if (userAgainst > 0) payout = userAgainst + ((userAgainst * market.totalStakedFor) / market.totalStakedAgainst);
-        } else if (outcome == 2) { // DRAW
-            payout = userFor + userAgainst; 
+        uint256 payout;
+        if (outcome == REFUND) {
+            payout = userFor + userAgainst;
+        } else {
+            (uint256 winningPool, uint256 losingPool) = _marketPools(market, outcome);
+            uint256 stakeWon = outcome == FOR ? userFor : userAgainst;
+            if (stakeWon == 0) revert StakeLostOrNothingToClaim();
+            payout = stakeWon + stakeWon * losingPool / winningPool;
         }
-
-        if (payout == 0) revert StakeLostOrNothingToClaim();
 
         _transfer(sender, payout);
         emit Claim(proposalId, sender, payout);
@@ -585,19 +592,9 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         ProposalMarket storage market = proposalMarkets[proposalId];
         if (market.orphanedSwept) revert NoOrphanedStakes();
 
-        uint8 outcome = _getMarketOutcome(proposalId);
-        uint256 amountToBurn = 0;
-
-        if (outcome == 1) { // FOR won
-            if (market.totalStakedFor == 0) amountToBurn = market.totalStakedAgainst;
-        } else if (outcome == 0) { // AGAINST won
-            if (market.totalStakedAgainst == 0) amountToBurn = market.totalStakedFor;
-        } else {
-            // outcome == 2 (DRAW). Everyone is refunded, no orphaned tokens.
-            revert NoOrphanedStakes(); 
-        }
-
-        if (amountToBurn == 0) revert NoOrphanedStakes();
+        uint8 outcome = finalizeMarket(proposalId);
+        (uint256 winningPool, uint256 amountToBurn) = _marketPools(market, outcome);
+        if (outcome == REFUND || winningPool != 0 || amountToBurn == 0) revert NoOrphanedStakes();
 
         // --- Effects ---
         market.orphanedSwept = true;
@@ -606,10 +603,16 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         uint256 bounty = amountToBurn / 100; // 1%
         if (bounty != 0) {
             _transfer(_msgSender(), bounty);
-            amountToBurn -= bounty;
+            unchecked { amountToBurn -= bounty; } // bounty is at most amountToBurn / 100.
         }
 
-        _burn(amountToBurn);
+        IERC20Burnable(address(token())).burn(amountToBurn);
         emit Burn(proposalId, amountToBurn);
+    }
+
+    function _marketPools(ProposalMarket storage market, uint8 outcome) private view returns (uint256 winning, uint256 losing) {
+        return outcome == FOR
+            ? (market.totalStakedFor, market.totalStakedAgainst)
+            : (market.totalStakedAgainst, market.totalStakedFor);
     }
 }
