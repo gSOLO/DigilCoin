@@ -47,6 +47,13 @@ async function main() {
     const operation = (await h.read(timelock, 'hashOperationBatch', [p.targets, p.values, p.calldatas, ethers.ZeroHash, salt]))[0];
     await h.send(timelock, admin, 'cancel', [operation]);
   };
+  const linkCost = (efficiency, count, fresh, bonus = 0n) => {
+    const excess = BigInt(efficiency) > 200n / BigInt(count) ? BigInt(efficiency) - 200n / BigInt(count) : 0n;
+    let cost = (BigInt(efficiency) + excess * (excess + 1n) / 2n) * 100n * unit;
+    if (bonus > 0n) cost = cost * 100n / (100n + bonus);
+    if (fresh && count <= 2) cost /= 2n;
+    return cost;
+  };
   const tests = [];
   const test = (name, run) => tests.push({ name, run });
 
@@ -210,6 +217,25 @@ async function main() {
     assert.equal((await withdraw(bob))[0], unit);
   });
 
+  test('Dynamic metadata and vault payloads preserve contents across storage-word boundaries', async () => {
+    await h.send(coin, admin, 'mint', [alice.address, 2000000n * unit]);
+    const nft = await h.deploy('NFT');
+    for (const length of [0, 1, 31, 32, 33, 1024, 4096]) {
+      const payload = '0x' + 'ab'.repeat(length);
+      const id = await create(alice, 0n, 0n, 0, payload);
+      assert.equal((await h.read(token, 'tokenData', [id]))[8], payload);
+      const uri = 'ipfs://' + 'x'.repeat(length);
+      await h.send(token, alice, 'updateToken', [id, 0, 0, payload, uri], floor);
+      assert.equal((await h.read(token, 'tokenData', [id]))[8], payload);
+      assert.equal((await h.read(token, 'tokenURI', [id]))[0], uri);
+      await h.send(nft, admin, 'mint', [alice.address, length]);
+      await h.send(nft, alice, 'safeTransferFrom(address,address,uint256,bytes)', [alice.address, token.address, length, payload]);
+      const wrapper = mintId(await h.send(token, alice, 'vaultToken', [nft.address, length, payload]));
+      assert.equal((await h.read(token, 'tokenData', [wrapper]))[8], payload);
+      assert.equal((await h.read(token, 'tokenAttachment', [wrapper]))[3], true);
+    }
+  });
+
   test('No-op updates, whitelist entries, self-transfers, and zero enrichment do not postpone reclaim', async () => {
     const id = await create(alice, floor, 100n * unit, 0, '0x1234');
     await h.send(token, alice, 'updateToken', [id, floor, 100n * unit, '0x', 'ipfs://same'], floor);
@@ -255,6 +281,103 @@ async function main() {
     assert.equal((await h.read(token, 'tokenLinkAt', [source, 1]))[2], 400n);
     h.time += 120n;
     assert.equal((await h.read(token, 'tokenLinkAt', [source, 1]))[2], 400n);
+  });
+
+  test('Maximum link efficiency, buff discount, ten-link settlement, and last-element removal remain bounded', async () => {
+    await h.send(coin, admin, 'mint', [alice.address, 100000000n * unit]);
+    const source = await create(alice);
+    const targets = [];
+    for (let count = 1; count <= 10; count++) {
+      const destination = await create(alice);
+      targets.push(destination);
+      const before = await balance(alice);
+      await h.send(token, alice, 'linkToken', [source, destination, 254]);
+      assert.equal(before - await balance(alice), linkCost(254, count, true));
+    }
+    const extra = await create(alice);
+    await h.reverts(token, alice, 'linkToken', [source, extra, 255]);
+    assert.equal((await h.read(token, 'tokenData', [source]))[4], 10n);
+    await h.send(token, alice, 'activateToken', [source]);
+    await h.send(token, alice, 'overchargeToken', [source, 5000n * unit], 10000n * floor);
+    await h.send(token, alice, 'buffToken', [source, 100, 0, 0, 0, 0, 2]);
+    for (const destination of targets) {
+      const before = await balance(alice);
+      await h.send(token, alice, 'linkToken', [source, destination, 255]);
+      assert.equal(before - await balance(alice), linkCost(255, 10, false, 100n) - linkCost(254, 10, false, 100n));
+      await h.send(token, alice, 'activateToken', [destination]);
+    }
+    await h.reverts(token, alice, 'linkToken', [source, targets[0], 255]);
+    const charge = (await h.read(token, 'tokenCharge', [source]))[1];
+    await h.send(token, alice, 'dischargeToken', [source], 10n * floor);
+    for (const destination of targets) assert.equal((await h.read(token, 'tokenCharge', [destination]))[1], charge / 10n);
+    assert.equal((await h.read(token, 'tokenCharge', [source]))[1], 0n);
+    for (let i = 0; i < targets.length; i++) {
+      await h.send(token, alice, 'unlinkToken', [source, targets[i]]);
+      assert.equal((await h.read(token, 'tokenData', [source]))[4], BigInt(9 - i));
+    }
+    await h.reverts(token, alice, 'unlinkToken', [source, targets[0]]);
+  });
+
+  test('Affinity arithmetic preserves strong, moderate, weak, ethereal, and stronger-destination bounds', async () => {
+    await h.send(coin, admin, 'mint', [alice.address, 100000000n * unit]);
+    const pairs = [[4, 5], [4, 4], [4, 18], [4, 10], [4, 1], [12, 2], [12, 12], [17, 1], [17, 17], [18, 17]];
+    let maximum = 0n;
+    for (const [sourcePlane, destinationPlane] of pairs) {
+      const source = await create(alice, 0n, 0n, sourcePlane);
+      const destination = await create(alice, 0n, 0n, destinationPlane);
+      const s = ethers.getBytes((await h.read(token, 'tokenData', [sourcePlane]))[8]);
+      const d = ethers.getBytes((await h.read(token, 'tokenData', [destinationPlane]))[8]);
+      for (const efficiency of [1n, 255n]) {
+        let expected = 0n;
+        if (s[1] === d[0] || s[2] === d[0]) expected = efficiency * 2n;
+        else if (sourcePlane === destinationPlane || sourcePlane > 16) expected = efficiency;
+        else if (s[3] === d[0]) expected = efficiency / 2n;
+        else if (s[4] === d[0]) expected = efficiency / 4n;
+        if (sourcePlane > 16) expected *= 4n;
+        else if (sourcePlane > 11 || destinationPlane === 18) expected *= 2n;
+        await h.send(token, alice, 'linkToken', [source, destination, efficiency]);
+        const actual = (await h.read(token, 'tokenLinkAt', [source, 1]))[2];
+        assert.equal(actual, expected);
+        assert.ok(actual <= 2040n);
+        if (actual > maximum) maximum = actual;
+      }
+    }
+    assert.equal(maximum, 2040n);
+    await h.send(token, admin, 'overchargeToken', [5, unit], 2n * floor);
+    const source = await create(alice, 0n, 0n, 4);
+    const destination = await create(alice, 0n, 0n, 5);
+    await h.send(token, alice, 'linkToken', [source, destination, 255]);
+    assert.equal((await h.read(token, 'tokenLinkAt', [source, 1]))[2], 255n);
+  });
+
+  test('New-link buff charges stop exactly at expiry and insufficient active charge still reverts', async () => {
+    const source = await create(alice);
+    const first = await create(alice);
+    const second = await create(alice);
+    await h.send(token, alice, 'activateToken', [source]);
+    await h.send(token, alice, 'overchargeToken', [source, 1000n * unit], 2000n * floor);
+    await h.send(token, alice, 'buffToken', [source, 100, 0, 0, 0, 0, 1]);
+    const expiry = (await h.read(token, 'tokenBuff', [source]))[0];
+    const beforeCharge = (await h.read(token, 'tokenCharge', [source]))[1];
+    let beforeCoins = await balance(alice);
+    h.time = expiry - 2n; // h.send advances the timestamp by one second.
+    await h.send(token, alice, 'linkToken', [source, first, 255]);
+    assert.equal(beforeCoins - await balance(alice), linkCost(255, 1, true, 100n));
+    assert.equal((await h.read(token, 'tokenCharge', [source]))[1], beforeCharge - 100n * unit);
+    beforeCoins = await balance(alice);
+    await h.send(token, alice, 'linkToken', [source, second, 254]);
+    assert.equal(h.time, expiry);
+    assert.equal(beforeCoins - await balance(alice), linkCost(254, 2, true));
+    assert.equal((await h.read(token, 'tokenCharge', [source]))[1], beforeCharge - 100n * unit);
+    const depleted = await create(alice);
+    await h.send(token, alice, 'activateToken', [depleted]);
+    await h.send(token, alice, 'overchargeToken', [depleted, 100n * unit], 200n * floor);
+    await h.send(token, alice, 'buffToken', [depleted, 100, 0, 0, 0, 0, 1]);
+    beforeCoins = await balance(alice);
+    await h.reverts(token, alice, 'linkToken', [depleted, first, 1], 0n, 'InsufficientActiveCharge');
+    assert.equal(await balance(alice), beforeCoins);
+    assert.equal((await h.read(token, 'tokenData', [depleted]))[4], 0n);
+    assert.equal((await h.read(token, 'tokenCharge', [depleted]))[1], 0n);
   });
 
   test('Discharge keepers share only the fixed ETH fee, including final batches across repeated cycles', async () => {
@@ -331,6 +454,39 @@ async function main() {
     await h.send(token, bob, 'activateToken', [empty]);
     assert.deepEqual(Array.from(await withdraw(bob)), [0n, 0n]);
     await h.reverts(token, bob, 'activateToken', [empty]);
+  });
+
+  test('Exact batch endpoints complete once and preserve starter authorization and keeper totals', async () => {
+    await h.send(token, admin, 'configure', [100, floor, 95000000000000n, 32]);
+    for (const count of [32, 64]) {
+      const id = await create(alice);
+      await h.send(token, alice, 'approve', [bob.address, id]);
+      for (let i = 0; i < count; i++) {
+        const contributor = ethers.getAddress(ethers.toBeHex(1000 + i, 20));
+        await h.send(token, admin, 'chargeTokenAs', [contributor, id, unit], floor);
+      }
+      await h.reverts(token, carol, 'activateToken', [id]);
+      const first = await h.send(token, bob, 'activateToken', [id]);
+      assert.equal(h.result(token, 'activateToken', first)[0], count === 32);
+      if (count === 64) {
+        const pending = await h.read(token, 'tokenData', [id]);
+        assert.equal(pending[1], true);
+        assert.equal(pending[7], 32n);
+        assert.equal((await withdraw(bob))[0], 32n * unit / 100n);
+        const last = await h.send(token, dave, 'activateToken', [id]);
+        assert.equal(h.result(token, 'activateToken', last)[0], true);
+        assert.equal((await withdraw(dave))[0], 32n * unit / 100n);
+      } else {
+        assert.equal((await withdraw(bob))[0], 0n);
+      }
+      const finished = await h.read(token, 'tokenData', [id]);
+      assert.equal(finished[0], true);
+      assert.equal(finished[1], false);
+      assert.equal(finished[5], 0n);
+      assert.equal(finished[6], 1n);
+      assert.equal(finished[7], 0n);
+      await h.reverts(token, bob, 'activateToken', [id]);
+    }
   });
 
   test('Markets refund early cancellations even when first claimed after the deadline', async () => {

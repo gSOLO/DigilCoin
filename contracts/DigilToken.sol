@@ -1033,7 +1033,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///      Direct ERC721 safe-mint-to-vault is intentionally unsupported and rejected,
     ///      because minted callbacks use `from == address(0)` and do not represent a
     ///      depositor who can later finalize or cancel the pending vault.
-    function onERC721Received(address, address from, uint256 tokenId, bytes calldata) external nonReentrant returns (bytes4) {
+    function onERC721Received(address, address from, uint256 tokenId, bytes memory) external nonReentrant returns (bytes4) {
         address account = _msgSender();
         
         // Ensure the token isn't already fully vaulted or pending by someone else
@@ -1098,7 +1098,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  account The external ERC721 contract address.
     /// @param  externalTokenId The deposited token ID from the external ERC721 collection (`account`), not a Digil token ID.
     /// @param  data    Optional data to store with the newly minted Digil token.
-    function vaultToken(address account, uint256 externalTokenId, bytes calldata data) external nonReentrant {
+    function vaultToken(address account, uint256 externalTokenId, bytes memory data) external nonReentrant {
         address user = _msgSender();
 
         // Cache nested mapping to reduce repeated keccak(base) work.
@@ -1475,7 +1475,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  activationThreshold The activation threshold for the token.
     /// @param  data Optional data to store with the token.
     /// @return tokenId The newly created token ID.
-    function _createToken(address creator, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data) internal returns(uint256) {      
+    function _createToken(address creator, uint256 incrementalValue, uint256 activationThreshold, bytes memory data) internal returns(uint256) {
         // Get current ID and increment
         uint256 tokenId = _nextTokenId++;
         
@@ -1531,7 +1531,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///               [1 .. PLANAR_MAX_ID]. Foundational plane choice cannot be changed later.
     /// @param  data Optional arbitrary data to store with the token.
     /// @return tokenId The ID of the newly created token.
-    function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes calldata data) external payable returns(uint256) {
+    function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes memory data) external payable returns(uint256) {
         // 1. INPUT VALIDATION
         // Ensure if they set a value, it isn't below the global floor (unless it's 0).
         if (incrementalValue > 0 && incrementalValue < _incrementalValue) {
@@ -1737,7 +1737,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  activationThreshold New activation threshold in coin units (must be 0 for planar tokens).
     /// @param  data New token data (applied only if `data.length > 0`).
     /// @param  uri New token URI (applied only if `bytes(uri).length > 0`).
-    function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes calldata data, string calldata uri) external payable {
+    function updateToken(uint256 tokenId, uint256 incrementalValue, uint256 activationThreshold, bytes memory data, string memory uri) external payable {
         Token storage t = _tokens[tokenId];
         // Make sure the token isn't currently being discharged or activated
         _authorizeIdle(tokenId, t);
@@ -1785,8 +1785,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         _addValue(minimumValue);
 
         if (t.incrementalValue != incrementalValue || t.activationThreshold != activationThreshold
-            || (overwriteUri && keccak256(bytes(t.uri)) != keccak256(bytes(uri)))
-            || (overwriteData && keccak256(t.data) != keccak256(data))) {
+            || _metadataChanged(bytes(t.uri), bytes(uri))
+            || _metadataChanged(t.data, data)) {
             t.lastActivity = block.timestamp;
         }
 
@@ -1803,6 +1803,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
 
         emit Update(tokenId);
+    }
+
+    /// @dev Empty metadata leaves storage unchanged; nonempty submissions retain their existing fees.
+    function _metadataChanged(bytes storage previous, bytes memory next) private pure returns (bool) {
+        return next.length > 0 && keccak256(previous) != keccak256(next);
+    }
+
+    /// @dev Owners/operators start settlement; any non-blacklisted caller may continue it.
+    function _authorizeBatch(uint256 tokenId, bool continuing) private view {
+        if (continuing) _notOnBlacklist(_msgSender());
+        else _checkApproved(tokenId);
     }
 
     // Charging
@@ -2173,7 +2184,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 ownerDistributionAmount;
         {
             uint256 count = _batchSize;
-            if (count > contributorsCount - distributionIndex) count = contributorsCount - distributionIndex;
+            // The cursor starts at zero, advances by at most the remaining count, and resets on completion.
+            unchecked {
+                if (count > contributorsCount - distributionIndex) count = contributorsCount - distributionIndex;
+            }
             uint256 incrementalValuePerCharge;
             if (!discharge && t.distributionCharge > 0) {
                 incrementalValuePerCharge = (t.distributionValue * _coinMultiplier) / t.distributionCharge;
@@ -2182,7 +2196,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             (ownerDistributionAmount, batchVolume) = _processBatch(t, distributionIndex, count, incrementalValuePerCharge, discharge);
             // Credit the final batch too, before any cycle state is cleared.
             _rewardBatch(t, distributionIndex, count, batchVolume);
-            distributionIndex += count;
+            unchecked { distributionIndex += count; } // count is capped at contributorsCount - distributionIndex.
         }
         t.distributionIndex = distributionIndex;
 
@@ -2406,11 +2420,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
 
         // First call: require ownership/approval.
-        if (!t.discharging) {
-            _checkApproved(tokenId);
-        } else {
-            _notOnBlacklist(_msgSender());
-        }
+        _authorizeBatch(tokenId, t.discharging);
 
         require(t.charge > 0 || t.value > 0 || t.activeCharge > 0 || t.discharging, "DIGIL: Nothing to Discharge");
         require(!t.activating, "DIGIL: Activation In Progress");
@@ -2461,9 +2471,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 for (uint256 i = 0; i < linkLength; ++i) {
                     uint256 lId = links[i];
                     uint8 baseEfficiency = t.linkEfficiency[lId].base;
-                    if (baseEfficiency > 0) {
-                        sumOfEfficiencies += baseEfficiency;
-                    }
+                    // At most MAX_LINKS (10), each with uint8 efficiency: the sum is at most 2550.
+                    unchecked { sumOfEfficiencies += baseEfficiency; }
                 }
 
                 // 2) Distribute proportionally to base efficiency
@@ -2554,11 +2563,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         Token storage t = _tokens[tokenId];
         
         // First call: require ownership/approval.
-        if (!t.activating) {
-            _checkApproved(tokenId);
-        } else {
-            _notOnBlacklist(_msgSender());
-        }
+        _authorizeBatch(tokenId, t.activating);
 
         uint256 threshold = t.activationThreshold;
         bool primed = DigilFlags.has(t.buff.flags, DigilFlags.PRIMED);
@@ -2663,12 +2668,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _linkCoinCost(uint8 efficiency, uint256 linkCount, bool isNewLink, uint8 buffBonus) internal view returns (uint256 cost) {
         // Scaling logic: efficiency plus triangular escalation.
         uint256 linkScale = 200 / linkCount;
-        uint256 e = efficiency > linkScale ? efficiency - linkScale : 0;
-        cost = (uint256(efficiency) + (e * (e + 1) / 2)) * _coinRate;
+        uint256 scale;
+        // efficiency and e are at most 255; the triangular factor plus efficiency is at most 32895.
+        unchecked {
+            uint256 e = efficiency > linkScale ? efficiency - linkScale : 0;
+            scale = uint256(efficiency) + (e * (e + 1) / 2);
+        }
+        cost = scale * _coinRate;
 
         // Apply buff discount first
         if (buffBonus > 0) {
-            cost = cost * 100 / (100 + uint256(buffBonus));
+            uint256 denominator;
+            unchecked { denominator = 100 + uint256(buffBonus); } // A uint8 bonus makes this at most 355.
+            cost = cost * 100 / denominator;
         }
 
         if (isNewLink && linkCount <= 2) {
@@ -2777,12 +2789,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Compute and charge incremental coin cost, including early-link and active buff discounts.
         uint256 coinCost = _linkCoinCost(efficiency, t.links.length, isNewLink, buffBonus);
 
-        if (!isNewLink && baseEfficiency > 0) {
+        if (!isNewLink) {
             // Compute cost for the old configuration (same linkCount, no early-link discount).
             uint256 oldCost = _linkCoinCost(baseEfficiency, t.links.length, false, buffBonus);
 
             if (coinCost > oldCost) {
-                coinCost -= oldCost;
+                unchecked { coinCost -= oldCost; } // Guarded by coinCost > oldCost.
             } else {
                 coinCost = 0; // If rounding makes newCost <= oldCost, treat the upgrade as free.
             }
@@ -2834,7 +2846,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             return;
         }
 
-        uint256 remainingSeconds = uint256(buff.expiresAt) - block.timestamp;
+        uint256 remainingSeconds;
+        unchecked { remainingSeconds = uint256(buff.expiresAt) - block.timestamp; } // Expiry was checked above.
         uint256 remainingMinutes = remainingSeconds / 60;
         if (remainingMinutes == 0) {
             // Always bill at least 1 minute if there is any remaining time.
@@ -2846,7 +2859,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         uint256 cost = _buffCost(magnitude, remainingMinutes, 1);
         if (t.activeCharge < cost) revert InsufficientActiveCharge(cost);
-        t.activeCharge -= cost;
+        unchecked { t.activeCharge -= cost; } // The balance check above guarantees sufficient active charge.
     }
 
     /// @dev    Internal function to calculate the affinity bonus when linking tokens.
@@ -2855,47 +2868,47 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param  efficiency The provided link efficiency.
     /// @return _bonus The calculated bonus value.
     function _affinityBonus(uint256 sourceId, uint256 destinationId, uint8 efficiency) internal view returns (uint256 _bonus) {
-        bytes storage s = _tokens[sourceId].data;
-        bytes storage d = _tokens[destinationId].data;
+        // A uint8 efficiency, at most a 2x base bonus and a 4x multiplier, bounds the result at 2040.
+        unchecked {
+            bytes storage s = _tokens[sourceId].data;
+            bytes storage d = _tokens[destinationId].data;
 
-        // Cache the destination byte to avoid repeated storage reads
-        bytes1 target = d[0];
-        uint256 efficiencyBase = uint256(efficiency);
+            // Cache the destination byte to avoid repeated storage reads
+            bytes1 target = d[0];
+            uint256 efficiencyBase = uint256(efficiency);
 
-        // Base Bonus Calculation
-        if (s[1] == target || s[2] == target) {
-            // If the source has strong affinity with the destination, provide a bonus of 2x the efficiency.
-            _bonus = efficiencyBase * AFFINITY_BOOST;
-        } else if (sourceId == destinationId || sourceId > 16) {
-            // If the source is the same as the destination,
-            // or the source is an ethereal plane (aether, world), provide a bonus of 1x the efficiency.
-            _bonus = efficiencyBase;
-        } else if (s[3] == target) {
-            // If the source has moderate affinity with the destination, provide a bonus of .5x the efficiency.
-            _bonus = efficiencyBase / AFFINITY_REDUCTION;
-        } else if (s[4] == target) {
-            // If the source has weak affinity with the destination, provide a bonus of .25x the efficiency.
-            _bonus = efficiencyBase / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
+            // Base Bonus Calculation
+            if (s[1] == target || s[2] == target) {
+                // If the source has strong affinity with the destination, provide a bonus of 2x the efficiency.
+                _bonus = efficiencyBase * AFFINITY_BOOST;
+            } else if (sourceId == destinationId || sourceId > 16) {
+                // If the source is the same as the destination,
+                // or the source is an ethereal plane, provide a bonus of 1x the efficiency.
+                _bonus = efficiencyBase;
+            } else if (s[3] == target) {
+                // Moderate affinity provides .5x efficiency.
+                _bonus = efficiencyBase / AFFINITY_REDUCTION;
+            } else if (s[4] == target) {
+                // Weak affinity provides .25x efficiency.
+                _bonus = efficiencyBase / AFFINITY_REDUCTION / AFFINITY_REDUCTION;
+            }
+
+            // Base Bonus Multipliers
+            if (sourceId > 16) {
+                // Ethereal sources increase the bonus by 4x.
+                _bonus *= AFFINITY_BOOST * AFFINITY_BOOST;
+            } else if (sourceId > 11 || destinationId == 18) {
+                // Energy sources or a world destination increase the bonus by 2x.
+                _bonus *= AFFINITY_BOOST;
+            }
+
+            // Prefer linking to weaker planes by halving the bonus for a stronger destination.
+            if (_tokens[destinationId].activeCharge > _tokens[sourceId].activeCharge) {
+                _bonus /= AFFINITY_REDUCTION;
+            }
+
+            return _bonus;
         }
-
-        // Base Bonus Multipliers
-        if (sourceId > 16) {
-            // If the source is from an ethereal plane, increase the bonus by 4x.
-            _bonus *= AFFINITY_BOOST * AFFINITY_BOOST;
-        } else if (sourceId > 11 || destinationId == 18) {
-            // If the source is an energy plane (harmony, discord, entropy, exergy, magick),
-            // or the destination is the world plane, increase the bonus by 2x.
-            _bonus *= AFFINITY_BOOST;
-        }
-
-        // Charge Comparison and Adjustment
-        if (_tokens[destinationId].activeCharge > _tokens[sourceId].activeCharge) {
-            // Prefer linking to "weaker" planes.
-            // If the destination's active charge is greater than the source's, decrease the bonus by .5x.
-            _bonus /= AFFINITY_REDUCTION;
-        }
-
-        return _bonus;
     }
 
     /// @dev    Updates the stored affinity bonus for a link if the newly computed bonus
@@ -2976,7 +2989,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             if (lId == linkId) {
                 // To remove an element from an array without leaving a gap,
                 // swap it with the last element and then pop.
-                links[linkIndex] = links[linksLength - 1];
+                uint256 last;
+                unchecked { last = linksLength - 1; } // Entering the loop requires a nonempty array.
+                links[linkIndex] = links[last];
                 links.pop();
                 emit Unlink(tokenId, linkId);
                 break;

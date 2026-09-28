@@ -375,6 +375,8 @@ Use Node.js 24 and run `npm ci`, then `npm run check:size` and `npm test`. Depen
 
 `npm run test:security` runs targeted accounting, permission, lifecycle, and interface regressions. `npm run test:remix` runs the existing Solidity suites with fixture addresses substituted in memory, leaving `DigilTestLibrary.sol` unchanged. For diagnosing behavior while a contract exceeds deployment size, `node scripts/security-tests.cjs --diagnostic` and `node scripts/remix-tests.cjs --diagnostic` explicitly waive code-size limits, but never the transaction gas limit. Passing diagnostic runs is **not** deployment approval; the normal size gate must pass before release.
 
+DigilToken's size optimizations preserve its public ABI and protocol behavior. Dynamic bytes/string arguments use memory to share compiler-generated decoding and storage-copy routines; whitelist arrays remain in calldata. This trades some copying gas for smaller bytecode. Arithmetic-check reductions are limited to documented bounds and guarded subtractions. Regression tests cover metadata storage-word boundaries through 4,096 bytes, maximum link efficiency/count, buff expiry, and exact batch endpoints. Deployment headroom is tight, so rerun the normal size gate after every contract change.
+
 Deployment bootstrap remains: deploy DigilCoin, deploy DigilToken with that coin and 18 decimals, then grant the token `MINTER_ROLE` on DigilCoin and set its spend weight to `10000`. Minting permission enables rewards payouts; spend weight separately enables donor-reward eligibility for fees. These changes target fresh deployments, not migration of live contract storage.
 
 ## How it Works: End-to-End Examples
