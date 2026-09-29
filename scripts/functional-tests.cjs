@@ -1,24 +1,41 @@
+/**
+ * Node runner for the same portable scenarios used by Remix's smoke suite.
+ * Deploys a fresh four-contract fixture for each scenario.
+ * Command: npm run test:functional
+ */
 const assert = require('node:assert/strict');
 const { compile, sourcesIn, checkSizes } = require('./compile.cjs');
 const { createHarness, bootstrap, ethers } = require('./evm.cjs');
 const { scenarios } = require('./functional-scenarios.js');
 
+/** Extend the Coin/Token bootstrap with the restricted Timelock/Governor fixture. */
 async function fullBootstrap(h) {
   const fixture = await bootstrap(h);
   fixture.timelock = await h.deploy('DigilTimelock', [60, [], [], h.users[0].address]);
-  fixture.governor = await h.deploy('DigilGovernor', [fixture.coin.address, fixture.timelock.address, fixture.token.address]);
+  fixture.governor = await h.deploy('DigilGovernor', [
+    fixture.coin.address,
+    fixture.timelock.address,
+    fixture.token.address,
+  ]);
   for (const role of ['PROPOSER_ROLE', 'CANCELLER_ROLE', 'EXECUTOR_ROLE']) {
-    await h.send(fixture.timelock, h.users[0], 'grantRole', [ethers.id(role), fixture.governor.address]);
+    await h.send(fixture.timelock, h.users[0], 'grantRole', [
+      ethers.id(role),
+      fixture.governor.address,
+    ]);
   }
   return fixture;
 }
 async function main() {
-  const contracts = compile({ ...sourcesIn('contracts'), ...sourcesIn('tests', f => f === 'SecurityActors.sol') });
+  const contracts = compile({
+    ...sourcesIn('contracts'),
+    ...sourcesIn('tests', (f) => f === 'SecurityActors.sol'),
+  });
   checkSizes(contracts);
   const h = await createHarness(contracts);
   h.id = ethers.id;
   h.encode = (types, values) => ethers.AbiCoder.defaultAbiCoder().encode(types, values);
-  let passed = 0, failed = 0;
+  let passed = 0,
+    failed = 0;
   for (const scenario of scenarios()) {
     try {
       h.scenario = null;
@@ -37,4 +54,8 @@ async function main() {
   assert.equal(failed, 0);
 }
 module.exports = { fullBootstrap };
-if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1; });
+if (require.main === module)
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

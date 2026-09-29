@@ -1,25 +1,53 @@
-// The same non-time-dependent scenarios run in Remix VM and the Node runner.
+/**
+ * Portable scenario registry shared by Remix and Node. Add test(id, async fixture)
+ * entries inside scenarios(); each receives { h, coin, token, governor, timelock }.
+ * Keep IDs unique, amounts as bigint, and all chain access behind h. Do not use
+ * Node imports, private keys, snapshots or simulated time in this shared module.
+ * See README's Script Maintenance section for the harness API and an example.
+ */
 const UNIT = 10n ** 18n;
 const FLOOR = 100000000000000n;
 const ZERO = '0x' + '0'.repeat(40);
 const MAX = (1n << 256n) - 1n;
-function ok(value, message = 'assertion failed') { if (!value) throw new Error(message); }
+function ok(value, message = 'assertion failed') {
+  if (!value) throw new Error(message);
+}
 function eq(actual, expected, message = 'values differ') {
-  if (actual !== expected) throw new Error(`${message}: expected ${String(expected)}, got ${String(actual)}`);
+  if (actual !== expected)
+    throw new Error(`${message}: expected ${String(expected)}, got ${String(actual)}`);
 }
 const sameAddress = (a, b) => eq(a.toLowerCase(), b.toLowerCase(), 'address mismatch');
 async function rejects(run, message = 'expected failure') {
   let failed = false;
-  try { await run(); } catch { failed = true; }
+  try {
+    await run();
+  } catch {
+    failed = true;
+  }
   ok(failed, message);
 }
 
+/** Return new scenario definitions; runners own fixture creation and failure reporting. */
 function scenarios() {
   const tests = [];
   const test = (id, run) => tests.push({ id, run });
-  const create = async (h, token, user, threshold = 0n, data = '0x', restricted = false, plane = 0) => {
-    const result = await h.send(token, user, 'createToken', [0, threshold, restricted, plane, data], FLOOR);
-    return h.events(token, result, 'Transfer').find(event => event[0] === ZERO)[2];
+  const create = async (
+    h,
+    token,
+    user,
+    threshold = 0n,
+    data = '0x',
+    restricted = false,
+    plane = 0
+  ) => {
+    const result = await h.send(
+      token,
+      user,
+      'createToken',
+      [0, threshold, restricted, plane, data],
+      FLOOR
+    );
+    return h.events(token, result, 'Transfer').find((event) => event[0] === ZERO)[2];
   };
   const balance = async (h, coin, user) => (await h.read(coin, 'balanceOf', [user.address]))[0];
 
@@ -33,7 +61,8 @@ function scenarios() {
     eq((await h.read(token, 'symbol'))[0], 'DIGILS');
     sameAddress((await h.read(token, 'owner'))[0], admin.address);
     eq((await h.read(token, 'balanceOf', [admin.address]))[0], 21n);
-    for (let id = 0; id < 21; id++) sameAddress((await h.read(token, 'ownerOf', [id]))[0], admin.address);
+    for (let id = 0; id < 21; id++)
+      sameAddress((await h.read(token, 'ownerOf', [id]))[0], admin.address);
     for (const role of ['MINTER_ROLE', 'PAUSER_ROLE', 'CONFIG_ROLE']) {
       eq((await h.read(coin, 'hasRole', [h.id(role), admin.address]))[0], true);
       eq((await h.read(coin, 'hasRole', [h.id(role), alice.address]))[0], false);
@@ -46,22 +75,59 @@ function scenarios() {
     eq((await h.read(governor, 'votingPeriod'))[0], 604800n);
     eq((await h.read(governor, 'proposalThreshold'))[0], 10000n * UNIT);
     eq((await h.read(governor, 'CLOCK_MODE'))[0], (await h.read(coin, 'CLOCK_MODE'))[0]);
-    for (const interfaceId of ['0x01ffc9a7', '0x80ac58cd', '0x5b5e139f']) eq((await h.read(token, 'supportsInterface', [interfaceId]))[0], true);
+    for (const interfaceId of ['0x01ffc9a7', '0x80ac58cd', '0x5b5e139f'])
+      eq((await h.read(token, 'supportsInterface', [interfaceId]))[0], true);
     eq((await h.read(token, 'supportsInterface', ['0xffffffff']))[0], false);
-    await rejects(() => h.deploy('DigilToken', [ZERO, coin.address, 18]), 'zero owner deployment should fail');
-    await rejects(() => h.deploy('DigilToken', [admin.address, alice.address, 18]), 'EOA coin deployment should fail');
+    await rejects(
+      () => h.deploy('DigilToken', [ZERO, coin.address, 18]),
+      'zero owner deployment should fail'
+    );
+    await rejects(
+      () => h.deploy('DigilToken', [admin.address, alice.address, 18]),
+      'EOA coin deployment should fail'
+    );
   });
 
   test('roles-and-configuration', async ({ h, coin, token }) => {
     const [admin, alice] = h.users;
-    for (const [method, args] of [['mint', [alice.address, UNIT]], ['pause', []], ['unpause', []],
-      ['setSpendWeight', [token.address, 0]], ['setRewardParameters', [1, 100, 1000, 100, 10]]]) {
+    for (const [method, args] of [
+      ['mint', [alice.address, UNIT]],
+      ['pause', []],
+      ['unpause', []],
+      ['setSpendWeight', [token.address, 0]],
+      ['setRewardParameters', [1, 100, 1000, 100, 10]],
+    ]) {
       await h.reverts(coin, alice, method, args, 0n, 'AccessControlUnauthorizedAccount');
     }
-    await h.reverts(token, alice, 'configure', [100, FLOOR, FLOOR * 90n / 100n, 32], 0n, 'OwnableUnauthorizedAccount');
-    await h.reverts(token, alice, 'transferOwnership', [alice.address], 0n, 'OwnableUnauthorizedAccount');
-    for (const args of [[ZERO, 0], [alice.address, 100], [token.address, 10001]]) await h.reverts(coin, admin, 'setSpendWeight', args);
-    for (const args of [[0, 0, 1, 0, 1], [0, 2, 1, 0, 1], [0, 1, 1, 0, 0], [0, 1, 1, 1001, 30]]) await h.reverts(coin, admin, 'setRewardParameters', args);
+    await h.reverts(
+      token,
+      alice,
+      'configure',
+      [100, FLOOR, (FLOOR * 90n) / 100n, 32],
+      0n,
+      'OwnableUnauthorizedAccount'
+    );
+    await h.reverts(
+      token,
+      alice,
+      'transferOwnership',
+      [alice.address],
+      0n,
+      'OwnableUnauthorizedAccount'
+    );
+    for (const args of [
+      [ZERO, 0],
+      [alice.address, 100],
+      [token.address, 10001],
+    ])
+      await h.reverts(coin, admin, 'setSpendWeight', args);
+    for (const args of [
+      [0, 0, 1, 0, 1],
+      [0, 2, 1, 0, 1],
+      [0, 1, 1, 0, 0],
+      [0, 1, 1, 1001, 30],
+    ])
+      await h.reverts(coin, admin, 'setRewardParameters', args);
     const role = h.id('MINTER_ROLE');
     await h.send(coin, admin, 'grantRole', [role, alice.address]);
     await h.send(coin, alice, 'mint', [alice.address, UNIT]);
@@ -75,10 +141,22 @@ function scenarios() {
 
   test('public-configuration-and-receiver-policies', async ({ h, coin, governor, timelock }) => {
     const [admin] = h.users;
-    for (const [method, expected] of [['BASE_BPS', 10000n], ['STORED_EPOCHS', 12n], ['CLAIMABLE_EPOCHS', 3n],
-      ['EPOCH_LENGTH', 30n * 86400n], ['minDailySpend', 50n * UNIT], ['dailyCap', 500n * UNIT],
-      ['epochCap', 5000n * UNIT], ['dayBonusBps', 100n], ['maxActiveDays', 20n]]) eq((await h.read(coin, method))[0], expected);
-    for (const [contract, roles] of [[coin, ['MINTER_ROLE', 'PAUSER_ROLE', 'CONFIG_ROLE']], [timelock, ['PROPOSER_ROLE', 'CANCELLER_ROLE', 'EXECUTOR_ROLE']]]) {
+    for (const [method, expected] of [
+      ['BASE_BPS', 10000n],
+      ['STORED_EPOCHS', 12n],
+      ['CLAIMABLE_EPOCHS', 3n],
+      ['EPOCH_LENGTH', 30n * 86400n],
+      ['minDailySpend', 50n * UNIT],
+      ['dailyCap', 500n * UNIT],
+      ['epochCap', 5000n * UNIT],
+      ['dayBonusBps', 100n],
+      ['maxActiveDays', 20n],
+    ])
+      eq((await h.read(coin, method))[0], expected);
+    for (const [contract, roles] of [
+      [coin, ['MINTER_ROLE', 'PAUSER_ROLE', 'CONFIG_ROLE']],
+      [timelock, ['PROPOSER_ROLE', 'CANCELLER_ROLE', 'EXECUTOR_ROLE']],
+    ]) {
       eq((await h.read(contract, 'DEFAULT_ADMIN_ROLE'))[0], '0x' + '0'.repeat(64));
       for (const role of roles) {
         eq((await h.read(contract, role))[0], h.id(role));
@@ -94,8 +172,16 @@ function scenarios() {
     ok((await h.read(governor, 'clock'))[0] > 0n);
     eq((await h.read(governor, 'supportsInterface', ['0x01ffc9a7']))[0], true);
     eq((await h.read(governor, 'supportsInterface', ['0xffffffff']))[0], false);
-    eq((await h.read(governor, 'BALLOT_TYPEHASH'))[0], h.id('Ballot(uint256 proposalId,uint8 support,address voter,uint256 nonce)'));
-    eq((await h.read(governor, 'EXTENDED_BALLOT_TYPEHASH'))[0], h.id('ExtendedBallot(uint256 proposalId,uint8 support,address voter,uint256 nonce,string reason,bytes params)'));
+    eq(
+      (await h.read(governor, 'BALLOT_TYPEHASH'))[0],
+      h.id('Ballot(uint256 proposalId,uint8 support,address voter,uint256 nonce)')
+    );
+    eq(
+      (await h.read(governor, 'EXTENDED_BALLOT_TYPEHASH'))[0],
+      h.id(
+        'ExtendedBallot(uint256 proposalId,uint8 support,address voter,uint256 nonce,string reason,bytes params)'
+      )
+    );
     for (const contract of [coin, governor]) {
       const domain = await h.read(contract, 'eip712Domain');
       sameAddress(domain[4], contract.address);
@@ -129,7 +215,12 @@ function scenarios() {
     eq((await h.read(coin, 'allowance', [alice.address, bob.address]))[0], MAX);
     await h.send(coin, admin, 'pause');
     eq((await h.read(coin, 'paused'))[0], true);
-    for (const [actor, method, args] of [[alice, 'transfer', [bob.address, 1]], [alice, 'burn', [1]], [admin, 'mint', [alice.address, 1]]]) await h.reverts(coin, actor, method, args);
+    for (const [actor, method, args] of [
+      [alice, 'transfer', [bob.address, 1]],
+      [alice, 'burn', [1]],
+      [admin, 'mint', [alice.address, 1]],
+    ])
+      await h.reverts(coin, actor, method, args);
     await h.send(coin, alice, 'approve', [bob.address, 0]);
     await h.send(coin, admin, 'unpause');
     await h.send(coin, alice, 'transfer', [bob.address, 1]);
@@ -184,7 +275,13 @@ function scenarios() {
       const id = await create(h, token, alice, 0n, payload);
       eq((await h.read(token, 'tokenData', [id]))[8], payload);
       await h.reverts(token, bob, 'updateToken', [id, 0, 0, payload, 'ipfs://denied'], FLOOR);
-      await h.send(token, alice, 'updateToken', [id, 0, 0, payload, 'ipfs://payload-' + length], FLOOR);
+      await h.send(
+        token,
+        alice,
+        'updateToken',
+        [id, 0, 0, payload, 'ipfs://payload-' + length],
+        FLOOR
+      );
       eq((await h.read(token, 'tokenData', [id]))[8], payload);
       eq((await h.read(token, 'tokenURI', [id]))[0], 'ipfs://payload-' + length);
     }
@@ -199,13 +296,30 @@ function scenarios() {
     await h.send(token, bob, 'transferFrom', [alice.address, carol.address, id]);
     sameAddress((await h.read(token, 'ownerOf', [id]))[0], carol.address);
     sameAddress((await h.read(token, 'getApproved', [id]))[0], ZERO);
-    eq((await h.read(token, 'tokenContribution', [id, carol.address]))[4], true, 'recipient auto whitelist');
+    eq(
+      (await h.read(token, 'tokenContribution', [id, carol.address]))[4],
+      true,
+      'recipient auto whitelist'
+    );
     await h.send(token, carol, 'setApprovalForAll', [bob.address, true]);
     eq((await h.read(token, 'isApprovedForAll', [carol.address, bob.address]))[0], true);
-    await h.send(token, bob, 'safeTransferFrom(address,address,uint256)', [carol.address, alice.address, id]);
+    await h.send(token, bob, 'safeTransferFrom(address,address,uint256)', [
+      carol.address,
+      alice.address,
+      id,
+    ]);
     sameAddress((await h.read(token, 'ownerOf', [id]))[0], alice.address);
-    eq((await h.read(token, 'tokenContribution', [id, carol.address]))[4], true, 'whitelisting is persistent');
-    await h.send(token, alice, 'safeTransferFrom(address,address,uint256,bytes)', [alice.address, carol.address, id, '0x1234']);
+    eq(
+      (await h.read(token, 'tokenContribution', [id, carol.address]))[4],
+      true,
+      'whitelisting is persistent'
+    );
+    await h.send(token, alice, 'safeTransferFrom(address,address,uint256,bytes)', [
+      alice.address,
+      carol.address,
+      id,
+      '0x1234',
+    ]);
     sameAddress((await h.read(token, 'ownerOf', [id]))[0], carol.address);
   });
 
@@ -214,7 +328,7 @@ function scenarios() {
     await h.reverts(token, alice, 'renounceOwnership');
     await h.send(token, admin, 'renounceOwnership');
     sameAddress((await h.read(token, 'owner'))[0], ZERO);
-    await h.reverts(token, admin, 'configure', [100, FLOOR, FLOOR * 95n / 100n, 32]);
+    await h.reverts(token, admin, 'configure', [100, FLOOR, (FLOOR * 95n) / 100n, 32]);
     await h.reverts(token, admin, 'transferOwnership', [admin.address]);
   });
 
@@ -249,17 +363,25 @@ function scenarios() {
     let externalId = 0;
     for (const length of [0, 1, 31, 32, 33, 1024, 4096]) {
       await h.send(nft, admin, 'mint', [alice.address, externalId]);
-      await h.send(nft, alice, 'safeTransferFrom(address,address,uint256)', [alice.address, token.address, externalId]);
+      await h.send(nft, alice, 'safeTransferFrom(address,address,uint256)', [
+        alice.address,
+        token.address,
+        externalId,
+      ]);
       await h.reverts(token, bob, 'recallToken', [nft.address, externalId]);
       await h.reverts(token, bob, 'vaultToken', [nft.address, externalId, '0x']);
       if (externalId === 0) {
         await h.send(token, alice, 'recallToken', [nft.address, externalId]);
         sameAddress((await h.read(nft, 'ownerOf', [externalId]))[0], alice.address);
-        await h.send(nft, alice, 'safeTransferFrom(address,address,uint256)', [alice.address, token.address, externalId]);
+        await h.send(nft, alice, 'safeTransferFrom(address,address,uint256)', [
+          alice.address,
+          token.address,
+          externalId,
+        ]);
       }
       const payload = '0x' + '3b'.repeat(length);
       const wrapped = await h.send(token, alice, 'vaultToken', [nft.address, externalId, payload]);
-      const id = h.events(token, wrapped, 'Transfer').find(event => event[0] === ZERO)[2];
+      const id = h.events(token, wrapped, 'Transfer').find((event) => event[0] === ZERO)[2];
       eq((await h.read(token, 'tokenData', [id]))[8], payload);
       eq((await h.read(token, 'tokenAttachment', [id]))[3], true);
       await h.reverts(token, alice, 'recallToken', [nft.address, externalId]);
@@ -288,12 +410,24 @@ function scenarios() {
   test('governor-unauthorized-entry-points', async ({ h, governor, timelock }) => {
     const [, alice] = h.users;
     await h.reverts(governor, alice, 'setProposalThreshold', [0], 0n, 'GovernorOnlyExecutor');
-    await h.reverts(governor, alice, 'updateTimelock', [timelock.address], 0n, 'GovernorOnlyExecutor');
+    await h.reverts(
+      governor,
+      alice,
+      'updateTimelock',
+      [timelock.address],
+      0n,
+      'GovernorOnlyExecutor'
+    );
     await h.reverts(governor, alice, 'relay', [alice.address, 0, '0x'], 0n, 'GovernorOnlyExecutor');
     await h.reverts(governor, alice, 'castVote', [0, 1]);
     await h.reverts(governor, alice, 'castVoteWithReason', [0, 1, '']);
     await h.reverts(governor, alice, 'castVoteBySig', [0, 1, alice.address, '0x']);
-    await h.reverts(governor, alice, 'propose', [[alice.address], [0], ['0x'], 'insufficient votes']);
+    await h.reverts(governor, alice, 'propose', [
+      [alice.address],
+      [0],
+      ['0x'],
+      'insufficient votes',
+    ]);
     await h.reverts(governor, alice, 'lockCoins', [1, 0]);
     await h.reverts(governor, alice, 'unlockCoins');
     await h.reverts(governor, alice, 'finalizeMarket', [0]);
@@ -301,27 +435,46 @@ function scenarios() {
     await h.reverts(governor, alice, 'claim', [0]);
     await h.reverts(governor, alice, 'burn', [0]);
     await h.reverts(timelock, alice, 'updateDelay', [0]);
-    await h.reverts(timelock, alice, 'schedule', [alice.address, 0, '0x', '0x' + '0'.repeat(64), h.id('unauthorized'), 60]);
+    await h.reverts(timelock, alice, 'schedule', [
+      alice.address,
+      0,
+      '0x',
+      '0x' + '0'.repeat(64),
+      h.id('unauthorized'),
+      60,
+    ]);
   });
 
   test('seeded-erc20-conservation', async ({ h, coin }) => {
     const [admin, ...users] = h.users.slice(0, 5);
     const model = users.map(() => 10000n);
     for (const user of users) await h.send(coin, admin, 'mint', [user.address, 10000]);
-    let supply = 40000n, seed = 0xD1611;
-    const next = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed; };
+    let supply = 40000n,
+      seed = 0xd1611;
+    const next = () => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed;
+    };
     for (let i = 0; i < 48; i++) {
-      const from = next() % 4, to = (from + 1 + next() % 3) % 4;
+      const from = next() % 4,
+        to = (from + 1 + (next() % 3)) % 4;
       const amount = BigInt(next() % 37);
       if (i % 5 === 0) {
         await h.send(coin, users[from], 'burn', [amount]);
-        model[from] -= amount; supply -= amount;
+        model[from] -= amount;
+        supply -= amount;
       } else {
         await h.send(coin, users[from], 'transfer', [users[to].address, amount]);
-        model[from] -= amount; model[to] += amount;
+        model[from] -= amount;
+        model[to] += amount;
       }
       eq((await h.read(coin, 'totalSupply'))[0], supply, `seed 0xD1611 step ${i} supply`);
-      for (let user = 0; user < 4; user++) eq(await balance(h, coin, users[user]), model[user], `seed 0xD1611 step ${i} account ${user}`);
+      for (let user = 0; user < 4; user++)
+        eq(
+          await balance(h, coin, users[user]),
+          model[user],
+          `seed 0xD1611 step ${i} account ${user}`
+        );
     }
   });
   return tests;

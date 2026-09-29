@@ -28,6 +28,7 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 - [Admin & Security Notes](#admin--security-notes)
 - [Economics & Costs Summary](#economics--costs-summary)
 - [Local Validation](#local-validation)
+- [Script Maintenance](#script-maintenance)
 - [Remix VM Deployment and Tests](#remix-vm-deployment-and-tests)
 - [How it Works: End-to-End Examples](#how-it-works-end-to-end-examples)
 
@@ -373,7 +374,40 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 
 ## Local Validation
 
-Use Node.js 24 and run `npm ci`, then `npm run check:size` and `npm test`. Dependencies are pinned in `package-lock.json`. All runners read the compiler profile directly from `remix.config.json`, without changing optimizer settings or enabling via-IR. Tests use Osaka's 16,777,216 transaction gas limit. The legacy Alpha, Beta, Foxtrot, and Gamma Solidity harnesses still exceed the runtime size limit and are Node-only test scaffolding; only those test deployments may use a size exemption. All production deployments, the new actors, shared functional scenarios, and deployment-adapter checks enforce normal code and initcode limits. Legacy harness success is not production deployment evidence.
+### Run the Full Suite
+
+The full suite runs in **Node.js 24**, not in Remix's JavaScript console or Solidity Unit Testing plugin. It creates disposable EthereumJS VMs, advances simulated time for long-duration checks, and needs no wallet, private key, live network, Codex, or running Remix session. It does not change your Remix VM deployment.
+
+Install Node.js 24 with npm if needed, then open a normal **PowerShell/Windows Terminal** window. Remix Desktop's native system terminal can also be used; do not paste these shell commands into its JavaScript console. Run each command below, stopping if one fails:
+
+```powershell
+Set-Location 'C:\Users\gSOLO\Documents\GitHub\DigilCoin'
+node --version
+npm --version
+npm ci
+npm run check:size
+npm test
+```
+
+Adjust the directory if your checkout is elsewhere. `node --version` should show `v24.x`. `npm ci` installs the versions in `package-lock.json`; rerun it on a fresh checkout or after the lockfile changes. The first installation needs internet access, but the tests themselves run locally. If PowerShell blocks `npm.ps1`, use `npm.cmd` in place of `npm` rather than weakening your execution policy.
+
+`npm test` runs all five groups in order and exits nonzero if any group fails, even if later groups pass. Check `$LASTEXITCODE` immediately afterward (`0` means success). The output distinguishes behavioral assertions from setup/hooks and ends with an ABI exercise inventory. At the documented baseline, the groups contain 23 security scenarios, 72 Solidity behavioral calls plus 77 setup/hooks, 14 shared functional scenarios, 13 extended scenarios, and deployment-adapter checks including all 14 shared scenarios under both ethers versions. Counts will grow as tests are added; they are not a measure of exhaustive coverage.
+
+### Individual Commands
+
+| Command | Scope |
+| --- | --- |
+| `npm run check:size` | Compile all production contracts with the unchanged profile and check artifact sizes. |
+| `npm test` | All five test groups plus the combined ABI exercise inventory. |
+| `npm run test:security` | Accounting, permissions, lifecycle, interface, metadata-size and arithmetic-bound regressions. |
+| `npm run test:remix` | Run `tests/*_test.sol` in Node with Remix-style annotations, hooks and assertions. This is not the Desktop smoke script. |
+| `npm run test:functional` | Run the shared 14-scenario registry directly in Node. |
+| `npm run test:extended` | Signatures, epoch/lock/timelock boundaries, malicious receivers and governance rehearsal. |
+| `npm run test:deployment` | Exercise the real Remix workflow through the local plugin/RPC adapter under ethers v5 and v6. |
+| `npm run format:scripts` | Format only JavaScript/CommonJS files under `scripts/`. |
+| `npm run format:scripts:check` | Check script formatting without writing files; fail if formatting differs. |
+
+All runners read the compiler profile directly from `remix.config.json`, without changing optimizer settings or enabling via-IR. Tests use Osaka's 16,777,216 transaction gas limit. The legacy Alpha, Beta, Foxtrot, and Gamma Solidity harnesses still exceed the runtime size limit and are Node-only test scaffolding; only those test deployments may use a size exemption. All production deployments, the new actors, shared functional scenarios, and deployment-adapter checks enforce normal code and initcode limits. Legacy harness success is not production deployment evidence.
 
 `npm run test:security` runs targeted accounting, permission, lifecycle, and interface regressions. `npm run test:remix` runs the existing Solidity suites with fixture addresses substituted in memory, leaving `DigilTestLibrary.sol` unchanged. For diagnosing behavior while a contract exceeds deployment size, `node scripts/security-tests.cjs --diagnostic` and `node scripts/remix-tests.cjs --diagnostic` explicitly waive code-size limits, but never the transaction gas limit. Passing diagnostic runs is **not** deployment approval; the normal size gate must pass before release.
 
@@ -386,6 +420,74 @@ Solidity suites retain source order, honor sender/value annotations and all four
 DigilToken's size optimizations preserve its public ABI and protocol behavior. Dynamic bytes/string arguments use memory to share compiler-generated decoding and storage-copy routines; whitelist arrays remain in calldata. This trades some copying gas for smaller bytecode. Arithmetic-check reductions are limited to documented bounds and guarded subtractions. Regression tests cover metadata storage-word boundaries through 4,096 bytes, maximum link efficiency/count, buff expiry, and exact batch endpoints. Deployment headroom is tight, so rerun the normal size gate after every contract change.
 
 Deployment bootstrap remains: deploy DigilCoin, deploy DigilToken with that coin and 18 decimals, then grant the token `MINTER_ROLE` on DigilCoin and set its spend weight to `10000`. Minting permission enables rewards payouts; spend weight separately enables donor-reward eligibility for fees. These changes target fresh deployments, not migration of live contract storage.
+
+## Script Maintenance
+
+### Where to Make Changes
+
+| File(s) | Responsibility and extension point |
+| --- | --- |
+| `scripts/compile.cjs` | Pinned compiler/import resolution and production size gate. Treat compiler settings as read-only. |
+| `scripts/evm.cjs` | Node-only VM, deterministic accounts, time, deployments and ABI exercise records. |
+| `scripts/test-all.cjs` | Launch the five runners and combine only their current-run inventory files. Register a new Node group here and in `package.json` if one is genuinely needed. |
+| `scripts/security-tests.cjs` | Add targeted security regressions to its local `test(name, run)` registry. Each case restores the common funded fixture. |
+| `scripts/extended-tests.cjs` | Add time-sensitive, signature, malicious-actor or governance cases to its registry. Each case receives a fresh four-contract fixture. |
+| `scripts/functional-scenarios.js` | Add portable scenarios here to run them in both Node and Remix Desktop. |
+| `scripts/functional-tests.cjs` | Node runner and shared four-contract bootstrap for functional/extended cases. |
+| `scripts/remix-tests.cjs`, `scripts/solidity-suite.cjs` | Discover and run Solidity suites, preserve source order, honor hooks/annotations and decode assertion failures. Add protocol cases to `tests/*_test.sol`; keep one suite per file. |
+| `scripts/remix-runtime-tests.cjs` | Regression tests for the actual Remix runtime/dispatcher. Model real messaging/RPC quirks here whenever a Desktop integration bug is fixed. |
+| `scripts/remix/runtime.js` | Remix compiler validation, guarded VM RPC, receipt/revert proof, role checks and deployment journal. |
+| `scripts/remix/workflow.js` | Dispatch the six user-facing workflows. Keep protocol assertions in the scenario registry and provider-specific operations in the runtime. |
+| `scripts/remix/preflight.js`, `test.js`, `deploy.js`, `verify.js`, `seed-demo.js`, `handoff.js` | Thin **Run Script** entry points in the same directory; their effects and success conditions are listed below. |
+
+The `.cjs` files use Node's CommonJS module system and may access the filesystem. The shared `.js` scenarios and Remix modules must stay browser-compatible: no Node-only imports, filesystem access, signing keys or external providers. Remix loads the checked-in modules through `fileManager`; run the entry-point files, not `runtime.js`, `workflow.js` or the scenario registry directly.
+
+### Add a Portable Scenario
+
+Add a unique `test('your-scenario-id', async (...) => { ... })` inside `scenarios()` in `scripts/functional-scenarios.js`, before `return tests`. For example:
+
+```js
+test('mint-permission-example', async ({ h, coin }) => {
+  const [admin, alice, bob] = h.users;
+  const amount = 10n * UNIT;
+
+  await h.send(coin, admin, 'mint', [alice.address, amount]);
+  eq((await h.read(coin, 'balanceOf', [alice.address]))[0], amount);
+
+  await h.reverts(
+    coin,
+    bob,
+    'mint',
+    [alice.address, amount],
+    0n,
+    'AccessControlUnauthorizedAccount'
+  );
+  eq((await h.read(coin, 'balanceOf', [alice.address]))[0], amount);
+});
+```
+
+This example illustrates the pattern; the registry already tests mint permissions. Add assertions for both the intended state change and relevant failure/rollback behavior. Use `bigint` for amounts and decoded integers, `UNIT` for DIGIL units, and `FLOOR` for the existing ETH floor. Await every chain operation. Do not depend on another scenario's deployments or balances: each scenario gets `{ h, coin, token, governor, timelock }` with a fresh fixture.
+
+| Shared helper | Contract |
+| --- | --- |
+| `h.users` | Test accounts; `[admin, alice, bob, ...]` expose `.address`. Never use Node signing keys in a portable scenario. |
+| `h.send(contract, user, method, args = [], value = 0n)` | Send a successful transaction; throws on failure. Keep the returned result opaque and pass it to `h.events`. |
+| `h.read(contract, method, args = [], caller?)` | Read a decoded result array. Use `[0]` for a single return value and explicit callers when access matters. |
+| `h.events(contract, result, eventName)` | Decode matching events from a send result. Indexed argument access works in both adapters. |
+| `h.reverts(contract, user, method, args = [], value = 0n, errorName?)` | Require execution failure; optionally assert a specific custom error. Remix additionally checks failed receipts and the recorded REVERT. |
+| `h.deploy(name, args = [])` | Deploy an available artifact. Portable tests currently have the four protocol contracts and `NFT`; adding another requires registering its source in both compilation paths. |
+| `h.id(text)`, `h.encode(types, values)` | Hash signatures/role names and ABI-encode values without coupling to ethers v5 or v6. |
+| `eq(actual, expected)`, `ok(condition, message?)` | Strict assertions exported by the scenario module. A failed assertion must escape to the runner. |
+
+When adding or removing shared scenarios, update the expected `smoke.results.length` assertion in `scripts/remix-runtime-tests.cjs` and the documented smoke counts. Both runners discover cases from the registry automatically, but the adapter's count assertion deliberately catches omitted cases.
+
+Test the addition with `npm run test:functional` and `npm run test:deployment`, then run `npm test`. In Remix, set `only` in `scripts/remix/test.js` to the new ID while iterating; restore `[]` for the complete smoke registry. Put clock-dependent, snapshot-dependent, private-key/signature or adversarial-actor cases in the Node-only suites, not the shared registry. Never weaken provider guards, deployment limits, named-error assertions, receipt evidence or governance-handoff blocking to make a test pass.
+
+### Formatting and Artifacts
+
+The pinned Prettier development dependency uses the scripts-only override in `.prettierrc.json`: two spaces, single quotes and a 100-column print width. Run `npm run format:scripts` after editing and `npm run format:scripts:check` before committing. These commands do not format Solidity, change compiler settings, or touch dependency caches. See the [Prettier CLI](https://prettier.io/docs/cli) for formatter behavior.
+
+Keep reusable behavior notes near the relevant helper; use module headers to identify environment and invocation. Prefer focused scenarios over adding another runner. The ignored `.remix/Compile.sol`, `smoke-results.json`, `deployment.json` and `coverage/` files are generated state, not source files to edit or commit. Preserve deployment journals when diagnosing interrupted transactions. To investigate a failed run, read the first named `FAIL` line and its error rather than treating the final count as the cause.
 
 ## Remix VM Deployment and Tests
 
