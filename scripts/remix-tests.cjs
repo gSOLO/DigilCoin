@@ -3,6 +3,7 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const { root, compile, sourcesIn, checkSizes } = require('./compile.cjs');
 const { createHarness, bootstrap, gasLimit, ethers, unit, bytesToHex, hexToBytes, createAddressFromString, createAccount } = require('./evm.cjs');
+const { discover, executeSuite, assertionErrors } = require('./solidity-suite.cjs');
 
 async function main() {
   const sources = { ...sourcesIn('contracts'), ...sourcesIn('tests', file => file.endsWith('_test.sol')) };
@@ -22,21 +23,19 @@ async function main() {
   for (const address of accounts) await h.vm.stateManager.putAccount(address, createAccount({ balance: 10000n * unit }));
   const assertArtifact = contracts['remix_tests.sol']?.Assert || contracts['tests/remix_tests.sol'].Assert;
   const assertInterface = new ethers.Interface(assertArtifact.abi);
-  let passed = 0, failed = 0;
+  let passed = 0, failed = 0, setupCalls = 0;
   for (const [file, source] of Object.entries(sources).filter(([file]) => file.endsWith('_test.sol'))) {
+    // Each suite retains its own ordered stateful scenario, but cannot inherit
+    // protocol state, balances, or linked helper deployments from another suite.
+    await h.vm.stateManager.checkpoint();
+    h.libraries.clear();
+    assert.equal(Object.keys(contracts[file]).length, 1, `${file}: use one suite per file so no contract is silently skipped`);
     const name = Object.keys(contracts[file])[0];
     const suite = await h.deploy(name, [], true, file);
-    for (const match of source.content.matchAll(/function\s+(beforeAll|test\w+)\s*\(/g)) {
-      const method = match[1];
-      const preceding = source.content.slice(0, match.index).split('\n');
-      const comments = [];
-      for (let i = preceding.length - 1; i >= 0; i--) {
-        const line = preceding[i].trim();
-        if (!line || line.startsWith('//')) comments.unshift(line); else break;
-      }
-      const annotation = comments.join('\n');
-      const caller = accounts[Number(annotation.match(/#sender:\s*account-(\d+)/)?.[1] || 0)];
-      const value = BigInt(annotation.match(/#value:\s*(\d+)/)?.[1] || 0);
+    await executeSuite(discover(source.content, contracts[file][name].abi), async definition => {
+      const { name: method, value } = definition;
+      h.scenario = definition.setup ? null : `${name}.${method}`;
+      const caller = accounts[definition.sender];
       const data = hexToBytes(suite.iface.encodeFunctionData(method));
       // Remix senders have no available signing keys. Execute equivalent calls with
       // transaction intrinsic gas deducted, while resetting warm storage between calls.
@@ -47,24 +46,23 @@ async function main() {
       const result = await h.vm.evm.runCall({ to: createAddressFromString(suite.address), caller, origin: caller,
         data, value, gasLimit: gasLimit - intrinsic, block: h.block(),
       });
-      const errors = [];
-      if (result.execResult.exceptionError) errors.push(`${result.execResult.exceptionError.error}: ${bytesToHex(result.execResult.returnValue)}`);
-      for (const log of result.execResult.logs || []) {
-        try {
-          const event = assertInterface.parseLog({ topics: log[1].map(bytesToHex), data: bytesToHex(log[2]) });
-          if (event?.args.passed === false) errors.push(event.args.message || event.name);
-        } catch { }
-      }
+      const errors = assertionErrors(result, definition, suite.iface, assertInterface, bytesToHex);
       if (errors.length) {
         failed++;
         console.error(`FAIL ${name}.${method}: ${errors.join('; ')}`);
-      } else if (method !== 'beforeAll') {
+      } else if (definition.setup) {
+        setupCalls++;
+        console.log(`SETUP ${name}.${method} gas=${result.execResult.executionGasUsed + intrinsic}`);
+      } else {
         passed++;
         console.log(`PASS ${name}.${method} gas=${result.execResult.executionGasUsed + intrinsic}`);
       }
-    }
+      return errors.length === 0;
+    });
+    await h.vm.stateManager.revert();
   }
-  console.log(`Remix suites: ${passed} passed; ${failed} failed; per-call gas limit ${gasLimit}`);
+  console.log(`Solidity suites: ${passed} behavioral calls passed; ${setupCalls} setup/hook calls passed; ${failed} failed; per-call gas limit ${gasLimit}`);
+  h.writeCoverage();
   assert.equal(failed, 0);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

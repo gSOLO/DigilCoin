@@ -1,3 +1,4 @@
 /artifacts
 /.states
 /node_modules
+/.remix

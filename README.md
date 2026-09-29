@@ -27,6 +27,8 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 - [Opt-Out / Blacklist](#opt-out--blacklist)
 - [Admin & Security Notes](#admin--security-notes)
 - [Economics & Costs Summary](#economics--costs-summary)
+- [Local Validation](#local-validation)
+- [Remix VM Deployment and Tests](#remix-vm-deployment-and-tests)
 - [How it Works: End-to-End Examples](#how-it-works-end-to-end-examples)
 
 ---
@@ -371,13 +373,74 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 
 ## Local Validation
 
-Use Node.js 24 and run `npm ci`, then `npm run check:size` and `npm test`. Dependencies are pinned in `package-lock.json`. Both runners read the compiler profile directly from `remix.config.json`, without changing optimizer settings or enabling via-IR. Tests use Osaka's 16,777,216 transaction gas limit. Large Remix setup and settlement scenarios are split into separate test calls; only test harness contracts may exceed deployment code-size limits.
+Use Node.js 24 and run `npm ci`, then `npm run check:size` and `npm test`. Dependencies are pinned in `package-lock.json`. All runners read the compiler profile directly from `remix.config.json`, without changing optimizer settings or enabling via-IR. Tests use Osaka's 16,777,216 transaction gas limit. The legacy Alpha, Beta, Foxtrot, and Gamma Solidity harnesses still exceed the runtime size limit and are Node-only test scaffolding; only those test deployments may use a size exemption. All production deployments, the new actors, shared functional scenarios, and deployment-adapter checks enforce normal code and initcode limits. Legacy harness success is not production deployment evidence.
 
 `npm run test:security` runs targeted accounting, permission, lifecycle, and interface regressions. `npm run test:remix` runs the existing Solidity suites with fixture addresses substituted in memory, leaving `DigilTestLibrary.sol` unchanged. For diagnosing behavior while a contract exceeds deployment size, `node scripts/security-tests.cjs --diagnostic` and `node scripts/remix-tests.cjs --diagnostic` explicitly waive code-size limits, but never the transaction gas limit. Passing diagnostic runs is **not** deployment approval; the normal size gate must pass before release.
+
+`npm run test:functional` runs the 14 shared scenarios. `npm run test:extended` adds typed signatures, epoch/lock/timelock and collector-yield boundaries, failed and reentrant receivers, ERC20 payout failures, and pre/post-revocation governance execution. `npm run test:deployment` checks the actual Remix workflow through a local plugin adapter using ethers v5 and v6, including interruption/resume, repeated seeding, stale records, role drift, no-op clock detection, and deliberately failing assertions. `npm test` runs all five groups and reports failures with a nonzero exit code.
+
+The `ethers-v5` development-only alias tests compatibility with Remix's default dependency; it must not be used with real keys. The runner uses it only for ABI encoding/decoding and hashing, never wallet signing or an external provider. Pinned `ws` and `tmp` overrides address transitive high-severity advisories without changing Solidity or its settings. `npm audit` still reports low-severity advisories in the v5/elliptic dependency chain; compatibility testing is not an endorsement of that chain for production signing.
+
+Solidity suites retain source order, honor sender/value annotations and all four lifecycle hooks, count setup separately, and use isolated protocol state between suites. The end-of-run ABI inventory maps exercised entry points to scenario names in ignored `.remix/coverage/inventory.json` and explicitly lists unexercised functions. It includes negative calls and is not branch coverage. Current invariants include fee-versus-principal separation, reward-pool conservation, atomic rollback, market-outcome immutability, preserved lock principal, one-time payouts, NFT custody, and a deterministic 48-action ERC20 supply/balance model (seed `0xD1611`). It does not exhaustively model randomized NFT/link/market interactions, every malicious dependency, or every branch of inherited OpenZeppelin functions. Passing tests do not establish absence of vulnerabilities.
 
 DigilToken's size optimizations preserve its public ABI and protocol behavior. Dynamic bytes/string arguments use memory to share compiler-generated decoding and storage-copy routines; whitelist arrays remain in calldata. This trades some copying gas for smaller bytecode. Arithmetic-check reductions are limited to documented bounds and guarded subtractions. Regression tests cover metadata storage-word boundaries through 4,096 bytes, maximum link efficiency/count, buff expiry, and exact batch endpoints. Deployment headroom is tight, so rerun the normal size gate after every contract change.
 
 Deployment bootstrap remains: deploy DigilCoin, deploy DigilToken with that coin and 18 decimals, then grant the token `MINTER_ROLE` on DigilCoin and set its spend weight to `10000`. Minting permission enables rewards payouts; spend weight separately enables donor-reward eligibility for fees. These changes target fresh deployments, not migration of live contract storage.
+
+## Remix VM Deployment and Tests
+
+The scripts in `scripts/remix/` automate a **local Remix VM only**. They refuse wallet providers, external RPCs, and forked VMs. No Codex or Node installation is needed to invoke these scripts inside Remix.
+
+**Validation status:** the workflow targets Remix **2.6.4**, Solidity **0.8.34+commit.80d5c536**, and **Remix VM (Osaka)**. Local integration tests exercise the actual workflow through a plugin/RPC adapter backed by EthereumJS, with both ethers 5.8.0 and 6.17.0. An end-to-end browser run remains **unverified**: project upload permission was declined during validation. These adapter results are not a claim that the Remix UI workflow has passed.
+
+### Compiler and Workspace Setup
+
+1. Import this repository into a separate Remix workspace, including `contracts/`, `scripts/`, `remix.config.json`, and the pinned `.deps/npm/@openzeppelin/contracts@5.6.1/` cache. Keep the repository directory structure and dependency resolution index. Do not use historical `scenario.json` bytecode.
+2. In **Solidity Compiler**, select **0.8.34**. Under **Advanced Configuration**, select **Use configuration file** and use the existing repository configuration. The compiler input is the `solidity-compiler` object in `remix.config.json`. Do not replace it with the generated sample or GUI optimizer defaults. The effective configuration must retain Osaka, the existing optimizer detail flags with `yul: false`, and stripped revert strings; do not add `runs` or `viaIR`. The scripts compare the complete configuration, not just these highlighted fields. See [Remix compiler configuration](https://remix-ide.readthedocs.io/en/latest/compile.html).
+3. In **Deploy & Run**, select **Remix VM (Osaka)** and use a fresh VM. Account 0 is the bootstrap admin; scripts select VM accounts explicitly, regardless of the displayed account dropdown. Keep at least five default VM accounts.
+4. Open a script below and use **Run Script** (or right-click the file and choose **Run**). Use the default script dependency configuration, which supplies ethers v5; the adapter also supports v6. Approve only the expected Remix workspace-file, compiler, and local blockchain plugin requests. No wallet, private key, public-network access, or external signing permission is needed. See [Remix script execution](https://remix-ide.readthedocs.io/en/latest/running_js_scripts.html).
+5. Run one script at a time. Do not change the workspace, sources, configuration, or VM provider while it is running.
+
+### Commands in Remix
+
+| Script | Action and success condition |
+| --- | --- |
+| `scripts/remix/preflight.js` | Compiles fresh sources, checks settings/dependency bytes and deployment sizes, and probes time control. Expect `PASS deployment preflight` plus the explicit timing limitation. Deploys no production contracts. |
+| `scripts/remix/test.js` | Runs 14 shared smoke scenarios, each with a fresh four-contract fixture. Expect `Remix smoke subset: 14 passed, 0 failed`. Writes the results and omitted areas to `.remix/smoke-results.json`; this is **not** full protocol validation. |
+| `scripts/remix/deploy.js` | Creates or resumes the interactive deployment, grants required roles, checks code and role holders, prints addresses, and writes `.remix/deployment.json`. Expect `PASS deployment`. |
+| `scripts/remix/verify.js` | Recompiles and verifies the recorded deployment against current sources, transaction history, runtime code, ownership, planar custody, spend weight, and roles. Expect `PASS current deployment verified`. |
+| `scripts/remix/seed-demo.js` | Optional, explicit seeding: mints 20,000 DIGIL to each of accounts 1 and 2, delegates votes, approves DigilToken, and creates one NFT per account. Journaled reruns do not duplicate minting or NFTs. |
+| `scripts/remix/handoff.js` | **Preview/blocker only.** Displays intended governance ownership and role changes, then fails with `Handoff blocked`. Sends no grants, transfers, or revocations. |
+
+The deployment order is Coin, Token, Timelock, Governor. Token uses account 0 as owner, the new Coin address, and 18 decimals. It receives Coin `MINTER_ROLE` and spend weight `10000`. Timelock uses a **60-second VM-only delay**, empty initial proposer/executor lists, and account 0 as temporary admin; Governor receives proposer, canceller, and executor roles. Execution is not opened to the zero address. Ordinary deployment neither seeds users nor relinquishes admin control.
+
+Use the printed addresses with **At Address** in Deploy & Run after selecting each compiled contract. The JS workflow never requires editing addresses in `DigilTestLibrary.sol`. Its test fixtures do not alter the interactive deployment record, though they consume transactions and create additional contracts in the selected VM.
+
+To rerun one smoke scenario, change only the `only` list in `scripts/remix/test.js`, for example:
+```js
+const only = ['metadata-payload-boundaries'];
+```
+Restore `[]` to run all 14. Available IDs are declared in `scripts/functional-scenarios.js`. An unknown ID or any failed assertion fails the run.
+
+### Timing and Governance Handoff
+
+Remix VM's current time-advance and snapshot RPCs are no-ops; mining uses wall-clock time. Preflight reads the resulting block timestamp rather than assuming those calls worked. See the official [VM RPC implementation](https://github.com/remix-project-org/remix-project/blob/master/libs/remix-simulator/src/methods/evm.ts). Fresh deployments isolate smoke scenarios without relying on snapshots.
+
+The smoke subset omits the legacy Solidity suites, long-duration accounting and expiry tests, typed-signature scenarios, adversarial actors, and the complete governance rehearsal. Run **`npm test` for full local validation**. The [Solidity Unit Testing plugin](https://remix-ide.readthedocs.io/en/latest/unittesting.html) has a separate environment; it does not share the JS runner's Deploy & Run fixtures.
+
+The Node rehearsal grants Timelock the Coin admin/operational roles, transfers Token ownership and all 21 planar tokens, completes a real propose/vote/queue/execute cycle, removes bootstrap privileges with timelock admin removed last, and completes another governance cycle. It verifies former-admin calls fail and Token mint-dependent payouts still work. Production voting delay and period stay unchanged. This rehearsal runs on disposable Node fixtures, **not your Remix deployment**, so it does not authorize automated revocation there. Remix handoff remains deliberately blocked until a genuine rehearsal on that deployment can be verified.
+
+### Recovery and Failures
+
+- **Wrong configuration, dependency, or artifact:** inspect the compiler error; restore the exact repository profile and pinned dependency sources, then rerun preflight. Do not change optimizer settings to pass a size check. Generated `.remix/Compile.sol` ties each run to a fresh compilation.
+- **Interrupted deployment:** rerun `deploy.js` in the same VM/workspace. Confirmed steps are checked and reused; a saved pending hash is resumed. A broadcast without a saved hash is ambiguous and is refused. Inspect it manually or start with a fresh VM/workspace, rather than clearing the journal and creating duplicates.
+- **Interrupted demo seeding:** rerun `seed-demo.js`, not `deploy.js`. Its saved pending step belongs to the seeding workflow. `verify.js` intentionally refuses any unresolved pending operation.
+- **Reset VM or stale addresses:** old receipts/code invalidate the record even if the chain ID is unchanged. For a deliberately fresh deployment, reset the VM and use a new workspace, or archive the old `.remix/deployment.json` before rerunning deploy. Never reuse a record solely because its addresses look familiar.
+- **Unexpected roles or ownership:** verification fails closed. Review the actual changes; do not weaken the verifier or remove roles blindly.
+- **Failed assertion, RPC error, out-of-gas, or code-size failure:** stop and inspect the named scenario/transaction and compiler output. RPC disconnections are not accepted as expected EVM reverts. Transactions are capped at 16,777,216 gas; production runtime is limited to 24,576 bytes and creation input including arguments to 49,152 bytes.
+- **Handoff blocked:** expected on the current VM. Retain bootstrap control. A green smoke run or a successful Node rehearsal is not permission to bypass this guard.
+
+All runtime records and generated machine-readable test inventories live under ignored `.remix/`; keep them local. They contain test addresses and transaction evidence, not private keys.
 
 ## How it Works: End-to-End Examples
 

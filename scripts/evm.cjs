@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const ethers = require('ethers');
 const { createVM, runTx } = require('@ethereumjs/vm');
 const { Common, Mainnet, Hardfork } = require('@ethereumjs/common');
@@ -16,6 +18,27 @@ async function createHarness(contracts, diagnostic = false) {
     allowUnlimitedContractSize: diagnostic, allowUnlimitedInitCodeSize: diagnostic,
   } });
   const h = { vm, common, contracts, time: 1800000000n, height: 1n, users: [], libraries: new Map() };
+  const deployed = new Map(), exercised = new Map();
+  vm.evm.events.on('beforeMessage', message => {
+    const contract = message.to && deployed.get(message.to.toString().toLowerCase());
+    if (!contract || !h.scenario || message.data.length < 4) return;
+    try {
+      const method = contract.iface.getFunction(bytesToHex(message.data.slice(0, 4)));
+      if (!method) return;
+      const key = `${contract.name}.${method.format('sighash')}`;
+      if (!exercised.has(key)) exercised.set(key, new Set());
+      exercised.get(key).add(h.scenario);
+    } catch { }
+  });
+  h.writeCoverage = () => {
+    if (!process.env.DIGIL_COVERAGE_RUN) return;
+    const directory = path.join(__dirname, '../.remix/coverage');
+    fs.mkdirSync(directory, { recursive: true });
+    fs.writeFileSync(path.join(directory, path.basename(process.argv[1]) + '.json'), JSON.stringify({
+      run: process.env.DIGIL_COVERAGE_RUN,
+      calls: Object.fromEntries([...exercised].map(([key, names]) => [key, [...names].sort()])),
+    }, null, 2));
+  };
   for (let i = 1; i <= 60; i++) {
     const key = hexToBytes('0x' + i.toString(16).padStart(64, '0'));
     const addr = createAddressFromPrivateKey(key);
@@ -56,12 +79,17 @@ async function createHarness(contracts, diagnostic = false) {
         }
       }
     }
-    // Only explicitly identified test harnesses may exceed code limits. Gas limits stay enforced.
-    vm.evm.allowUnlimitedContractSize = diagnostic || testOnly;
-    vm.evm.allowUnlimitedInitCodeSize = diagnostic || testOnly;
+    // These existing Node-only harnesses are not deployment acceptance evidence.
+    // Production contracts, new actors, and every other test keep normal limits.
+    const legacyHarness = testOnly && ['AlphaTestSuite', 'BetaTestSuite', 'FoxtrotTestSuite', 'GammaTestSuite'].includes(name)
+      && file.startsWith('tests/');
+    vm.evm.allowUnlimitedContractSize = diagnostic || legacyHarness;
+    vm.evm.allowUnlimitedInitCodeSize = diagnostic || legacyHarness;
     try {
       const result = await h.tx(h.users[0], null, '0x' + bytecode + iface.encodeDeploy(args).slice(2));
-      return { address: result.createdAddress.toString(), iface };
+      const contract = { address: result.createdAddress.toString(), iface, name };
+      if (['DigilCoin', 'DigilToken', 'DigilGovernor', 'DigilTimelock'].includes(name)) deployed.set(contract.address.toLowerCase(), contract);
+      return contract;
     } finally {
       vm.evm.allowUnlimitedContractSize = diagnostic;
       vm.evm.allowUnlimitedInitCodeSize = diagnostic;

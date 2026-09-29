@@ -30,7 +30,9 @@ contract HotelTestSuite {
         // <instantiate contract>
         coins = DigilTestLibrary.getCoins();
         digil = DigilTestLibrary.getToken();
-        Assert.equal(uint(1), uint(1), "1 should be equal to 1");
+        Assert.ok(address(coins).code.length > 0, "Coin fixture must be deployed");
+        Assert.ok(address(digil).code.length > 0, "Token fixture must be deployed");
+        Assert.ok(address(coins) != address(digil), "Fixtures must be distinct");
     }
 
     /// #sender: account-8

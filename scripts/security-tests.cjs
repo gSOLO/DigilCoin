@@ -458,7 +458,7 @@ async function main() {
 
   test('Exact batch endpoints complete once and preserve starter authorization and keeper totals', async () => {
     await h.send(token, admin, 'configure', [100, floor, 95000000000000n, 32]);
-    for (const count of [32, 64]) {
+    for (const count of [31, 32, 64]) {
       const id = await create(alice);
       await h.send(token, alice, 'approve', [bob.address, id]);
       for (let i = 0; i < count; i++) {
@@ -467,7 +467,7 @@ async function main() {
       }
       await h.reverts(token, carol, 'activateToken', [id]);
       const first = await h.send(token, bob, 'activateToken', [id]);
-      assert.equal(h.result(token, 'activateToken', first)[0], count === 32);
+      assert.equal(h.result(token, 'activateToken', first)[0], count <= 32);
       if (count === 64) {
         const pending = await h.read(token, 'tokenData', [id]);
         assert.equal(pending[1], true);
@@ -564,6 +564,7 @@ async function main() {
 
   let failed = 0;
   for (const { name, run } of tests) {
+    h.scenario = name;
     const time = h.time, height = h.height;
     await h.vm.stateManager.checkpoint();
     try { await run(); console.log(`PASS ${name}`); }
@@ -571,6 +572,7 @@ async function main() {
     finally { await h.vm.stateManager.revert(); h.time = time; h.height = height; }
   }
   console.log(`Security regressions: ${tests.length - failed} passed; ${failed} failed`);
+  h.writeCoverage();
   assert.equal(failed, 0);
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
