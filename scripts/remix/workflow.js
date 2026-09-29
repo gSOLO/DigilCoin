@@ -6,7 +6,8 @@ async function run(mode, { ethers, remix, log = console.log, only = [] }) {
     return module.exports;
   };
   const { createRuntime, invariant } = await load('scripts/remix/runtime.js');
-  const runtime = await createRuntime({ ethers, call: (...args) => remix.call(...args), log });
+  const runtime = await createRuntime({ ethers, call: (...args) => remix.call(...args),
+    on: (...args) => remix.on(...args), off: (...args) => remix.off(...args), log });
   await runtime.compile();
   if (mode === 'preflight') {
     await runtime.capabilities();

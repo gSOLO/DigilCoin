@@ -16,14 +16,19 @@ const json = value => JSON.stringify(canonical(value));
 const hex = value => '0x' + BigInt(value).toString(16);
 const equalAddress = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 
-function checkSettings(state, config) {
-  invariant(state.useFileConfiguration === true, 'Select Use configuration file in Solidity Compiler; GUI optimizer defaults are not accepted.');
-  invariant(String(state.currentVersion).includes(VERSION), `Select Solidity ${VERSION}.`);
-  const actual = JSON.parse(JSON.stringify(state.configFileContent || {}));
+function checkVersion(version) {
+  invariant(String(version).includes(VERSION), `Select Solidity ${VERSION}.`);
+}
+
+function checkSettings(input, version, config) {
+  checkVersion(version);
+  invariant(typeof input === 'string' && input.length > 0, 'Missing compiler input from Remix compilation event. No deployment was attempted.');
+  const actual = JSON.parse(input);
+  invariant(actual && typeof actual === 'object' && !Array.isArray(actual), 'Invalid compiler input');
   delete actual.sources;
   // Remix inserts an empty remappings list even when none was requested.
   if (actual.settings?.remappings?.length === 0) delete actual.settings.remappings;
-  invariant(json(actual) === json(config['solidity-compiler']), 'Effective compiler settings differ from remix.config.json. No deployment was attempted.');
+  invariant(json(actual) === json(config['solidity-compiler']), 'Effective compiler settings differ from remix.config.json. Select Use configuration file; GUI optimizer defaults are not accepted. No deployment was attempted.');
 }
 
 function checkArtifact(artifact, argsData = '0x') {
@@ -59,7 +64,7 @@ function normalize(value) {
   return result;
 }
 
-async function createRuntime({ ethers, call, log = console.log, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+async function createRuntime({ ethers, call, on, off, log = console.log, sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   const u = ethers.utils || ethers;
   const Interface = ethers.Interface || ethers.utils.Interface;
   const abiCoder = ethers.AbiCoder ? ethers.AbiCoder.defaultAbiCoder() : ethers.utils.defaultAbiCoder;
@@ -95,25 +100,43 @@ async function createRuntime({ ethers, call, log = console.log, sleep = ms => ne
   };
 
   async function compile() {
+    artifacts = undefined;
+    fingerprint = undefined;
     const config = JSON.parse(await readFile('remix.config.json'));
     invariant(config['solidity-compiler']?.settings?.evmVersion === 'osaka', 'Expected the repository Osaka compiler profile');
-    checkSettings(await call('solidity', 'getCompilerState'), config);
+    invariant(typeof on === 'function' && typeof off === 'function', 'Remix compiler event subscriptions are required');
+    // getCompilerState contains callbacks/Worker objects and cannot cross the
+    // script iframe boundary. This API returns only serializable GUI fields;
+    // validate the full effective settings using the compilation input below.
+    checkVersion((await call('solidity', 'getCurrentCompilerConfig')).currentVersion);
     // A unique root proves the returned result belongs to this compilation,
     // rather than a previous compile whose artifacts happen to still be cached.
     const root = '.remix/Compile.sol';
     const source = '// SPDX-License-Identifier: GPL-3.0\npragma solidity ^0.8.34;\n' +
-      '// Run ' + Date.now() + '\n' +
+      '// Run ' + Date.now() + '-' + Math.random().toString(16).slice(2) + '\n' +
       [...NAMES.map(name => `import "../contracts/${name}.sol";`), 'import "../contracts/NFT.sol";'].join('\n');
     await writeFile(root, source);
-    await call('solidity', 'compile', root);
     let result;
-    for (let attempt = 0; attempt < 180; attempt++) {
-      result = await call('solidity', 'getCompilationResult');
-      if (result?.source?.sources?.[root]?.content === source && result?.data?.contracts) break;
-      await sleep(500);
+    const capture = failed => (target, compiledSource, language, data, input, version) => {
+      if (target === root && compiledSource?.sources?.[root]?.content === source) {
+        result = { source: compiledSource, data, input, version, failed };
+      }
+    };
+    // Subscribe before compiling and keep input/output paired in the same event.
+    // A cached getCompilationResult cannot prove which settings produced it.
+    try {
+      await on('solidity', 'compilationFinished', capture(false));
+      await on('solidity', 'compilationFailed', capture(true));
+      await call('solidity', 'compile', root);
+      for (let attempt = 0; attempt < 180 && !result; attempt++) await sleep(500);
+      invariant(result, 'No fresh compilation event. Check Solidity Compiler errors and configuration.');
+      invariant(!result.failed && result.data?.contracts, 'Compilation failed. Check Solidity Compiler errors and configuration.');
+      checkSettings(result.input, result.version, config);
+      invariant(json(JSON.parse(result.input).sources) === json(result.source.sources), 'Compiler input sources differ from compilation event sources');
+    } finally {
+      await off('solidity', 'compilationFinished');
+      await off('solidity', 'compilationFailed');
     }
-    invariant(result?.source?.sources?.[root]?.content === source, 'No fresh successful compilation. Check Solidity Compiler errors and configuration.');
-    checkSettings(await call('solidity', 'getCompilerState'), config);
     artifacts = {};
     const sourceHashes = {};
     for (const [file, entry] of Object.entries(result.source.sources)) {
@@ -212,15 +235,29 @@ async function createRuntime({ ethers, call, log = console.log, sleep = ms => ne
     try { const event = contract.iface.parseLog(entry); return event?.name === name ? [normalize(event.args)] : []; } catch { return []; }
   });
   const reverts = async (contract, user, method, args = [], value = 0n, errorName) => {
-    let failure;
-    try { await rpc('eth_call', [{ from: user.address, to: contract.address, data: contract.iface.encodeFunctionData(method, args), value: hex(value) }, 'latest']); }
-    catch (error) { failure = error; }
-    invariant(failure, `${method} should revert`);
-    invariant(/\brevert(?:ed)?\b/i.test(String(failure.message || failure)),
-      `${method}: RPC/transport failure is not proof of an EVM revert: ${failure.message || failure}`);
+    // Remix eth_call returns revert bytes as a successful RPC response and drops
+    // msg.value. Negative tests use transactions on disposable VM fixtures, with
+    // both a failed receipt and the recorded REVERT (not out-of-gas) as proof.
+    const tx = { from: user.address, to: contract.address, data: contract.iface.encodeFunctionData(method, args),
+      value: hex(value), gas: hex(GAS) };
+    let hash, mined, execution;
+    try {
+      hash = await rpc('eth_sendTransaction', [tx]);
+      invariant(typeof hash === 'string' && /^0x[0-9a-f]{64}$/i.test(hash), 'Missing transaction hash');
+      mined = await receipt(hash);
+      execution = await rpc('eth_getExecutionResultFromSimulator', [hash]);
+    } catch (error) {
+      throw new Error(`${method}: RPC/transport failure is not proof of an EVM revert: ${error.message || error}`);
+    }
+    invariant(equalAddress(mined.transactionHash, hash), `${method}: receipt mismatch is not proof of an EVM revert`);
+    invariant(BigInt(mined.status) === 0n, `${method} should revert`);
+    invariant(BigInt(mined.gasUsed) <= GAS, 'Receipt exceeds transaction gas limit');
+    invariant(execution?.exceptionError?.error === 'revert',
+      `${method}: could not confirm an EVM revert (${execution?.exceptionError?.error || 'missing execution result'})`);
     if (errorName) {
-      const data = typeof failure.data === 'string' ? failure.data : failure.data?.data || failure.error?.data;
-      invariant(data && contract.iface.parseError(data)?.name === errorName, `${method}: could not confirm expected ${errorName}; ${failure.message || failure}`);
+      let actualError;
+      try { actualError = contract.iface.parseError(execution.returnValue)?.name; } catch { /* Missing/malformed data cannot confirm a named error. */ }
+      invariant(actualError === errorName, `${method}: could not confirm expected ${errorName}; got ${actualError || 'undecodable revert data'}`);
     }
   };
   const h = { users, deploy, send, read, events, reverts, attach, rpc, block,
@@ -276,7 +313,8 @@ async function createRuntime({ ethers, call, log = console.log, sleep = ms => ne
 
   async function verifyRoleHolders(contract, expected) {
     const holders = {};
-    const logs = await rpc('eth_getLogs', [{ address: contract.address, fromBlock: '0x0', toBlock: 'latest' }]);
+    // Remix requires an explicit topics array; an empty array retains all events.
+    const logs = await rpc('eth_getLogs', [{ address: contract.address, fromBlock: '0x0', toBlock: 'latest', topics: [] }]);
     for (const entry of logs) {
       let parsed;
       try { parsed = contract.iface.parseLog(entry); } catch { continue; }
