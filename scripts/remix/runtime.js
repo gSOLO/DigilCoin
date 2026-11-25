@@ -227,12 +227,12 @@ async function createRuntime({
       const marker = file.indexOf('@openzeppelin/contracts');
       if (marker >= 0) {
         const tail = file.slice(marker).replace(/^@openzeppelin\/contracts(?:@[^/]+)?\//, '');
-        local = '.deps/npm/@openzeppelin/contracts@5.6.1/' + tail;
+        local = '.deps/npm/@openzeppelin/contracts@5.7.0/' + tail;
       }
       const expected = await readFile(local);
       invariant(
         entry.content === expected,
-        `Resolved source mismatch: ${file}. Use the pinned OpenZeppelin 5.6.1 cache.`
+        `Resolved source mismatch: ${file}. Use the pinned OpenZeppelin 5.7.0 cache.`
       );
       sourceHashes[file] = hashText(entry.content);
     }

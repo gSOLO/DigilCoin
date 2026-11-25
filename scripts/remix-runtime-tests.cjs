@@ -90,7 +90,7 @@ async function main(scriptEthers) {
         resolved['@openzeppelin/contracts/access/AccessControl.sol'] = {
           content: badDependency
             ? 'wrong dependency'
-            : disk('.deps/npm/@openzeppelin/contracts@5.6.1/access/AccessControl.sol'),
+            : disk('.deps/npm/@openzeppelin/contracts@5.7.0/access/AccessControl.sol'),
         };
         if (badSource) resolved['contracts/DigilCoin.sol'] = { content: 'stale source' };
         result = { data: { contracts }, source: { sources: resolved, target: args[0] } };

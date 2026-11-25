@@ -45,7 +45,7 @@ function compile(sources = sourcesIn('contracts')) {
           if (name.startsWith('hardhat/')) candidates.push(path.join(root, '.deps/npm', name));
           if (name.startsWith('@openzeppelin/contracts/')) {
             candidates.push(
-              path.join(root, '.deps/npm/@openzeppelin/contracts@5.6.1', name.slice(24))
+              path.join(root, '.deps/npm/@openzeppelin/contracts@5.7.0', name.slice(24))
             );
           }
           const file = candidates.find((candidate) => fs.existsSync(candidate));
