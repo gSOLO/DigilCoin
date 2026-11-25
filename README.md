@@ -56,7 +56,7 @@ Used for charge units, feature fees (linking, metadata updates, buffs), and gove
 - **Funding & Earning**: Anyone can fund rewards. Users earn points when a configured spender contract collects a nonrefundable DIGIL feature fee through `spendFrom(address payer, uint256 amount)`.
 - **Eligibility Model**: The fee consumes the payer's allowance and transfers DIGIL to the caller. Its configured spend weight determines the payer's points. Ordinary `transfer` and `transferFrom` calls, all charging deposits (including those later activated), refunds, governance locks, and stakes earn no points. Paid plane alignment, vaulting, metadata changes, linking/upgrades, priming, and stabilization qualify. Free alignment choices and active-charge consumption do not create eligible DIGIL spending.
 - **Spender Trust**: `CONFIG_ROLE` must only enable contracts that distinguish nonrefundable fees from deposits. A zero weight disables rewards without disabling fee collection. External integrations must adopt `spendFrom`; an ordinary `transferFrom` pull is no longer eligible.
-- **Epochs & Claiming**: Rewards run in 30-day epochs. Users claim ETH based on their points, combined with a days-active multiplier to reward consistent usage over burst spending. User history spans 12 stored epochs. An untouched address reads as all zeros in stored epoch zero. Later stored epochs without a user record revert with `NothingToClaim`, and overwritten epochs revert with `EpochNotFound`.
+- **Epochs & Claiming**: Rewards run in 30-day epochs. Users claim ETH based on their points, combined with a days-active multiplier to reward consistent usage over burst spending. User history spans 12 stored epochs. An untouched address reads as all zeros in stored epoch zero. Later stored epochs without a user record revert with `NothingToClaim`, and overwritten epochs revert with `EpochNotFound`. Epoch start timestamps use `uint48` in `currentEpochStart()`, `getEpoch()`, and `EpochAdvance(uint32,uint48)`.
 - **Fairness Controls**: Daily and epoch spend caps reduce gaming; minimum daily spend gates active-day bonuses.
 - **No Value Trapping**: Unclaimed or unclaimable ETH rolls forward into later epochs so funds remain claimable by participants over time.
 
@@ -111,7 +111,9 @@ The universe's "physics" are controlled by admin dials that dictate the economy.
 - **Coin Rate**: The baseline ERC-20 cost for system actions.
 - **Incremental Value**: The global minimum ETH required per coin spent (the material floor).
 - **Transfer Value**: The percentage of ETH that flows back to users versus what is retained as a protocol fee (usually a 1% to 10% fee).
-- **Batch size** defaults to 128. The owner can set 32–2,048 contributors per settlement call. Use **256 as the recommended upper bound on Osaka**. With fresh payouts and ten links, the highest measured 256-contributor batch used 14.20 million of the 16.78 million gas available per transaction. Before raising it, benchmark activation and discharge on the target chain. If a batch runs out of gas, the owner can lower the setting and settlement resumes from the last successful batch with keeper eligibility preserved. Renouncing ownership permanently fixes the setting.
+- **Batch size** defaults to 128. The owner can set 32–2,048 contributors per settlement call. Use **256 as the recommended upper bound on Osaka**. With fresh payouts and ten links, the highest measured 256-contributor batch used 14.22 million of the 16.78 million gas available per transaction. Before raising it, benchmark activation and discharge on the target chain. If a batch runs out of gas, the owner can lower the setting and settlement resumes from the last successful batch with keeper eligibility preserved. Renouncing ownership permanently fixes the setting.
+
+Activation and discharge use the ETH fee and DIGIL bonus rates in effect when settlement starts. Batch size changes apply on the next call, including during an ongoing settlement.
 
 These dials have second-order effects across almost every operation: changing them alters contribution requirements, fee pressure, keeper behavior, and how quickly large contributor sets can be settled.
 
@@ -144,7 +146,7 @@ The existence of a Digil follows a defined path: **Creating** → **Charging** �
 You bring a Digil into existence by defining its required ETH increment and its activation threshold. You can choose to align it with a foundational plane (for an upfront coin fee) and choose whether it accepts open contributions or is restricted to a whitelist. Any ETH sent during creation becomes its foundational value.
 
 Creation ETH minimums are explicit:
-- Base required ETH is always at least the global `_incrementalValue` floor.
+- Base required ETH is always at least the global incremental value.
 - If `restricted == true` and `incrementalValue > global floor`, required ETH becomes that higher `incrementalValue`.
 - If `restricted == false`, setting a higher per-token `incrementalValue` does **not** raise the creation minimum above the global floor (it still affects later charging requirements).
 - **Welcome gift**: Each account can earn one DIGIL on its first successful paid `createToken` or `vaultToken` call, with one shared eligibility flag. Transfers and constructor planar mints grant no gift. Previously receiving or selling NFTs neither consumes nor restores paid-creation eligibility. Collector-yield checkpoints are independent of this gift.
@@ -191,7 +193,7 @@ The final release dismantling the construct. First call requires owner/approved 
   - This required first-call ETH is enforced only when `discharging == false` (the cycle bootstrap call). If there are more contributors than the batch size at bootstrap, 10% is reserved for keepers and the remainder goes to the protocol value pool. Otherwise the entire fee goes to the protocol.
   - Continuation batch calls in the same discharge cycle must send exactly `0` ETH. Any non-zero `msg.value` on continuation reverts.
 - **Wrapped NFT Recallability**: If this Digil wraps an external ERC721, an *inactive* discharge clears recallability; an *active* discharge preserves it (the external NFT remains vaulted until recalled).
-- **Discharge keeper rewards**: The reserved ETH budget is divided by processed contributor count using cumulative rounding. Every progressing batch, including the final batch, earns its share through `withdraw()`. No DIGIL keeper bounty or ETH-derived bonus coins are added on discharge, and recorded contributor principal is refunded in full on the inactive path. Eligibility and the ETH budget are fixed at bootstrap even if the configured batch size changes. Empty continuations do not create rewards.
+- **Discharge keeper rewards**: The reserved ETH budget is divided by processed contributor count using cumulative rounding. Every progressing batch, including the final batch, earns its ETH-only keeper reward through `withdraw()`. Recorded contributor principal is refunded in full on the inactive path. Eligibility and the ETH budget are fixed at bootstrap even if the configured batch size changes. Empty continuations do not create rewards.
 
 **Discharge timeline (fee + continuation):**
 - **Step A — First call (`discharging == false`)**: only owner/approved operator can start; caller must send **exactly** `max(globalIncrementalValue, tokenIncrementalValue) * max(1, links.length)` ETH.
@@ -293,7 +295,7 @@ Digils can act as "spirit vessels" for other NFTs.
 `withdraw()`
 
 Call `withdraw()` to collect pending ETH and DIGIL. If your wallet rejects ETH, use `withdrawTo(address payable ethRecipient)` with a nonzero recipient. The caller keeps the DIGIL, collector yield, and opt-out rules. If the ETH recipient rejects payment, the transaction reverts and the credits remain available.
-- **Time Bonuses (Checkpoint-Based)**: If you hold Digils, each full 15-minute interval (`BONUS_INTERVAL`) since your last checkpoint adds 1% of your checkpoint cap, where `checkpoint cap = _coinRate + (balance * _coinMultiplier / YIELD_PERIOD)`. Accrual saturates at that checkpoint cap, then stops until the next checkpoint.
+- **Time Bonuses (Checkpoint-Based)**: If you hold Digils, each full 15-minute interval (`BONUS_INTERVAL`) since your last checkpoint adds 1% of your checkpoint cap, where `checkpoint cap = scaled coin rate + (balance * _coinMultiplier / YIELD_PERIOD)`. Accrual saturates at that checkpoint cap, then stops until the next checkpoint.
 - **Timer Reset Semantics**: Both withdrawal methods and qualifying ERC-721 balance updates both checkpoint yield. At each checkpoint, the timer resets to the current timestamp, so partial intervals are discarded and never carried forward.
 - Both withdrawal methods settle the same pending ETH and DIGIL from charging, activation, discharge, and keeper rewards.
 - **Best-Effort Coin Payout**: Coin transfer is best-effort. If mint/transfer of DIGIL fails in the ERC20 path, `withdraw()` does not revert for that reason and can return `0` coins while still paying ETH.
@@ -353,15 +355,15 @@ Accounts can willingly blacklist themselves via this function by paying a small 
 
 ## Economics & Costs Summary
 
-- **Operations costing ETH**: Token creation (always at least global `_incrementalValue`; restricted tokens may require higher), proxy-charging, establishing new links, updating metadata, overcharging, reclaiming abandoned contributions, and switching a token from open mode into restricted mode.
+- **Operations costing ETH**: Token creation (at least the global incremental value, or more for some restricted tokens), proxy-charging, establishing new links, updating metadata, overcharging, reclaiming abandoned contributions, and switching a token from open mode into restricted mode.
 - **Discharge ETH bootstrap (first-call only)**:
   - `dischargeToken` first call (inactive or active path) requires exact ETH:
-    - `msg.value == max(token.incrementalValue, global _incrementalValue) * max(links.length, 1)`.
+    - `msg.value == max(token.incrementalValue, globalIncrementalValue) * max(links.length, 1)`.
   - Continuation discharge calls require `msg.value == 0`.
   - So, inactive discharge does **not** require any extra active-only ETH bootstrap; it uses the same first-call formula as active discharge.
 - **Creation ETH floor logic**:
-  - Base minimum: `msg.value >= global _incrementalValue`.
-  - Restricted token override: if `restricted == true` and `incrementalValue > global _incrementalValue`, then `msg.value >= incrementalValue`.
+  - Base minimum: `msg.value >= globalIncrementalValue`.
+  - Restricted token override: if `restricted == true` and `incrementalValue > globalIncrementalValue`, then `msg.value >= incrementalValue`.
   - Unrestricted token behavior: higher per-token `incrementalValue` does not increase the creation minimum, but it can increase ETH required in later charge flows.
 - **Link ETH requirement formula**: For `linkToken(source, destination, efficiency)`, minimum ETH is:
   - `source.incrementalValue + destination.incrementalValue`.
@@ -392,7 +394,7 @@ npm test
 
 Adjust the directory if your checkout is elsewhere. `node --version` should show `v24.x`. `npm ci` installs the versions in `package-lock.json`; rerun it on a fresh checkout or after the lockfile changes. The first installation needs internet access, but the tests themselves run locally. If PowerShell blocks `npm.ps1`, use `npm.cmd` in place of `npm` rather than weakening your execution policy.
 
-`npm test` runs all five groups in order and exits nonzero if any group fails, even if later groups pass. Check `$LASTEXITCODE` immediately afterward (`0` means success). The output distinguishes behavioral assertions from setup/hooks and ends with an ABI exercise inventory. At the documented baseline, the groups contain 32 security scenarios, 72 Solidity behavioral calls plus 77 setup/hooks, 14 shared functional scenarios, 14 extended scenarios, and deployment-adapter checks including all 14 shared scenarios under both ethers versions. Counts will grow as tests are added; they are not a measure of exhaustive coverage.
+`npm test` runs all five groups in order and exits nonzero if any group fails, even if later groups pass. Check `$LASTEXITCODE` immediately afterward (`0` means success). The output distinguishes behavioral assertions from setup/hooks and ends with an ABI exercise inventory. At the documented baseline, the groups contain 35 security scenarios, 72 Solidity behavioral calls plus 77 setup/hooks, 14 shared functional scenarios, 14 extended scenarios, and deployment-adapter checks including all 14 shared scenarios under both ethers versions. Counts will grow as tests are added; they are not a measure of exhaustive coverage.
 
 ### Individual Commands
 
@@ -490,8 +492,8 @@ These exact IDs live in `scripts/functional-scenarios.js`. All run directly in N
 
 | Area | Existing checks and location |
 | --- | --- |
-| Fee and reward accounting | `security-tests.cjs`: weighted fee attribution including paid alignment; no rewards for refundable/sponsored/active principal; daily caps, rollover, claims/replay, paid welcome eligibility and failed-creation rollback. `extended-tests.cjs`: active-day boundaries, parameter snapshots, atomic `claimMany`, ETH conservation and forced-ETH synchronization. |
-| NFT lifecycle and settlement | `security-tests.cjs`: stale-wrapper custody, genuine versus no-op inactivity resets, metadata boundaries, permanent affinity, maximum efficiency/ten links, exact buff expiry, keeper fee allocation, direct-deposit activation rewards, rounding, authorization and batch endpoints. Legacy suites add the larger and mixed-mechanic sequences above. |
+| Fee and reward accounting | `security-tests.cjs`: weighted fee attribution including paid alignment; no rewards for refundable/sponsored/active principal; daily caps, rollover across the 2106 timestamp boundary, long-idle synchronization, claims/replay, paid welcome eligibility and failed-creation rollback. `extended-tests.cjs`: active-day boundaries, parameter snapshots, atomic `claimMany`, ETH conservation and forced-ETH synchronization. |
+| NFT lifecycle and settlement | `security-tests.cjs`: stale-wrapper custody, genuine versus no-op inactivity resets, metadata boundaries, permanent affinity, maximum efficiency/ten links, exact buff expiry, payout rate snapshots, keeper fee allocation, direct-deposit activation rewards, rounding, authorization and batch endpoints. Legacy suites add the larger and mixed-mechanic sequences above. |
 | Voting and markets | `security-tests.cjs`: early cancellation refunds, immutable late outcomes, orphan burns, preserved lock principal, deadline/quorum/replay/bounds. `extended-tests.cjs`: permit/delegation/ballot signatures, nonce/domain/expiry checks, historical votes, NFT reuse/operator checks, lock extension/rollback/unlock boundaries. |
 | External-call failures | `extended-tests.cjs`: failed/reentrant ETH withdrawals and claims, ERC721 receiver rejection with approval/custody rollback, and false-returning ERC20 payout retry without duplicate entitlement. Collector-yield interval, saturation and transfer boundaries are also tested there. |
 | Timelock and governance handoff | `extended-tests.cjs`: delay/predecessor/cancellation/role revocation, and real proposal/vote/queue/execute sequences before and after bootstrap roles are removed. This is a disposable **Node rehearsal**, not an approved handoff of a user's Remix deployment. |

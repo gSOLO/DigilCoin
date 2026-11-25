@@ -35,6 +35,8 @@ interface IDigilToken is IERC721, IERC721Receiver {
     // Public and External Functions
 
     // Configuration
+    /// @notice Updates global economics and the per-call batch size.
+    /// @dev Ongoing settlements retain their starting payout rates and use the current batch size.
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external;
 
     // Withdraw

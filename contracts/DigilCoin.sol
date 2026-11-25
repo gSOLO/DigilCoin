@@ -85,8 +85,8 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     struct EpochSnap {
         /// @notice Absolute epoch identifier.
         uint32 epochId;
-        /// @notice Epoch start timestamp.
-        uint32 startTime;
+        /// @notice Epoch start timestamp, with the same width as the governance clock.
+        uint48 startTime;
         // Reward parameter snapshots for this epoch (critical for math correctness).
         uint16 dayBonusBps;
         uint8  maxActiveDays;
@@ -142,7 +142,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     uint32 public currentEpochId;
 
     /// @notice Current epoch start timestamp.
-    uint32 public currentEpochStart;
+    uint48 public currentEpochStart;
 
     /// @notice Total ETH ever accounted into pools (donations + absorbed untracked ETH).
     uint256 public totalDonatedEth;
@@ -165,7 +165,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     event EpochFastForward(uint32 indexed fromEpochId, uint32 indexed toEpochId, uint256 sweptEth);
 
     /// @notice Emitted when the epoch advances.
-    event EpochAdvance(uint32 indexed newEpochId, uint32 newStartTime);
+    event EpochAdvance(uint32 indexed newEpochId, uint48 newStartTime);
 
     /// @notice Emitted when unclaimable ETH is swept forward into the current epoch.
     event SweptUnclaimable(uint32 indexed expiredEpochId, uint256 amountSwept, uint32 indexed intoEpochId);
@@ -210,7 +210,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
         // Initialize epoch 0 at deploy time
         currentEpochId = 0;
-        currentEpochStart = uint32(block.timestamp);
+        currentEpochStart = clock();
 
         EpochSnap storage e0 = _epochs[0];
         e0.epochId = 0;
@@ -468,7 +468,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         }
 
         // Compute day index in [0..29] (safe because EPOCH_LENGTH=30 days).
-        uint8 dayIndex = uint8((block.timestamp - uint256(currentEpochStart)) / 1 days);
+        uint8 dayIndex = uint8((clock() - currentEpochStart) / 1 days);
 
         // On a new day, reset day counters (raw and counted).
         if (dayIndex != ue.lastDayIndex) {
@@ -537,9 +537,9 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @dev Advances epochs as needed so `currentEpochId`/`currentEpochStart` match `block.timestamp`.
     ///      Handles long inactivity by advancing multiple epochs in a single call.
     function _syncEpoch() internal {
-        // How many full epochs have elapsed since currentEpochStart?
-        uint256 elapsed = block.timestamp - uint256(currentEpochStart);
-        uint32 steps = uint32(elapsed / uint256(EPOCH_LENGTH));
+        uint48 elapsed = clock() - currentEpochStart;
+        // The full uint48 clock range spans fewer than 2**32 30-day epochs.
+        uint32 steps = uint32(elapsed / EPOCH_LENGTH);
         if (steps == 0) return;
 
         // If the gap is "reasonable", advance normally (preserves detailed sweep events).
@@ -574,7 +574,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
         // Compute the new "current" epoch based on time jump.
         uint32 toId = fromId + steps;
-        uint32 toStart = currentEpochStart + uint32(uint256(steps) * uint256(EPOCH_LENGTH));
+        uint48 toStart = currentEpochStart + uint48(steps) * EPOCH_LENGTH;
 
         // 1) Sweep ALL remaining ETH from currently stored epoch slots.
         // These epochs are far beyond the claim window in a huge jump scenario,
@@ -602,7 +602,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
             EpochSnap storage ep = _epochs[slot];
             ep.epochId = eid;
-            ep.startTime = toStart - uint32(uint256(k) * uint256(EPOCH_LENGTH));
+            ep.startTime = toStart - uint48(k) * EPOCH_LENGTH;
 
             // Snapshot the epoch parameters (per your previous critical fix).
             ep.dayBonusBps = dayBonusBps;
@@ -637,7 +637,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
         // Move to next epoch.
         uint32 newId = prevId + 1;
-        uint32 newStart = currentEpochStart + uint32(EPOCH_LENGTH);
+        uint48 newStart = currentEpochStart + EPOCH_LENGTH;
 
         currentEpochId = newId;
         currentEpochStart = newStart;

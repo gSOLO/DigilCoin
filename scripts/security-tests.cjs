@@ -254,6 +254,72 @@ async function main() {
     await h.reverts(coin, alice, 'claim', [0]);
   });
 
+  test('Epoch starts and the advance event retain timestamps at the 2106 boundary', async () => {
+    const rollover = 1n << 32n;
+    const length = (await h.read(coin, 'EPOCH_LENGTH'))[0];
+    const start = rollover - length;
+    h.time = start - 1n;
+    const boundaryCoin = await h.deploy('DigilCoin', [admin.address]);
+    assert.equal((await h.read(boundaryCoin, 'currentEpochStart'))[0], start);
+    assert.equal((await h.read(boundaryCoin, 'getEpoch', [0]))[0].startTime, start);
+
+    await h.send(boundaryCoin, admin, 'mint', [alice.address, 50n * unit]);
+    await h.send(boundaryCoin, admin, 'setSpendWeight', [spender.address, 10000]);
+    await h.send(boundaryCoin, alice, 'approve', [spender.address, 50n * unit]);
+    await h.send(boundaryCoin, admin, 'donate', [], unit);
+    await h.send(spender, bob, 'pay', [boundaryCoin.address, alice.address, 50n * unit]);
+
+    h.time = rollover - 2n;
+    const before = await h.send(boundaryCoin, alice, 'syncEpoch');
+    assert.equal(h.events(boundaryCoin, before, 'EpochAdvance').length, 0);
+    assert.equal((await h.read(boundaryCoin, 'currentEpochId'))[0], 0n);
+
+    const atBoundary = await h.send(boundaryCoin, alice, 'syncEpoch');
+    const [advance] = h.events(boundaryCoin, atBoundary, 'EpochAdvance');
+    assert.deepEqual(Array.from(advance), [1n, rollover]);
+    assert.equal((await h.read(boundaryCoin, 'currentEpochStart'))[0], rollover);
+    assert.equal((await h.read(boundaryCoin, 'getEpoch', [1]))[0].startTime, rollover);
+    const claim = await h.send(boundaryCoin, alice, 'claim', [0]);
+    assert.equal(h.events(boundaryCoin, claim, 'Claim')[0].amount, unit);
+
+    const newCoin = await h.deploy('DigilCoin', [admin.address]);
+    assert.equal((await h.read(newCoin, 'currentEpochStart'))[0], h.time);
+    assert.equal((await h.read(newCoin, 'getEpoch', [0]))[0].startTime, h.time);
+  });
+
+  test('Long-idle epoch sync sweeps ETH and preserves full timestamps for every retained epoch', async () => {
+    const start = (await h.read(coin, 'currentEpochStart'))[0];
+    const length = (await h.read(coin, 'EPOCH_LENGTH'))[0];
+    const retained = (await h.read(coin, 'STORED_EPOCHS'))[0];
+    const steps = (1n << 32n) / length + 1n;
+    const nextStart = start + steps * length;
+    await create(alice, 0n, 0n, 8);
+    await h.send(coin, admin, 'donate', [], unit);
+
+    h.time = nextStart - 1n;
+    const donation = await h.send(coin, admin, 'donate', [], 2n * unit);
+    const [fastForward] = h.events(coin, donation, 'EpochFastForward');
+    assert.deepEqual(Array.from(fastForward), [0n, steps, unit]);
+    assert.equal((await h.read(coin, 'currentEpochId'))[0], steps);
+    assert.equal((await h.read(coin, 'currentEpochStart'))[0], nextStart);
+    for (let offset = 0n; offset < retained; offset++) {
+      const [epoch] = await h.read(coin, 'getEpoch', [steps - offset]);
+      assert.equal(epoch.startTime, nextStart - offset * length);
+      assert.equal(epoch.poolEth, offset === 0n ? 3n * unit : 0n);
+    }
+
+    h.time += 86400n - 1n;
+    await create(alice, 0n, 0n, 8);
+    const [activity] = await h.read(coin, 'getUserEpoch', [alice.address, steps]);
+    assert.equal(activity.lastDayIndex, 1n);
+    assert.equal(activity.points, 100n * unit * 10000n);
+
+    h.time = nextStart + length - 1n;
+    const claims = await h.send(coin, alice, 'claimMany', [[steps]]);
+    assert.equal(h.events(coin, claims, 'Claim')[0].amount, 3n * unit);
+    assert.equal((await h.read(coin, 'totalClaimedEth'))[0], 3n * unit);
+  });
+
   test('User epoch history follows retained global slots and preserves the epoch-zero sentinel', async () => {
     const start = (await h.read(coin, 'currentEpochStart'))[0];
     const length = (await h.read(coin, 'EPOCH_LENGTH'))[0];
@@ -642,7 +708,8 @@ async function main() {
   });
 
   test('Discharge keepers share only the fixed ETH fee, including final batches across repeated cycles', async () => {
-    await h.send(token, admin, 'configure', [100, floor, 95000000000000n, 32]);
+    const transfer = (floor * 95n) / 100n;
+    await h.send(token, admin, 'configure', [100, floor, transfer, 32]);
     const id = await create(alice, floor, 1000n * unit);
     await withdraw(alice);
     const contributors = h.users.slice(10, 43);
@@ -656,7 +723,7 @@ async function main() {
       await h.reverts(token, carol, 'dischargeToken', [id], 1n);
       await h.reverts(token, alice, 'transferFrom', [alice.address, bob.address, id]);
       await h.reverts(token, admin, 'chargeToken', [id, unit]);
-      await h.send(token, admin, 'configure', [100, floor, 95000000000000n, 64]);
+      await h.send(token, admin, 'configure', [200, 2n * floor, (18n * floor) / 10n, 64]);
       await h.send(token, dave, 'dischargeToken', [id]);
       const last = await withdraw(dave);
       assert.equal(last[0], 0n);
@@ -668,8 +735,12 @@ async function main() {
       }
       assert.equal((await h.read(token, 'tokenData', [id]))[7], 0n);
       assert.equal((await h.read(token, 'tokenData', [id]))[6], BigInt(cycle + 1));
-      await withdraw(alice); // Any residual owner intrinsic value is separate from keeper rewards.
-      await h.send(token, admin, 'configure', [100, floor, 95000000000000n, 32]);
+      // Only the first discharge has intrinsic value from creation. It uses the starting rates.
+      assert.deepEqual(
+        Array.from(await withdraw(alice)),
+        cycle === 0 ? [unit, transfer] : [0n, 0n]
+      );
+      await h.send(token, admin, 'configure', [100, floor, transfer, 32]);
     }
   });
 
@@ -701,6 +772,48 @@ async function main() {
     );
     assert.ok(last[0] > 0n);
     await h.reverts(token, dave, 'activateToken', [id]);
+  });
+
+  test('Activation fixes ETH and DIGIL payouts even when configuration and batch size change', async () => {
+    const transfer = (floor * 95n) / 100n;
+    await h.send(token, admin, 'configure', [100, floor, transfer, 32]);
+    const id = await create(alice, floor);
+    await withdraw(alice);
+    await h.send(token, alice, 'approve', [bob.address, id]);
+
+    // Give 65 equal contributions one full increment of distributable ETH each.
+    const contributors = [
+      carol.address,
+      ...Array.from({ length: 63 }, (_, i) => ethers.toBeHex(1000 + i, 20)),
+      dave.address,
+    ];
+    for (const contributor of contributors)
+      await h.send(token, admin, 'chargeTokenAs', [contributor, id, unit], floor);
+    await h.send(token, admin, 'createValue', [id, 64n * floor], 64n * floor);
+
+    const first = await h.send(token, bob, 'activateToken', [id]);
+    assert.equal(h.result(token, 'activateToken', first)[0], false);
+    assert.equal((await h.read(token, 'tokenData', [id]))[7], 32n);
+    assert.deepEqual(Array.from(await withdraw(carol)), [unit, transfer]);
+    assert.deepEqual(Array.from(await withdraw(alice)), [32n * unit, 32n * transfer]);
+    assert.deepEqual(Array.from(await withdraw(bob)), [(32n * unit) / 100n, 0n]);
+
+    const newFloor = 2n * floor;
+    const newTransfer = (newFloor * 90n) / 100n;
+    await h.send(token, admin, 'configure', [200, newFloor, newTransfer, 64]);
+
+    const last = await h.send(token, bob, 'activateToken', [id]);
+    assert.equal(h.result(token, 'activateToken', last)[0], true);
+    assert.deepEqual(Array.from(await withdraw(dave)), [unit, transfer]);
+    assert.deepEqual(Array.from(await withdraw(alice)), [33n * unit, 33n * transfer]);
+    assert.deepEqual(Array.from(await withdraw(bob)), [(33n * unit) / 100n, 0n]);
+
+    // A later settlement on the same NFT uses the updated rates.
+    const addedValue = 3n * newFloor;
+    await h.send(token, admin, 'createValue', [id, addedValue], addedValue);
+    const discharge = await h.send(token, alice, 'dischargeToken', [id], newFloor);
+    assert.equal(h.result(token, 'dischargeToken', discharge)[0], true);
+    assert.deepEqual(Array.from(await withdraw(alice)), [6n * unit, 3n * newTransfer]);
   });
 
   test('Single-batch and empty settlements grant no keeper allocation', async () => {
