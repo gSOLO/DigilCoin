@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.34;
+pragma solidity ^0.8.39;
 
 import {IERC20Mintable} from "contracts/IERC20Mintable.sol";
 
