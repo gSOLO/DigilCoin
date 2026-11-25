@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.34;
+pragma solidity ^0.8.39;
 
 // This import is automatically injected by Remix
 import "remix_tests.sol"; 
@@ -30,7 +30,9 @@ contract DeltaTestSuite {
         // <instantiate contract>
         coins = DigilTestLibrary.getCoins();
         digil = DigilTestLibrary.getToken();
-        Assert.equal(uint(1), uint(1), "1 should be equal to 1");
+        Assert.ok(address(coins).code.length > 0, "Coin fixture must be deployed");
+        Assert.ok(address(digil).code.length > 0, "Token fixture must be deployed");
+        Assert.ok(address(coins) != address(digil), "Fixtures must be distinct");
     }
 
     /// #sender: account-3
@@ -83,69 +85,84 @@ contract DeltaTestSuite {
 
     /// #sender: account-3
     /// #value: 3000000000000000000
-    function testChargeTokenPartOne() external payable {
+    function testPrepareCharges() external payable {
         uint256 coinMultiplier = 10 ** 18;
         uint256 incrementalValue = 100000000000000;
 
         // Approve the Digil Token contract to spend the specified coinAmount.
-        bool approved = coins.approve(address(digil), 350 * coinMultiplier);
+        bool approved = coins.approve(address(digil), 1050 * coinMultiplier);
         Assert.ok(approved, "Coin approval failed");
 
         dischargeTokenId = digil.createToken{value: 100000000000000}(incrementalValue, 350 * coinMultiplier, false, 4, "Test Discharge");
 
-        uint256 currentSeed = 1;
-        for (uint256 accountIndex = 0; accountIndex < 350; accountIndex++) {
-            currentSeed = uint256(keccak256(abi.encodePacked(currentSeed, accountIndex))); // Generate a new seed for each address
-            address addr = address(uint160(currentSeed)); // Convert the seed to an address
-            digil.chargeTokenAs{value: incrementalValue}(addr, dischargeTokenId, coinMultiplier);
+    }
+
+    uint256 private _batchSeed = 1;
+    uint256 private _batchIndex;
+
+    function _chargeBatch() private {
+        for (uint256 i; i < 50; ++i) {
+            _batchSeed = uint256(keccak256(abi.encodePacked(_batchSeed, _batchIndex++)));
+            digil.chargeTokenAs{value: 100000000000000}(address(uint160(_batchSeed)), dischargeTokenId, 1e18);
         }
     }
 
-    /// #sender: account-3
-    /// #value: 3000000000000000000
-    function testChargeTokenPartTwo() external payable {
-        uint256 coinMultiplier = 10 ** 18;
-        uint256 incrementalValue = 100000000000000;
+    function testChargeBatch01() external { _chargeBatch(); }
+    function testChargeBatch02() external { _chargeBatch(); }
+    function testChargeBatch03() external { _chargeBatch(); }
+    function testChargeBatch04() external { _chargeBatch(); }
+    function testChargeBatch05() external { _chargeBatch(); }
+    function testChargeBatch06() external { _chargeBatch(); }
+    function testChargeBatch07() external { _chargeBatch(); }
+    function testChargeBatch08() external { _chargeBatch(); }
+    function testChargeBatch09() external { _chargeBatch(); }
+    function testChargeBatch10() external { _chargeBatch(); }
+    function testChargeBatch11() external { _chargeBatch(); }
+    function testChargeBatch12() external { _chargeBatch(); }
+    function testChargeBatch13() external { _chargeBatch(); }
+    function testChargeBatch14() external { _chargeBatch(); }
+    function testChargeBatch15() external { _chargeBatch(); }
+    function testChargeBatch16() external { _chargeBatch(); }
+    function testChargeBatch17() external { _chargeBatch(); }
+    function testChargeBatch18() external { _chargeBatch(); }
+    function testChargeBatch19() external { _chargeBatch(); }
+    function testChargeBatch20() external { _chargeBatch(); }
+    function testChargeBatch21() external { _chargeBatch(); }
 
-        // Approve the Digil Token contract to spend the specified coinAmount.
-        bool approved = coins.approve(address(digil), 350 * coinMultiplier);
-        Assert.ok(approved, "Coin approval failed");
-
-        uint256 currentSeed = 350;
-        for (uint256 accountIndex = 0; accountIndex < 350; accountIndex++) {
-            currentSeed = uint256(keccak256(abi.encodePacked(currentSeed, accountIndex))); // Generate a new seed for each address
-            address addr = address(uint160(currentSeed)); // Convert the seed to an address
-            digil.chargeTokenAs{value: incrementalValue}(addr, dischargeTokenId, coinMultiplier);
-        }
+    function testStartDischarge() external {
+        Assert.ok(!digil.dischargeToken{value: 100000000000000}(dischargeTokenId), "Discharge should require continuation");
     }
 
-    /// #sender: account-3
-    /// #value: 3000000000000000000
-    function testChargeTokenPartThree() external payable {
-        uint256 coinMultiplier = 10 ** 18;
-        uint256 incrementalValue = 100000000000000;
-
-        // Approve the Digil Token contract to spend the specified coinAmount.
-        bool approved = coins.approve(address(digil), 350 * coinMultiplier);
-        Assert.ok(approved, "Coin approval failed");
-
-        uint256 currentSeed = 700;
-        for (uint256 accountIndex = 0; accountIndex < 350; accountIndex++) {
-            currentSeed = uint256(keccak256(abi.encodePacked(currentSeed, accountIndex))); // Generate a new seed for each address
-            address addr = address(uint160(currentSeed)); // Convert the seed to an address
-            digil.chargeTokenAs{value: incrementalValue}(addr, dischargeTokenId, coinMultiplier);
-        }
+    function testContinueDischarge1() external {
+        Assert.ok(!digil.dischargeToken(dischargeTokenId), "More discharge batches must remain");
     }
 
-    /// #sender: account-3
-    /// #value: 3000000000000000000
-    function testDischargeToken() external payable {
-        uint256 incrementalValue = 100000000000000;
+    function testContinueDischarge2() external {
+        Assert.ok(!digil.dischargeToken(dischargeTokenId), "More discharge batches must remain");
+    }
 
-        bool dischargeComplete = digil.dischargeToken{value: incrementalValue}(dischargeTokenId);
-        while (!dischargeComplete) {
-            dischargeComplete = digil.dischargeToken(dischargeTokenId);
-        }
+    function testContinueDischarge3() external {
+        Assert.ok(!digil.dischargeToken(dischargeTokenId), "More discharge batches must remain");
+    }
+
+    function testContinueDischarge4() external {
+        Assert.ok(!digil.dischargeToken(dischargeTokenId), "More discharge batches must remain");
+    }
+
+    function testContinueDischarge5() external {
+        Assert.ok(!digil.dischargeToken(dischargeTokenId), "More discharge batches must remain");
+    }
+
+    function testContinueDischarge6() external {
+        Assert.ok(!digil.dischargeToken(dischargeTokenId), "More discharge batches must remain");
+    }
+
+    function testContinueDischarge7() external {
+        Assert.ok(!digil.dischargeToken(dischargeTokenId), "More discharge batches must remain");
+    }
+
+    function testDischargeToken() external {
+        Assert.ok(digil.dischargeToken(dischargeTokenId), "Final discharge batch must complete");
 
         (, , , , , , uint256 contributionEpoch, uint256 distributionIndex, ) = digil.tokenData(dischargeTokenId);
         Assert.equal(contributionEpoch, 1, "Token contribution epoch in invalid state != 1");

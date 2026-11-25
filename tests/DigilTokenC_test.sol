@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.34;
+pragma solidity ^0.8.39;
 
 // This import is automatically injected by Remix
 import "remix_tests.sol"; 
@@ -32,7 +32,9 @@ contract CharlieTestSuite {
         // <instantiate contract>
         coins = DigilTestLibrary.getCoins();
         digil = DigilTestLibrary.getToken();
-        Assert.equal(uint(1), uint(1), "1 should be equal to 1");
+        Assert.ok(address(coins).code.length > 0, "Coin fixture must be deployed");
+        Assert.ok(address(digil).code.length > 0, "Token fixture must be deployed");
+        Assert.ok(address(coins) != address(digil), "Fixtures must be distinct");
     }
 
     /// #sender: account-2
@@ -134,7 +136,7 @@ contract CharlieTestSuite {
 
         {
             string memory uri = digil.tokenURI(tokenId);
-            Assert.equal(uri, string.concat("https://digil.co.in/token/", tokenId.toString()), "Default token URI should not be empty");
+            Assert.equal(uri, string.concat("https://api.digil.xyz/v1/tokens/", tokenId.toString()), "Default token URI should match the configured base");
         }
 
         {

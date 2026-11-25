@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.34;
+pragma solidity ^0.8.39;
 
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
@@ -22,11 +22,9 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 ///
 /// ## Donor-funded ETH rewards (NOT holding-based)
 /// This contract implements an ETH rewards system that is intentionally **not dependent on holding** DigilCoin.
-/// Users earn points by *spending* DigilCoin into eligible contracts **only when those contracts pull funds via `transferFrom`**:
-/// - A spend is eligible iff:
-///   - `spendWeightBps[to] > 0` (allowlisted spender contract)
-///   - `msg.sender == to` (the spender contract initiated the pull)
-///   - `from != 0` and `to != 0` (not mint/burn)
+/// Users earn points when eligible contracts collect nonrefundable feature fees via `spendFrom`.
+/// Ordinary transfers and `transferFrom` deposits never earn points. Weighted spender contracts
+/// are trusted to distinguish fees from refundable principal and to attribute fees to their payer.
 ///
 /// Donors fund ETH pools via `donate()` and `receive()`; users claim pro-rata by effective points.
 /// Effective points include a **days-active multiplier** (based on uncapped raw spend), while point-earning is
@@ -87,8 +85,8 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     struct EpochSnap {
         /// @notice Absolute epoch identifier.
         uint32 epochId;
-        /// @notice Epoch start timestamp.
-        uint32 startTime;
+        /// @notice Epoch start timestamp, with the same width as the governance clock.
+        uint48 startTime;
         // Reward parameter snapshots for this epoch (critical for math correctness).
         uint16 dayBonusBps;
         uint8  maxActiveDays;
@@ -144,7 +142,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     uint32 public currentEpochId;
 
     /// @notice Current epoch start timestamp.
-    uint32 public currentEpochStart;
+    uint48 public currentEpochStart;
 
     /// @notice Total ETH ever accounted into pools (donations + absorbed untracked ETH).
     uint256 public totalDonatedEth;
@@ -167,7 +165,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     event EpochFastForward(uint32 indexed fromEpochId, uint32 indexed toEpochId, uint256 sweptEth);
 
     /// @notice Emitted when the epoch advances.
-    event EpochAdvance(uint32 indexed newEpochId, uint32 newStartTime);
+    event EpochAdvance(uint32 indexed newEpochId, uint48 newStartTime);
 
     /// @notice Emitted when unclaimable ETH is swept forward into the current epoch.
     event SweptUnclaimable(uint32 indexed expiredEpochId, uint256 amountSwept, uint32 indexed intoEpochId);
@@ -212,7 +210,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
         // Initialize epoch 0 at deploy time
         currentEpochId = 0;
-        currentEpochStart = uint32(block.timestamp);
+        currentEpochStart = clock();
 
         EpochSnap storage e0 = _epochs[0];
         e0.epochId = 0;
@@ -251,7 +249,8 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// - Enabling a non-zero weight requires `spender` to be a deployed contract
     ///   (`spender.code.length > 0`), but disabling remains possible after code changes
     ///   or selfdestructs so stale allowlist entries can always be removed.
-    /// - Eligibility *also* requires `msg.sender == spender` so arbitrary user transfers do not earn points.
+    /// - Eligibility also requires the spender to collect the fee through `spendFrom`.
+    ///   Only enable contracts whose implementation excludes refundable deposits from this path.
     /// @param spender The deployed contract address that will be eligible to earn rewards for users who spend into it.
     /// @param weightBps Weight in basis points, must be <= 10,000. Use 0 to disable an existing entry.
     function setSpendWeight(address spender, uint16 weightBps) external onlyRole(CONFIG_ROLE) {
@@ -358,73 +357,20 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @param epochId The completed epoch identifier to claim against.
     function claim(uint32 epochId) external nonReentrant {
         _syncEpoch();
-
-        // Must be a completed epoch.
-        if (epochId >= currentEpochId) revert EpochNotClaimable();
-
-        // Enforce claim window: [currentEpochId-CLAIMABLE_EPOCHS, currentEpochId-1]
-        if (currentEpochId > uint32(CLAIMABLE_EPOCHS)) {
-            if (epochId < currentEpochId - uint32(CLAIMABLE_EPOCHS)) revert EpochNotClaimable();
-        }
-
-        uint8 slot = _epochSlot(epochId);
-        EpochSnap storage ep = _epochs[slot];
-        if (ep.epochId != epochId) revert EpochNotFound();
-
-        UserEpoch storage ue = _userEpoch[slot][msg.sender];
-        if (ue.epochId != epochId) revert NothingToClaim();
-        if ((ue.flags & 0x01) != 0) revert AlreadyClaimed();
-
-        uint256 pool = ep.poolEth;
-        uint256 totalEff = ep.totalEff;
-
-        // Mark claimed even if payout is 0, to prevent repeated calls.
-        ue.flags |= 0x01;
-
-        if (pool == 0 || totalEff == 0) {
-            emit Claim(msg.sender, epochId, 0, 0, totalEff);
-            return;
-        }
-
-        // User effective points = points * (BASE + activeDays*dayBonusBps)
-        uint256 userEff = ue.points * (uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(ep.dayBonusBps));
-        if (userEff == 0) {
-            emit Claim(msg.sender, epochId, 0, 0, totalEff);
-            return;
-        }
-
-        // Pro-rata payout (rounded down).
-        uint256 payout = (pool * userEff) / totalEff;
-
-        // Ensure we never exceed remaining pool due to rounding edge-cases.
-        uint256 remaining = pool - ep.claimedEth;
-        if (payout > remaining) payout = remaining;
-
-        // Update epoch + global accounting.
-        ep.claimedEth += payout;
-        totalClaimedEth += payout;
-
-        if (payout != 0) {
-            (bool ok,) = payable(msg.sender).call{value: payout}("");
-            if (!ok) revert ClaimTransferFailed();
-        }
-
-        emit Claim(msg.sender, epochId, payout, userEff, totalEff);
+        _claimNoSync(epochId);
     }
 
     /// @notice Claims multiple epochs in one call.
     /// @dev Convenience helper for UX; each epoch is validated individually.
     /// @param epochIds Array of epoch ids to claim.
     function claimMany(uint32[] calldata epochIds) external nonReentrant {
-        // `_syncEpoch()` is called in `claim` for each epoch; doing it once here is cheaper and safe.
         _syncEpoch();
         for (uint256 i = 0; i < epochIds.length; i++) {
-            // Call internal logic for each epoch (avoid re-sync).
             _claimNoSync(epochIds[i]);
         }
     }
 
-    /// @dev Internal claim used by `claimMany` to avoid repeated `_syncEpoch()` cost.
+    /// @dev Settles one epoch after the caller has synchronized the current epoch.
     function _claimNoSync(uint32 epochId) internal {
         if (epochId >= currentEpochId) revert EpochNotClaimable();
         if (currentEpochId > uint32(CLAIMABLE_EPOCHS)) {
@@ -439,6 +385,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         if (ue.epochId != epochId) revert NothingToClaim();
         if ((ue.flags & 0x01) != 0) revert AlreadyClaimed();
 
+        // Even a zero payout consumes this epoch's claim.
         ue.flags |= 0x01;
 
         uint256 pool = ep.poolEth;
@@ -454,6 +401,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
             return;
         }
 
+        // Round down the user's share and cap it at the remaining pool.
         uint256 payout = (pool * userEff) / totalEff;
         uint256 remaining = pool - ep.claimedEth;
         if (payout > remaining) payout = remaining;
@@ -469,38 +417,30 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         emit Claim(msg.sender, epochId, payout, userEff, totalEff);
     }
 
-    // Rewards tracking (override ERC20 hook)
+    // Explicit fee rewards and token movement
+
+    /// @notice Collects an allowance-backed feature fee and records eligible spending for its payer.
+    /// @dev Only configured spenders earn points. Zero-weight callers can collect fees without rewards.
+    ///      Ordinary transfers, deposits, refunds, mints, and burns do not record spending.
+    function spendFrom(address payer, uint256 amount) external returns (bool) {
+        address spender = _msgSender();
+        _spendAllowance(payer, spender, amount);
+        _transfer(payer, spender, amount);
+        uint16 weight = spendWeightBps[spender];
+        if (weight != 0 && amount != 0) {
+            _syncEpoch();
+            _recordEligibleSpend(payer, weight, amount);
+        }
+        return true;
+    }
 
     /// @notice Central token movement hook (mint, burn, transfer).
     /// @dev Required override because ERC20Pausable and ERC20Votes both extend the transfer lifecycle.
-    ///      We also piggyback to record eligible spend-to-earn activity:
-    ///      - eligible spend is recorded only when `to` is allowlisted and `msg.sender == to`.
-    ///      - this pattern matches contract-driven `transferFrom(user, contract, amount)` pulls.
     /// @param from Sender (zero on mint).
     /// @param to Recipient (zero on burn).
     /// @param value Amount moved.
     function _update(address from, address to, uint256 value) internal override(ERC20, ERC20Pausable, ERC20Votes) {
-        // First run the canonical OZ flow:
-        // - enforces pause rules (reverts if paused)
-        // - updates balances
-        // - updates vote checkpoints
         super._update(from, to, value);
-
-        // Only attempt rewards tracking for normal transfers (not mint/burn).
-        if (from == address(0) || to == address(0) || value == 0) return;
-
-        // Quick eligibility test before paying the cost of epoch sync.
-        uint16 w = spendWeightBps[to];
-        if (w == 0) return;
-
-        // Critical anti-farming rule: only count if the recipient contract initiated the transferFrom pull.
-        if (msg.sender != to) return;
-
-        // Ensure epoch math is correct at boundary transitions.
-        _syncEpoch();
-
-        // Record points + active-day progress for the spender's weight.
-        _recordEligibleSpend(from, w, value);
     }
 
     /// @dev Records eligible spend for a user:
@@ -528,7 +468,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         }
 
         // Compute day index in [0..29] (safe because EPOCH_LENGTH=30 days).
-        uint8 dayIndex = uint8((block.timestamp - uint256(currentEpochStart)) / 1 days);
+        uint8 dayIndex = uint8((clock() - currentEpochStart) / 1 days);
 
         // On a new day, reset day counters (raw and counted).
         if (dayIndex != ue.lastDayIndex) {
@@ -597,9 +537,9 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @dev Advances epochs as needed so `currentEpochId`/`currentEpochStart` match `block.timestamp`.
     ///      Handles long inactivity by advancing multiple epochs in a single call.
     function _syncEpoch() internal {
-        // How many full epochs have elapsed since currentEpochStart?
-        uint256 elapsed = block.timestamp - uint256(currentEpochStart);
-        uint32 steps = uint32(elapsed / uint256(EPOCH_LENGTH));
+        uint48 elapsed = clock() - currentEpochStart;
+        // The full uint48 clock range spans fewer than 2**32 30-day epochs.
+        uint32 steps = uint32(elapsed / EPOCH_LENGTH);
         if (steps == 0) return;
 
         // If the gap is "reasonable", advance normally (preserves detailed sweep events).
@@ -634,7 +574,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
         // Compute the new "current" epoch based on time jump.
         uint32 toId = fromId + steps;
-        uint32 toStart = currentEpochStart + uint32(uint256(steps) * uint256(EPOCH_LENGTH));
+        uint48 toStart = currentEpochStart + uint48(steps) * EPOCH_LENGTH;
 
         // 1) Sweep ALL remaining ETH from currently stored epoch slots.
         // These epochs are far beyond the claim window in a huge jump scenario,
@@ -662,7 +602,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
             EpochSnap storage ep = _epochs[slot];
             ep.epochId = eid;
-            ep.startTime = toStart - uint32(uint256(k) * uint256(EPOCH_LENGTH));
+            ep.startTime = toStart - uint48(k) * EPOCH_LENGTH;
 
             // Snapshot the epoch parameters (per your previous critical fix).
             ep.dayBonusBps = dayBonusBps;
@@ -697,7 +637,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
 
         // Move to next epoch.
         uint32 newId = prevId + 1;
-        uint32 newStart = currentEpochStart + uint32(EPOCH_LENGTH);
+        uint48 newStart = currentEpochStart + EPOCH_LENGTH;
 
         currentEpochId = newId;
         currentEpochStart = newStart;
@@ -773,11 +713,13 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     }
 
     /// @notice Returns the stored per-epoch data for `user` and `epochId`.
-    /// @dev Reverts if that user has no data for the epoch (never earned points) or the epoch is not stored.
+    /// @dev Reverts with EpochNotFound if the global slot does not hold this epoch. An untouched
+    ///      user has a zero-filled record for stored epoch zero and no record for later epochs.
     /// @param user Address to fetch.
     /// @param epochId Epoch to fetch.
     function getUserEpoch(address user, uint32 epochId) external view returns (UserEpoch memory) {
         uint8 slot = _epochSlot(epochId);
+        if (_epochs[slot].epochId != epochId) revert EpochNotFound();
         UserEpoch memory ue = _userEpoch[slot][user];
         if (ue.epochId != epochId) revert NothingToClaim();
         return ue;

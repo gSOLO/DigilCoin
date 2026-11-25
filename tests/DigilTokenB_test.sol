@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.34;
+pragma solidity ^0.8.39;
 
 // This import is automatically injected by Remix
 import "remix_tests.sol"; 
@@ -29,7 +29,9 @@ contract BetaTestSuite {
         // <instantiate contract>
         coins = DigilTestLibrary.getCoins();
         digil = DigilTestLibrary.getToken();
-        Assert.equal(uint(1), uint(1), "1 should be equal to 1");
+        Assert.ok(address(coins).code.length > 0, "Coin fixture must be deployed");
+        Assert.ok(address(digil).code.length > 0, "Token fixture must be deployed");
+        Assert.ok(address(coins) != address(digil), "Fixtures must be distinct");
     }
 
     /// #sender: account-1
@@ -82,7 +84,7 @@ contract BetaTestSuite {
 
     /// #sender: account-0
     /// #value: 55000000000000000
-    function testActivateToken() external payable {
+    function testPrepareActivation() external payable {
         uint256 coinMultiplier = 10 ** 18;
         uint256 incrementalValue = 100000000000000;
 
@@ -96,12 +98,31 @@ contract BetaTestSuite {
             digil.chargeTokenAs{value: incrementalValue}(TestsAccounts.getAccount(accountIndex), tokenId, coinMultiplier);
         }
         
-        uint256 currentSeed = 1;
-        for (uint256 accountIndex = 0; accountIndex < 299; accountIndex++) {
-            currentSeed = uint256(keccak256(abi.encodePacked(currentSeed, accountIndex))); // Generate a new seed for each address
-            address addr = address(uint160(currentSeed)); // Convert the seed to an address
-            digil.chargeTokenAs{value: incrementalValue}(addr, tokenId, coinMultiplier);
+        _batchTokenId = tokenId;
+    }
+
+    uint256 private _batchTokenId;
+    uint256 private _batchSeed = 1;
+    uint256 private _batchIndex;
+
+    function _chargeBatch(uint256 count) private {
+        for (uint256 i; i < count; ++i) {
+            _batchSeed = uint256(keccak256(abi.encodePacked(_batchSeed, _batchIndex++)));
+            digil.chargeTokenAs{value: 100000000000000}(address(uint160(_batchSeed)), _batchTokenId, 1e18);
         }
+    }
+
+    function testChargeBatch1() external { _chargeBatch(50); }
+    function testChargeBatch2() external { _chargeBatch(50); }
+    function testChargeBatch3() external { _chargeBatch(50); }
+    function testChargeBatch4() external { _chargeBatch(50); }
+    function testChargeBatch5() external { _chargeBatch(50); }
+    function testChargeBatch6() external { _chargeBatch(49); }
+
+    function testActivateToken() external {
+        uint256 coinMultiplier = 1e18;
+        uint256 tokenId = _batchTokenId;
+        uint256 incrementalValue = 100000000000000;
 
         (uint256 newCharge, uint256 newActiveCharge, uint256 newValue, , ) = digil.tokenCharge(tokenId);
         Assert.ok(newCharge >= coinMultiplier * 314, "Token charge did not increase appropriately");
@@ -120,17 +141,22 @@ contract BetaTestSuite {
         Assert.ok(!isActivating, "Token activation in invalid state (activating)");
         Assert.ok(!isDischarging, "Token distribution in invalid state (discharging)");
 
-        bool activationComplete = digil.activateToken(tokenId);
-        while(!activationComplete) {
-            (, isActivating, , , , , , , ) = digil.tokenData(tokenId);
-            Assert.ok(isActivating, "Token activation in invalid state (not activating)");
-            activationComplete = digil.activateToken(tokenId);
-        }
-        (isActive, isActivating, , , , , , , ) = digil.tokenData(tokenId);
+        Assert.ok(!digil.activateToken(tokenId), "Activation should require continuation");
+    }
+
+    function testContinueActivation() external {
+        Assert.ok(!digil.activateToken(_batchTokenId), "Another activation batch must remain");
+    }
+
+    function testActivationComplete() external {
+        uint256 coinMultiplier = 1e18;
+        uint256 tokenId = _batchTokenId;
+        Assert.ok(digil.activateToken(tokenId), "Final activation batch must complete");
+        (bool isActive, bool isActivating, , , , , , , ) = digil.tokenData(tokenId);
         Assert.ok(isActive, "Token activation in invalid state (active == false)");
         Assert.ok(!isActivating, "Token activation in invalid state (activating)");
 
-        (newCharge, newActiveCharge, newValue, , ) = digil.tokenCharge(tokenId);
+        (uint256 newCharge, uint256 newActiveCharge, uint256 newValue, , ) = digil.tokenCharge(tokenId);
         Assert.ok(newCharge == 0, "Token charge did not decrease appropriately");
         Assert.ok(newActiveCharge == coinMultiplier * 315, "Token active charge did not increase appropriately");
         Assert.ok(newValue == 0, "Token value should reset");

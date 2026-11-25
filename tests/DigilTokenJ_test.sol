@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0
-pragma solidity ^0.8.34;
+pragma solidity ^0.8.39;
 
 // This import is automatically injected by Remix
 import "remix_tests.sol";
@@ -31,7 +31,9 @@ contract JuiletTestSuite {
         // <instantiate contract>
         coins = DigilTestLibrary.getCoins();
         digil = DigilTestLibrary.getToken();
-        Assert.equal(uint(1), uint(1), "1 should be equal to 1");
+        Assert.ok(address(coins).code.length > 0, "Coin fixture must be deployed");
+        Assert.ok(address(digil).code.length > 0, "Token fixture must be deployed");
+        Assert.ok(address(coins) != address(digil), "Fixtures must be distinct");
     }
 
     /// #sender: account-9
@@ -165,8 +167,8 @@ contract JuiletTestSuite {
     }
 
     /// #sender: account-9
-    /// #value: 55000000000000000
-    function testAmplification() public {
+    /// #value: 102500000000000000
+    function testAmplification() public payable {
         uint256 coinMultiplier = 10 ** 18;
 
         // 1. Create a simple token (no plane, no threshold, unrestricted).
@@ -205,6 +207,7 @@ contract JuiletTestSuite {
 
         // 4. Charge the token once while the amplification buff is active.
         uint256 chargeCoins = 100 * coinMultiplier;
+        Assert.ok(coins.approve(address(digil), chargeCoins), "Coin approval failed");
 
         // incrementalValue == 0, so no ETH required here.
         bool charged = digil.chargeToken{value: 0}(tokenId, chargeCoins);
