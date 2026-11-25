@@ -2,3 +2,4 @@
 /.states
 /node_modules
 /.remix
+/.deps/npm/.resolution-index.json
