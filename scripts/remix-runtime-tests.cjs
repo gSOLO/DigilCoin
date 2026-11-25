@@ -26,6 +26,8 @@ const {
 const { run } = require('./remix/workflow.js');
 const { discover, executeSuite, assertionErrors } = require('./solidity-suite.cjs');
 
+const previousCompiler = '0.8.34+commit.80d5c536';
+
 async function main(scriptEthers) {
   console.log(`Remix plugin adapter checks using ethers ${scriptEthers.version}`);
   const sources = {
@@ -33,6 +35,8 @@ async function main(scriptEthers) {
     ...sourcesIn('tests', (file) => file === 'RunnerFailureProbe.sol'),
   };
   const contracts = compile(sources);
+  const { compiler } = JSON.parse(contracts['contracts/DigilCoin.sol'].DigilCoin.metadata);
+  const currentCompilerFile = `soljson-v${compiler.version}.js`;
   const h = await createHarness(contracts);
   const config = JSON.parse(fs.readFileSync(path.join(root, 'remix.config.json'), 'utf8'));
   let provider = 'vm-osaka',
@@ -43,7 +47,7 @@ async function main(scriptEthers) {
     badDependency = false,
     offline = false;
   let compilationMode = 'ok',
-    compilerVersion = 'soljson-v0.8.34+commit.80d5c536.js',
+    compilerVersion = currentCompilerFile,
     changeInput = () => {},
     stateReads = 0;
   let proofFault = '';
@@ -104,7 +108,7 @@ async function main(scriptEthers) {
         const event = compilationMode === 'failure' ? 'compilationFailed' : 'compilationFinished';
         const eventInput = compilationMode === 'missing-input' ? undefined : JSON.stringify(input);
         const eventVersion =
-          compilationMode === 'wrong-version' ? '0.8.33+commit.64118f21' : compilerVersion;
+          compilationMode === 'wrong-version' ? previousCompiler : compilerVersion;
         // An unrelated compilation must not satisfy this run's freshness check.
         emit(
           'compilationFinished',
@@ -268,9 +272,9 @@ async function main(scriptEthers) {
   await assert.rejects(createRuntime(options), /Osaka/);
   provider = 'vm-osaka';
   const runtime = await createRuntime(options);
-  compilerVersion = 'soljson-v0.8.33+commit.64118f21.js';
+  compilerVersion = `soljson-v${previousCompiler}.js`;
   await assert.rejects(runtime.compile(), /Select Solidity/);
-  compilerVersion = 'soljson-v0.8.34+commit.80d5c536.js';
+  compilerVersion = currentCompilerFile;
   const settingsMutations = [
     (input) => {
       input.settings.optimizer = { enabled: false, runs: 200 };
@@ -323,6 +327,12 @@ async function main(scriptEthers) {
     assert.equal(listeners.size, 0, `${mode} must clean up event listeners`);
   }
   compilationMode = 'ok';
+  const originalMetadata = artifact.metadata;
+  const staleMetadata = JSON.parse(originalMetadata);
+  staleMetadata.compiler.version = previousCompiler;
+  artifact.metadata = JSON.stringify(staleMetadata);
+  await assert.rejects(runtime.compile(), /Unexpected artifact compiler/);
+  artifact.metadata = originalMetadata;
   assert.equal(broadcasts, 0, 'compiler validation failures must not deploy anything');
   console.log(
     'PASS Desktop structured-clone regression, exact compilation-input checks and compiler event cleanup'

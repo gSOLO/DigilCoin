@@ -6,7 +6,7 @@
  */
 const NAMES = ['DigilCoin', 'DigilToken', 'DigilGovernor', 'DigilTimelock'];
 const GAS = 16777216n;
-const VERSION = '0.8.34+commit.80d5c536';
+const VERSION = '0.8.39+commit.ce47f2c8';
 const RECORD = '.remix/deployment.json';
 
 function invariant(condition, message) {
@@ -177,7 +177,7 @@ async function createRuntime({
     // rather than a previous compile whose artifacts happen to still be cached.
     const root = '.remix/Compile.sol';
     const source =
-      '// SPDX-License-Identifier: GPL-3.0\npragma solidity ^0.8.34;\n' +
+      `// SPDX-License-Identifier: GPL-3.0\npragma solidity ^${VERSION.split('+')[0]};\n` +
       '// Run ' +
       Date.now() +
       '-' +

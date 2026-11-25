@@ -7,6 +7,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const solc = require('solc');
+const pinnedVersion = require('../package.json').devDependencies.solc;
 
 const root = path.resolve(__dirname, '..');
 function sourcesIn(directory, predicate = (file) => file.endsWith('.sol')) {
@@ -25,7 +26,7 @@ function sourcesIn(directory, predicate = (file) => file.endsWith('.sol')) {
 
 /** Compile a source-name -> { content } map; return Solidity's contract artifacts. */
 function compile(sources = sourcesIn('contracts')) {
-  assert.ok(solc.version().startsWith('0.8.34+'), 'Use the pinned Solidity compiler');
+  assert.ok(solc.version().startsWith(`${pinnedVersion}+`), `Expected Solidity ${pinnedVersion}`);
   const config = JSON.parse(fs.readFileSync(path.join(root, 'remix.config.json'), 'utf8'));
   // Use the repository profile unchanged, including optimizer details and output selection.
   const output = JSON.parse(

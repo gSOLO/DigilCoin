@@ -10,7 +10,7 @@ This file provides guidance for AI coding agents and contributors working in thi
 
 - **Project**: DigilCoin / Digital Sigils smart-contract suite.
 - **Domain**: Ethereum smart contracts (ERC-20, ERC-721, governance, timelock).
-- **Primary language**: Solidity (`^0.8.34`).
+- **Primary language**: Solidity (`^0.8.39`).
 - **Current repo shape**:
   - `contracts/` — protocol contracts and interfaces.
   - `tests/` — Solidity tests intended for Remix test runner style.
@@ -52,7 +52,7 @@ This repo is currently structured for Remix-compatible Solidity development.
 ### Compiler profile (from `remix.config.json`)
 
 - Language: Solidity
-- EVM version: `prague`
+- EVM version: `osaka`
 - Optimizer detail flags enabled (with `yul: false`)
 - Revert strings: `strip`
 - Rich output selection including ABI, metadata, docs, storage layout, bytecode, gas estimates
