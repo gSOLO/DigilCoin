@@ -39,6 +39,8 @@ interface IDigilToken is IERC721, IERC721Receiver {
 
     // Withdraw
     function withdraw() external returns (uint256 coins, uint256 value);
+    /// @notice Withdraws the caller's distributions with ETH sent to a chosen recipient and DIGIL to the caller.
+    function withdrawTo(address payable ethRecipient) external returns (uint256 coins, uint256 value);
 
     // Opt In / Opt Out
     function setOptStatus(bool optOut) external payable;

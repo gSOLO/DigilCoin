@@ -237,6 +237,15 @@ async function main() {
     const otherParams = ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [carolNft]);
     await h.reverts(
       governor,
+      carol,
+      'castVoteWithReasonAndParams',
+      [id, 1, '', otherParams],
+      0n,
+      'InvalidParams'
+    );
+    assert.equal((await h.read(governor, 'hasVoted', [id, carol.address]))[0], false);
+    await h.reverts(
+      governor,
       bob,
       'castVoteWithReasonAndParams',
       [id, 1, '', otherParams],
@@ -414,6 +423,52 @@ async function main() {
     await invoke(receiver, token, 'withdraw');
     assert.equal(await ethBalance(receiver.address), (floor * 95n) / 100n);
     assert.equal((await h.read(coin, 'balanceOf', [receiver.address]))[0], 2n * unit);
+  });
+
+  test('A wallet can redirect its ETH while DIGIL, opt-out and yield stay with the claimant', async ({
+    coin,
+    token,
+  }) => {
+    const wallet = await actor();
+    const recipient = await actor();
+    const minted = await invoke(wallet, token, 'createToken', [0, 0, false, 0, '0x'], floor);
+    const id = h.events(token, minted, 'Transfer')[0].tokenId;
+    await invoke(wallet, token, 'dischargeToken', [id], floor);
+    await h.send(wallet, admin, 'configure', [true, false, ZERO, '0x']);
+    await h.send(recipient, admin, 'configure', [true, false, ZERO, '0x']);
+    for (const address of [ZERO, recipient.address]) {
+      await h.reverts(wallet, admin, 'execute', [
+        token.address,
+        token.iface.encodeFunctionData('withdrawTo', [address]),
+      ]);
+    }
+    // A different account can only route its own credit.
+    await h.send(token, bob, 'withdrawTo', [bob.address]);
+    await h.send(recipient, admin, 'configure', [
+      false,
+      false,
+      token.address,
+      token.iface.encodeFunctionData('withdraw'),
+    ]);
+    await invoke(wallet, token, 'setOptStatus', [true], 100n * floor);
+    await invoke(wallet, token, 'withdrawTo', [recipient.address]);
+    const expectedETH = floor - floor / 20n;
+    assert.equal(await ethBalance(recipient.address), expectedETH);
+    assert.equal(await ethBalance(wallet.address), 0n);
+    assert.equal((await h.read(recipient, 'attempted'))[0], true);
+    assert.equal((await h.read(recipient, 'reentered'))[0], false);
+    assert.equal((await h.read(coin, 'balanceOf', [wallet.address]))[0], 0n);
+    await invoke(wallet, token, 'setOptStatus', [false], 100n * floor);
+    await h.send(token, admin, 'createValue', [id, floor], floor);
+    await invoke(wallet, token, 'dischargeToken', [id], floor);
+    h.time += 900n; // One collector-yield interval for the wallet's NFT.
+    await invoke(wallet, token, 'withdrawTo', [recipient.address]);
+    const expectedDIGIL = 3n * unit + (100n * unit + unit / 7n) / 100n;
+    assert.equal((await h.read(coin, 'balanceOf', [wallet.address]))[0], expectedDIGIL);
+    assert.equal((await h.read(coin, 'balanceOf', [recipient.address]))[0], 0n);
+    await invoke(wallet, token, 'withdrawTo', [recipient.address]);
+    assert.equal(await ethBalance(recipient.address), 2n * expectedETH);
+    assert.equal((await h.read(coin, 'balanceOf', [wallet.address]))[0], expectedDIGIL);
   });
 
   test('Reward claim failure preserves entitlement and blocks a reentrant claim', async ({

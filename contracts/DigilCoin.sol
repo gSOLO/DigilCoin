@@ -764,11 +764,13 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     }
 
     /// @notice Returns the stored per-epoch data for `user` and `epochId`.
-    /// @dev Reverts if that user has no data for the epoch (never earned points) or the epoch is not stored.
+    /// @dev Reverts with EpochNotFound if the global slot does not hold this epoch. An untouched
+    ///      user has a zero-filled record for stored epoch zero and no record for later epochs.
     /// @param user Address to fetch.
     /// @param epochId Epoch to fetch.
     function getUserEpoch(address user, uint32 epochId) external view returns (UserEpoch memory) {
         uint8 slot = _epochSlot(epochId);
+        if (_epochs[slot].epochId != epochId) revert EpochNotFound();
         UserEpoch memory ue = _userEpoch[slot][user];
         if (ue.epochId != epochId) revert NothingToClaim();
         return ue;

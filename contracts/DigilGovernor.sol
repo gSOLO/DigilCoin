@@ -7,6 +7,7 @@ import {GovernorTimelockControl} from "@openzeppelin/contracts/governance/extens
 import {GovernorVotes} from "@openzeppelin/contracts/governance/extensions/GovernorVotes.sol";
 import {IVotes} from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import {TimelockController} from "@openzeppelin/contracts/governance/TimelockController.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IERC721} from "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import {Checkpoints} from "@openzeppelin/contracts/utils/structs/Checkpoints.sol";
@@ -52,7 +53,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @notice Maximum lock duration used both for validation and for bonus normalization.
     uint256 private constant MAX_LOCK_DURATION = 1460 days; // 4 years
     /// @dev Quorum is computed as a percentage of sqrt(totalSupplyAtSnapshot).
-    uint256 private constant QUORUM_PERCENT = 4; // 4%
+    uint256 private constant QUORUM_DIVISOR = 25; // 4% of the square root of supply.
 
     /// @dev Tracks the PvP staking markets per proposal.
     struct ProposalMarket {
@@ -112,10 +113,12 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     event Burn(uint256 indexed proposalId, uint256 amount);
 
     // Errors
-    /// @notice Thrown when vote params are missing (tokenId is required for NFT-gated voting),
+    /// @notice Thrown when a ballot lacks a tokenId or snapshot voting power,
     ///         a lock operation would overflow the checkpointed locked amount type (uint208),
     ///         or a staking amount is zero.
     error InvalidParams();
+    /// @notice The Governor cannot relay calls to the DIGIL it holds for lockers and stakers.
+    error ProtectedToken();
     /// @notice Thrown when the same NFT tokenId is reused on the same proposal.
     error AlreadyUsedNft(uint256 tokenId);
     /// @notice Thrown when `account` is not owner/approved operator for the specified NFT tokenId.
@@ -192,6 +195,13 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         _proposalThreshold = newProposalThreshold;
     }
 
+    /// @notice Allows governance to recover unrelated assets while protecting all DIGIL in custody.
+    function relay(address target, uint256 value, bytes calldata data) public payable override onlyGovernance {
+        if (target == address(token())) revert ProtectedToken();
+        (bool success, bytes memory result) = target.call{value: value}(data);
+        Address.verifyCallResult(success, result);
+    }
+
     // --- VOTE LOGIC ---
 
     /// @dev Disabled: voting must include params (an NFT tokenId) for gate/replay protection.
@@ -226,36 +236,18 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         uint48 snapshot = uint48(timepoint);
         
         // Look up the latest lock amount/expiry that was in effect at the snapshot.
-        uint256 lockedAmount = _userLockedAmounts[account].upperLookup(snapshot);
         uint256 lockedExpiry = _userLockExpiries[account].upperLookup(snapshot);
-
-        // If lock existed and was valid at the snapshot
-        if (lockedAmount > 0 && lockedExpiry > snapshot) {
-            // Remaining lock time as-of the snapshot, capped at MAX_LOCK_DURATION for normalization.
-            uint256 timeRemaining;
-            unchecked { timeRemaining = lockedExpiry - snapshot; } // Guarded by lockedExpiry > snapshot.
-            if (timeRemaining > MAX_LOCK_DURATION) {
-                timeRemaining = MAX_LOCK_DURATION;
-            }
-            
-            // Bonus Model: LockedAmount + (LockedAmount * Time / MaxTime)
-            // - If timeRemaining == 0 -> bonus = 0, power adds lockedAmount.
-            // - If timeRemaining == MAX_LOCK_DURATION -> bonus = lockedAmount, power adds 2x lockedAmount.
-            uint256 timeBonus;
-            // Checkpoint principal is uint208 and duration is capped below 2^27; the product fits uint256.
-            unchecked { timeBonus = (lockedAmount * timeRemaining) / MAX_LOCK_DURATION; }
-            
-            // Add both principal and bonus power to the liquid power.
-            unchecked { lockedAmount += timeBonus; } // At most twice the uint208 principal.
-            rawWeight += lockedAmount;
-        }
-
-        return rawWeight;
+        if (lockedExpiry <= snapshot) return rawWeight;
+        uint256 lockedAmount = _userLockedAmounts[account].upperLookup(snapshot);
+        // The expiry checkpoint was written at or before snapshot, at most MAX_LOCK_DURATION ahead.
+        // A uint208 principal times that duration fits uint256, as does twice the principal.
+        unchecked { lockedAmount += lockedAmount * (lockedExpiry - snapshot) / MAX_LOCK_DURATION; }
+        return rawWeight + lockedAmount;
     }
 
     /// @notice Counts a vote for a proposal using NFT gating, replay protection, and quadratic counting.
     /// @dev `weight` is raw power computed by `_getVotes()` at the proposal snapshot; this function applies sqrt() and tallies.
-    /// Params MUST decode to a `uint256 tokenId`.
+    /// Params MUST decode to a `uint256 tokenId`. Only positive snapshot power can consume the credential.
     /// @param proposalId Proposal being voted on.
     /// @param account Voter address credited for the vote.
     /// @param support Support value (Against/For/Abstain).
@@ -263,8 +255,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// @param params ABI-encoded `uint256 tokenId` used for NFT gating and anti-replay.
     /// @return finalWeight Quadratic (sqrt) weight actually counted.
     function _countVote(uint256 proposalId, address account, uint8 support, uint256 weight, bytes memory params) internal virtual override returns (uint256) {
-        // Enforce presence of vote params (must contain tokenId).
-        if (params.length == 0) revert InvalidParams();
+        if (params.length == 0 || weight == 0) revert InvalidParams();
         // Decode the NFT tokenId used for gating.
         uint256 tokenId = abi.decode(params, (uint256));
 
@@ -280,10 +271,11 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // 2. NFT GATE (Scoped)
         // Voter must be the owner OR approved operator for the tokenId (supports delegated custody/approval patterns).
         {
-            address owner = nftGate.ownerOf(tokenId);
+            IERC721 gate = nftGate;
+            address owner = gate.ownerOf(tokenId);
             if (owner != account && 
-                nftGate.getApproved(tokenId) != account && 
-                !nftGate.isApprovedForAll(owner, account)) {
+                gate.getApproved(tokenId) != account &&
+                !gate.isApprovedForAll(owner, account)) {
                 revert InsufficientApproval(account, tokenId);
             }
         }
@@ -310,12 +302,12 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     }
 
     /// @notice Calculates the quorum requirement at a given timepoint.
-    /// @dev Quorum = QUORUM_PERCENT% of sqrt(totalSupplyAtTimepoint). Uses the IVotes snapshot supply.
+    /// @dev Quorum is 4% of the square root of the IVotes snapshot supply, rounded down.
     /// @param timepoint Snapshot timepoint used to query past total supply.
     function quorum(uint256 timepoint) public view override returns (uint256) {
         uint256 pastTotalSupply = token().getPastTotalSupply(timepoint);
         uint256 sqrtSupply = Math.sqrt(pastTotalSupply);
-        return (sqrtSupply * QUORUM_PERCENT) / 100;
+        return sqrtSupply / QUORUM_DIVISOR;
     }
 
     /// @dev Proposal passes if ForVotes > AgainstVotes (Abstain does not affect success).
@@ -406,45 +398,26 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // Read current state
         // `clock()` aligns with token().clock() so checkpoints and snapshots share the same time scale.
         uint48 nowTs = clock();
-        uint208 currentAmount = _userLockedAmounts[sender].latest();
-        uint48 currentExpiry = uint48(_userLockExpiries[sender].latest());
-
-        // Decide new state (no external calls yet)
-        uint208 newAmount = currentAmount;
-        if (amount > 0) {
-            // A uint208 checkpoint bounds currentAmount; compare available capacity without overflowing.
-            unchecked {
-                if (amount > uint256(type(uint208).max) - currentAmount) revert InvalidParams();
-                newAmount = uint208(uint256(currentAmount) + amount);
-            }
-        }
-
-        // Proposed expiry is “now + duration” in the Governor’s clock units (timestamp-mode).
-        uint48 proposedExpiry = uint48(nowTs + uint48(duration));
-        bool isExtension = proposedExpiry > currentExpiry;
-
-        // Caller must either add coins or extend expiry.
-        if (amount == 0 && !isExtension) {
+        Checkpoints.Trace208 storage expiries = _userLockExpiries[sender];
+        uint48 expiry = uint48(expiries.latest());
+        uint48 proposedExpiry = nowTs + uint48(duration);
+        if (proposedExpiry > expiry) {
+            expiry = proposedExpiry;
+            expiries.push(nowTs, expiry);
+        } else if (amount == 0) {
             revert NoLockAction();
         }
 
-        // --- EFFECTS ---
-        // Record new checkpoints before external token transfer; revert will roll back if transfer fails.
         if (amount > 0) {
-            _userLockedAmounts[sender].push(nowTs, newAmount);
+            Checkpoints.Trace208 storage amounts = _userLockedAmounts[sender];
+            uint208 current = amounts.latest();
+            unchecked {
+                if (amount > type(uint208).max - current) revert InvalidParams();
+                amounts.push(nowTs, current + uint208(amount));
+            }
+            _pull(sender, amount);
         }
-        if (isExtension) {
-            _userLockExpiries[sender].push(nowTs, proposedExpiry);
-        }
-
-        // --- INTERACTION ---
-        // Pull tokens into the Governor only when increasing locked amount.
-        if (amount > 0) {
-            _transferFrom(sender, address(this), amount);
-        }
-
-        // Emit final expiry used (either newly extended or unchanged).
-        emit Lock(sender, amount, isExtension ? proposedExpiry : currentExpiry);
+        emit Lock(sender, amount, expiry);
     }
 
     /// @notice Unlocks and withdraws all locked coins after the lock period has expired.
@@ -455,7 +428,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // 1. Check current state
         // Use clock() to ensure time consistency with lockCoins/voting
         uint48 nowTs = clock();
-        uint208 currentAmount = _userLockedAmounts[sender].latest();
+        Checkpoints.Trace208 storage amounts = _userLockedAmounts[sender];
+        uint208 currentAmount = amounts.latest();
         uint48 currentExpiry = uint48(_userLockExpiries[sender].latest());
 
         // 2. Validation
@@ -469,7 +443,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         // 3. Effects (Update State)
         // We push a new checkpoint with 0 amount. 
         // This ensures future calls to _getVotes return 0 for locked balance.
-        _userLockedAmounts[sender].push(nowTs, 0);
+        amounts.push(nowTs, 0);
         
         // We do not strictly need to clear expiry, as 0 amount results in 0 voting power 
         // regardless of the expiry date in _getVotes.
@@ -484,15 +458,19 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     // --- PVP STAKING (PREDICTION MARKET) ---
 
     /// @dev Internal safe wrapper for ERC20 transferFrom with explicit false-return handling.
-    function _transferFrom(address from, address to, uint256 amount) internal {
-        bool success = IERC20Burnable(address(token())).transferFrom(from, to, amount);
-        if (!success) revert TransferFailed(from, to, amount);
+    function _pull(address from, uint256 amount) private {
+        bool success = IERC20Burnable(address(token())).transferFrom(from, address(this), amount);
+        if (!success) _revertTransfer(from, address(this), amount);
     }
 
     /// @dev Internal safe wrapper for ERC20 transfer with explicit false-return handling.
     function _transfer(address to, uint256 amount) internal {
         bool success = IERC20Burnable(address(token())).transfer(to, amount);
-        if (!success) revert TransferFailed(address(this), to, amount);
+        if (!success) _revertTransfer(address(this), to, amount);
+    }
+
+    function _revertTransfer(address from, address to, uint256 amount) private pure {
+        revert TransferFailed(from, to, amount);
     }
 
     /// @notice Permanently settles a market from its completed ballot, irrespective of later execution or cancellation.
@@ -533,16 +511,13 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         ProposalMarket storage market = proposalMarkets[proposalId];
 
         // --- EFFECTS ---
-        if (supportFor) {
-            market.stakeFor[sender] += amount;
-            market.totalStakedFor += amount;
-        } else {
-            market.stakeAgainst[sender] += amount;
-            market.totalStakedAgainst += amount;
-        }
+        mapping(address => uint256) storage stakes = supportFor ? market.stakeFor : market.stakeAgainst;
+        stakes[sender] += amount;
+        if (supportFor) market.totalStakedFor += amount;
+        else market.totalStakedAgainst += amount;
 
         // --- INTERACTION ---
-        _transferFrom(sender, address(this), amount);
+        _pull(sender, amount);
 
         emit Stake(proposalId, sender, supportFor, amount);
     }
@@ -575,7 +550,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
             (uint256 winningPool, uint256 losingPool) = _marketPools(market, outcome);
             uint256 stakeWon = outcome == FOR ? userFor : userAgainst;
             if (stakeWon == 0) revert StakeLostOrNothingToClaim();
-            payout = stakeWon + stakeWon * losingPool / winningPool;
+            payout = stakeWon + Math.mulDiv(stakeWon, losingPool, winningPool);
         }
 
         _transfer(sender, payout);
@@ -611,8 +586,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     }
 
     function _marketPools(ProposalMarket storage market, uint8 outcome) private view returns (uint256 winning, uint256 losing) {
-        return outcome == FOR
-            ? (market.totalStakedFor, market.totalStakedAgainst)
-            : (market.totalStakedAgainst, market.totalStakedFor);
+        winning = market.totalStakedFor;
+        losing = market.totalStakedAgainst;
+        if (outcome != FOR) return (losing, winning);
     }
 }

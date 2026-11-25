@@ -48,7 +48,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Batch operations limiter
     uint16 private _batchSize = 128;                            // Configurable batch size for distribution or discharge operations
     uint256 private constant MIN_BATCH_SIZE = 32;               // Minimum number of items to process in a single batch operation
-    uint256 private constant MAX_BATCH_SIZE = 1024;             // Maximum number of items to process in a single batch operation
+    uint256 private constant MAX_BATCH_SIZE = 2048;             // Configurable ceiling; practical batch sizes depend on chain gas limits
     uint256 private constant KEEPER_BOUNTY_DIVISOR = 100;       // 1% of committed, directly deposited DIGIL
 
     // Define the inactivity period for reclaiming contributions
@@ -465,8 +465,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - `transferValue` is not between 90% and 99% of
     ///           `incrementalValue` (inclusive), ensuring a protocol fee of
     ///           between 1% and 10%.
-    ///         - `batchSize` is outside the `[MIN_BATCH_SIZE, MAX_BATCH_SIZE]`
-    ///           range.
+    ///         - `batchSize` is outside the inclusive `[MIN_BATCH_SIZE, MAX_BATCH_SIZE]` range.
     ///
     /// @param  coins             Base coin rate (unscaled), later multiplied by
     ///                           `_coinMultiplier` to produce `_coinRate`. This
@@ -484,7 +483,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///                           [90%, 99%] of `incrementalValue` so that the
     ///                           protocol fee stays between 1% and 10%.
     /// @param  batchSize         Number of contributors processed per batch
-    ///                           step, within `[MIN_BATCH_SIZE, MAX_BATCH_SIZE]`.
+    ///                           step (32–2,048). Choose a size that fits the
+    ///                           chain's transaction gas limit. Changes apply on the next call.
     function configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize) external onlyOwner {
         // Validate configuration parameters.
         require(
@@ -631,7 +631,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     /// @return coins The number of Coin units successfully transferred to the sender.
     /// @return value The native ETH value transferred to the sender.
-    function withdraw() external nonReentrant returns (uint256 coins, uint256 value) {
+    function withdraw() external returns (uint256 coins, uint256 value) {
+        return withdrawTo(payable(_msgSender()));
+    }
+
+    /// @notice Withdraws the caller's distributions, sending only ETH to the chosen recipient.
+    /// @dev DIGIL, collector yield and opt-out status belong to the caller. A failed ETH payment reverts both paths.
+    /// @param ethRecipient Nonzero address that will receive the caller's pending ETH.
+    /// @return coins DIGIL paid to the caller.
+    /// @return value ETH paid to ethRecipient.
+    function withdrawTo(address payable ethRecipient) public nonReentrant returns (uint256 coins, uint256 value) {
+        require(ethRecipient != address(0), "DIGIL: Invalid Recipient");
         address addr = _msgSender();
         bool optedOut = _blacklisted[addr];
 
@@ -660,7 +670,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         //
         // Perform the ETH transfer after all local accounting has been snapshotted.
         if (value > 0) {
-            (bool ok, ) = payable(addr).call{value: value}("");
+            (bool ok, ) = ethRecipient.call{value: value}("");
             if (!ok) revert();
         }
 
@@ -2002,27 +2012,21 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Check if contribution is allowed (if restricted, the contributor must be whitelisted).
         bool whitelisted = !t.restricted || c.whitelisted;
 
-        uint256 incrementalValue = t.incrementalValue;
-        // Calculate minimum required value for the given number of coins (scaled by _coinMultiplier).
-        uint256 minimumValue = incrementalValue * coins / _coinMultiplier;
-
-        // Determine minimum coins required; if incrementalValue is nonzero, derive from provided value.
-        uint256 realCoins = coins;
-        uint256 minimumCoins = coins;
-        if (incrementalValue > 0) {
-            minimumCoins = value < incrementalValue || value == 0 ? coins : value / incrementalValue * _coinMultiplier;
-
-            // Ensure minimumValue is at least the token’s incremental value.
-            if (minimumValue < incrementalValue) {
-                minimumValue = incrementalValue;
+        uint256 minimumValue;
+        uint256 minimumCoins;
+        {
+            uint256 incrementalValue = t.incrementalValue;
+            uint256 coinUnit = _coinMultiplier;
+            minimumCoins = _max(coins, coinUnit);
+            if (incrementalValue > 0) {
+                // Skip this link if its price overflows before scaling by the coin multiplier.
+                if (link && coins > type(uint256).max / incrementalValue) return false;
+                minimumValue = _max(incrementalValue, incrementalValue * coins / coinUnit);
+                if (value >= incrementalValue) minimumCoins = value / incrementalValue * coinUnit;
             }
         }
 
-        // Ensure at least one coin unit is counted.
-        if (minimumCoins < _coinMultiplier) {
-            minimumCoins = _coinMultiplier;
-        }
-
+        uint256 realCoins = coins;
         if (link) {
             
             // Linked charging can use active coins to meet the requirements of the minimum charge  
@@ -2102,6 +2106,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         any ETH sent is treated as surplus value (credited as token value or distributed per
     ///         the active/inactive path). If token.incrementalValue > 0, ETH must satisfy the
     ///         per-charge minimum derived from incrementalValue.
+    ///         A link whose incremental value times its allocated coin units overflows is skipped.
     /// @param  tokenId The token ID to charge.
     /// @param  coins The number of coin units to use.
     /// @return True if the token was successfully charged.
@@ -3206,7 +3211,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @dev    Base Cost is 25% of the current activeCharge, payable in Coins.
     ///         (This allows the user to pay a smaller fee to save the 50% bleed).
     ///         If a buff is active, cost is further reduced by: cost * 100 / (100 + bonus).
-    ///         Sets the `stabilized` flag to true.
+    ///         Sets the `stabilized` flag to true. An in-progress discharge prevents purchase.
     /// @param  tokenId The token ID to stabilize.
     function stabilizeToken(uint256 tokenId) external {
         _checkApproved(tokenId);
@@ -3215,7 +3220,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require((t.buff.flags & DigilFlags.STABILIZED) == 0, "DIGIL: Already Stabilized");
         
         uint256 ac = t.activeCharge;
-        require(ac > 0, "DIGIL: Token Cannot Be Stabilized");
+        require(ac > 0 && !t.discharging, "DIGIL: Token Cannot Be Stabilized");
 
         // Calculate Insurance Cost.
         // Bleed is 50% (ac / 2). We set insurance cost to 25% (ac / 4).

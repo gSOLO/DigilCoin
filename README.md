@@ -56,19 +56,19 @@ Used for charge units, feature fees (linking, metadata updates, buffs), and gove
 - **Funding & Earning**: Anyone can fund rewards. Users earn points when a configured spender contract collects a nonrefundable DIGIL feature fee through `spendFrom(address payer, uint256 amount)`.
 - **Eligibility Model**: The fee consumes the payer's allowance and transfers DIGIL to the caller. Its configured spend weight determines the payer's points. Ordinary `transfer` and `transferFrom` calls, all charging deposits (including those later activated), refunds, governance locks, and stakes earn no points. Paid plane alignment, vaulting, metadata changes, linking/upgrades, priming, and stabilization qualify. Free alignment choices and active-charge consumption do not create eligible DIGIL spending.
 - **Spender Trust**: `CONFIG_ROLE` must only enable contracts that distinguish nonrefundable fees from deposits. A zero weight disables rewards without disabling fee collection. External integrations must adopt `spendFrom`; an ordinary `transferFrom` pull is no longer eligible.
-- **Epochs & Claiming**: Rewards run in 30-day epochs. Users claim ETH based on their points, combined with a days-active multiplier to reward consistent usage over burst spending.
+- **Epochs & Claiming**: Rewards run in 30-day epochs. Users claim ETH based on their points, combined with a days-active multiplier to reward consistent usage over burst spending. User history spans 12 stored epochs. An untouched address reads as all zeros in stored epoch zero. Later stored epochs without a user record revert with `NothingToClaim`, and overwritten epochs revert with `EpochNotFound`.
 - **Fairness Controls**: Daily and epoch spend caps reduce gaming; minimum daily spend gates active-day bonuses.
 - **No Value Trapping**: Unclaimed or unclaimable ETH rolls forward into later epochs so funds remain claimable by participants over time.
 
 ### Digil Governor
 The on-chain governance contract for DigilCoin that executes approved proposals.
 
-- **Voting**: Uses quadratic counting (weight is the square root of held power) and is **NFT-gated** (voters must own or be approved for a Digil token to cast a ballot).
+- **Voting**: A voter needs positive snapshot power and an owned or approved Digil NFT. The ballot counts the square root of that power. A zero-power attempt leaves the NFT available for that proposal.
 - **Raw Vote Power Composition**: Delegated liquid votes plus time-locked coin power and a lock-duration bonus.
 - **Locking & Outcome Staking**: Users can lock coins for a time-based voting bonus and stake on proposal outcomes while proposals are pending/active. Markets predict the final ballot, not execution: a passing ballot settles For; ties, failed quorum, and defeated ballots settle Against. Only cancellation before voting finishes refunds both sides. Later cancellation, queueing, or execution never changes settlement. Winners receive principal plus their proportional share of the losing pool; orphaned losing pools can be burned with a 1% caller bounty.
 - **Market Finalization**: Anyone may call `finalizeMarket(proposalId)`; `claim` and `burn` also finalize lazily. `marketOutcome(proposalId)` returns `0` (unsettled), `1` (Against), `2` (For), or `3` (early-cancellation refund). `MarketFinalized(uint256 indexed proposalId, uint8 outcome)` is emitted once. The exact voting deadline is still an active timepoint; ordinary ballot finalization requires a later clock value. Early cancellation records its refund immediately, even if users claim much later.
 - **Accepted Governance Limitations**: NFT gating prevents reuse of a credential per proposal, not duplicate identities. Address splitting remains advantageous under quadratic counting; quorum remains 4% of the square root of snapshot supply, not 4% of raw tokens. Linear voting would remove the square-root splitting advantage but concentrate influence in large holders. Identity-backed quadratic voting would require additional uniqueness, privacy, recovery, and revocation infrastructure. The current model and lock bonuses are retained intentionally.
-- **Execution Safety**: Proposals execute through timelock controls, preserving review windows for privileged actions.
+- **Execution Safety**: Timelocked proposals may spend treasury DIGIL held by the timelock and recover unrelated assets held by the Governor. The Governor rejects every `relay` targeting DIGIL to protect locks and market stakes. Surplus DIGIL sent directly to the Governor is also outside relay recovery.
 - **Economic Control Path**: Governor changes Digil economics indirectly—by governing privileged calls once ownership/admin roles are handed to the timelock/governance stack.
 
 ### Digil Timelock
@@ -106,12 +106,12 @@ End-user Digils may **align** to a user-alignable foundational plane during crea
 ## Global Configuration
 
 The universe's "physics" are controlled by admin dials that dictate the economy. Reconfiguration is performed via:
-`configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint256 batchSize)`
+`configure(uint256 coins, uint256 incrementalValue, uint256 transferValue, uint16 batchSize)`
 
 - **Coin Rate**: The baseline ERC-20 cost for system actions.
 - **Incremental Value**: The global minimum ETH required per coin spent (the material floor).
 - **Transfer Value**: The percentage of ETH that flows back to users versus what is retained as a protocol fee (usually a 1% to 10% fee).
-- **Batch Size**: How many contributors are processed per transaction during heavy operations like activation and discharge.
+- **Batch size** defaults to 128. The owner can set 32–2,048 contributors per settlement call. Use **256 as the recommended upper bound on Osaka**. With fresh payouts and ten links, the highest measured 256-contributor batch used 14.20 million of the 16.78 million gas available per transaction. Before raising it, benchmark activation and discharge on the target chain. If a batch runs out of gas, the owner can lower the setting and settlement resumes from the last successful batch with keeper eligibility preserved. Renouncing ownership permanently fixes the setting.
 
 These dials have second-order effects across almost every operation: changing them alters contribution requirements, fee pressure, keeper behavior, and how quickly large contributor sets can be settled.
 
@@ -155,7 +155,7 @@ Creation ETH minimums are explicit:
 
 To empower the sigil, participants offer material value (ETH) and energetic value (Coins).
 - **Inactive Tokens**: Charging builds "Potential Energy." Participants supply coins and the required minimum ETH.
-- **Active Tokens**: If the token has no links, coins become "Kinetic Energy" (Active Charge). If the token is linked, the energy is distributed across the network based on the strength and affinity of those links. Unused ETH goes to the token's owner.
+- **Active Tokens**: If the token has no links, coins become "Kinetic Energy" (Active Charge). If the token is linked, the energy is distributed across the network based on the strength and affinity of those links. When a destination's price multiplication overflows, the source keeps that link's base charge and continues charging the other links. The source owner receives unused ETH through the usual distribution after the protocol fee.
 - **Proxy Contribution Support**: `chargeTokenAs` allows sponsored or delegated contribution flows while preserving the canonical contributor ledger.
 - **Participation Definition**: In `chargeTokenAs`, participation means who receives contribution attribution (`contributor`), not who pays gas/calls. Both caller and contributor must be opted in (not blacklisted) for the charge to proceed.
 - **Proxy ETH Floor**: For sponsored/proxy charging (`contributor != msg.sender`), the call must provide at least `max(token.incrementalValue, globalIncrementalValue)` in ETH, even if `token.incrementalValue == 0`. By contrast, direct self-charging on a token with `token.incrementalValue == 0` can be done with `0` ETH.
@@ -245,7 +245,7 @@ You can mix and match effects for a designated time period (up to 7 days). The c
 ### Stabilization
 `stabilizeToken(uint256 tokenId)`
 
-Acts as insurance. By paying a small upfront Coin fee, the token is warded against the 50% power bleed that normally occurs during Deactivation or Vault Recalls.
+Acts as insurance. By paying a small upfront Coin fee, the token is warded against the 50% power bleed that normally occurs during Deactivation or Vault Recalls. A discharge in progress blocks the purchase before the fee is collected.
 
 ### Priming
 `primeToken(uint256 tokenId)`
@@ -292,15 +292,15 @@ Digils can act as "spirit vessels" for other NFTs.
 ### Withdrawals
 `withdraw()`
 
-When ETH or Coins are owed to you (from activation payouts, refunds, or system rewards), they sit in a pending distribution pool. Calling withdraw pulls these assets to your wallet.
+Call `withdraw()` to collect pending ETH and DIGIL. If your wallet rejects ETH, use `withdrawTo(address payable ethRecipient)` with a nonzero recipient. The caller keeps the DIGIL, collector yield, and opt-out rules. If the ETH recipient rejects payment, the transaction reverts and the credits remain available.
 - **Time Bonuses (Checkpoint-Based)**: If you hold Digils, each full 15-minute interval (`BONUS_INTERVAL`) since your last checkpoint adds 1% of your checkpoint cap, where `checkpoint cap = _coinRate + (balance * _coinMultiplier / YIELD_PERIOD)`. Accrual saturates at that checkpoint cap, then stops until the next checkpoint.
-- **Timer Reset Semantics**: `withdraw()` and qualifying ERC-721 balance updates both checkpoint yield. At each checkpoint, the timer resets to the current timestamp, so partial intervals are discarded and never carried forward.
-- **Single Settlement Surface**: Pending ETH and DIGIL from different flows (charging, activation, discharge, keeper rewards) are consolidated behind one user-level withdrawal path.
+- **Timer Reset Semantics**: Both withdrawal methods and qualifying ERC-721 balance updates both checkpoint yield. At each checkpoint, the timer resets to the current timestamp, so partial intervals are discarded and never carried forward.
+- Both withdrawal methods settle the same pending ETH and DIGIL from charging, activation, discharge, and keeper rewards.
 - **Best-Effort Coin Payout**: Coin transfer is best-effort. If mint/transfer of DIGIL fails in the ERC20 path, `withdraw()` does not revert for that reason and can return `0` coins while still paying ETH.
 
 ### Known Operational Caveats
 
-- **Best-effort DIGIL payout**: `withdraw()` prioritizes preserving ETH settlement success. If DIGIL mint/transfer cannot complete, coin pending balances are restored for retry and the call can still succeed for ETH payout.
+- **Refund liquidity**: Refunds and rewards share the contract’s DIGIL balance. If the balance is short and minting is unavailable, the DIGIL credit remains pending. Anyone can replenish the balance. The role administrator can restore minting within the supply cap, and transfers must be enabled for payout.
 - **Operator UX implication**: frontends/indexers should treat `(coins == 0, value > 0)` from `withdraw()` as a possible soft coin-payout failure rather than assuming no pending coin entitlement existed.
 - **Retry behavior**: users can call `withdraw()` again later when DIGIL transfer conditions recover; this does not require replaying prior lifecycle operations.
 
@@ -392,7 +392,7 @@ npm test
 
 Adjust the directory if your checkout is elsewhere. `node --version` should show `v24.x`. `npm ci` installs the versions in `package-lock.json`; rerun it on a fresh checkout or after the lockfile changes. The first installation needs internet access, but the tests themselves run locally. If PowerShell blocks `npm.ps1`, use `npm.cmd` in place of `npm` rather than weakening your execution policy.
 
-`npm test` runs all five groups in order and exits nonzero if any group fails, even if later groups pass. Check `$LASTEXITCODE` immediately afterward (`0` means success). The output distinguishes behavioral assertions from setup/hooks and ends with an ABI exercise inventory. At the documented baseline, the groups contain 23 security scenarios, 72 Solidity behavioral calls plus 77 setup/hooks, 14 shared functional scenarios, 13 extended scenarios, and deployment-adapter checks including all 14 shared scenarios under both ethers versions. Counts will grow as tests are added; they are not a measure of exhaustive coverage.
+`npm test` runs all five groups in order and exits nonzero if any group fails, even if later groups pass. Check `$LASTEXITCODE` immediately afterward (`0` means success). The output distinguishes behavioral assertions from setup/hooks and ends with an ABI exercise inventory. At the documented baseline, the groups contain 29 security scenarios, 72 Solidity behavioral calls plus 77 setup/hooks, 14 shared functional scenarios, 14 extended scenarios, and deployment-adapter checks including all 14 shared scenarios under both ethers versions. Counts will grow as tests are added; they are not a measure of exhaustive coverage.
 
 ### Individual Commands
 
@@ -453,8 +453,8 @@ The last column identifies existing JavaScript overlap and the assertions still 
 | `tests/DigilTokenA_test.sol` | 8 / 1 | Creation defaults, direct/sponsored charge, ETH floor/excess, discharge, activation and restrictions. | Functional lifecycle/refund cases and security settlement cases overlap. Port the exact initial-field, incremental-value and contributor accounting assertions as isolated scenarios. |
 | `tests/DigilTokenB_test.sol` | 7 / 8 | Multi-batch activation, four-plane charge routing, invalid charges and upgrades at ten links. | Security tests independently cover exact batch endpoints and maximum link count/efficiency. Port the full mixed-plane routing sequence and its per-destination charge/value assertions. |
 | `tests/DigilTokenC_test.sol` | 3 / 1 | Metadata/config updates, overpayment/charged-token rejection, and read-only `IDigilToken` fields. | Payload-boundary and interface-signature tests overlap. Port the complete fresh-token getter tuple/default URI checks and exact update failure cases. |
-| `tests/DigilTokenD_test.sol` | 10 / 23 | 1,050 sponsored contributors, discharge continuation and final epoch/charge/value reset. | Smaller security cases independently check keeper payouts, authorization, rounding and repeat cycles. A JavaScript equivalent of this large-contributor stress case is still missing. |
-| `tests/DigilTokenE_test.sol` | 7 / 1 | Restricted links/unlinking, opt-out and re-entry, deactivation, and three link ETH pricing/split combinations. | NFT transfer/whitelist and link arithmetic cases overlap. `setOptStatus` currently has **only legacy execution coverage**; port it and the complete restricted-routing/ETH-split matrix. |
+| `tests/DigilTokenD_test.sol` | 10 / 23 | 1,050 sponsored contributors, discharge continuation and final epoch/charge/value reset. | JavaScript covers 768 contributors at the recommended 256 per batch, plus keeper payouts, authorization and rounding. The full 1,050-contributor sequence still runs in Solidity. |
+| `tests/DigilTokenE_test.sol` | 7 / 1 | Restricted links/unlinking, opt-out and re-entry, deactivation, and three link ETH pricing/split combinations. | NFT transfer/whitelist and link arithmetic cases overlap. Extended tests cover withdrawal opt-out and re-entry. Port the complete restricted-routing/ETH-split matrix. |
 | `tests/DigilTokenF_test.sol` | 7 / 10 | Multi-batch activation, unequal affinity-weighted discharge to four destinations, and deactivation loss. | Security covers equal-weight ten-link discharge; functional tests cover deactivation state. Port the unequal distribution amounts and exact active-charge loss. |
 | `tests/DigilTokenG_test.sol` | 4 / 1 | Planar link base/affinity values, sponsored contributor records and contribution epoch reuse. | Affinity arithmetic and sponsored-principal regressions overlap. Port the complete contributor-field and deactivate/recharge epoch sequence. |
 | `tests/DigilTokenH_test.sol` | 5 / 8 | Multi-batch activation, buff cost and buffed charge routing across four planes. | Buff bounds/expiry and affinity persistence are independently tested. Port the mixed-plane buffed routing amounts. |
@@ -501,7 +501,7 @@ The deployment adapter is local integration testing, not browser/desktop UI auto
 
 ### What the Coverage Numbers Mean
 
-The current full-run inventory records DigilCoin **64/64**, DigilToken **44/44**, DigilGovernor **57/57**, and DigilTimelock **28/28** ABI function signatures exercised: **193/193** in total. Removing the legacy contribution from that inventory leaves **192/193**; `DigilToken.setOptStatus(bool)` is the remaining legacy-only entry point. This comparison does **not** show assertion-level parity: many additional outcomes in the legacy table lack independent JavaScript checks even though the same functions are called elsewhere.
+The full suite exercises **194/194** ABI function signatures across DigilCoin **64/64**, DigilToken **45/45**, DigilGovernor **57/57**, and DigilTimelock **28/28**. The JavaScript suites also reach all 194 independently. The legacy suites retain distinct behavioral assertions, as listed above.
 
 `scripts/test-all.cjs` combines `.remix/coverage/{security-tests,remix-tests,functional-tests,extended-tests}.cjs.json` into ignored `.remix/coverage/inventory.json`. The deployment-adapter runs are not added to that inventory. Records must share the current run ID; missing/stale records or failed suites cause failure. `calls` maps each signature to scenario names and `unexercised` lists missing signatures. Run **`npm test`** to refresh the combined file; an individual runner updates only its own file.
 
@@ -513,8 +513,8 @@ These are test gaps, not findings that the contracts are necessarily defective. 
 
 | Priority | Gap | Concrete additional checks |
 | --- | --- | --- |
-| High | Independent legacy parity | Add opt-out/re-entry tests first, including opted-out owners, recipients, sponsored contributors and approved operators. Port mixed-plane routing, link ETH splits, unequal discharge weights, amplification/flags, stabilization/reverberation and the large-contributor case from the table above. Keep the original Solidity tests running. |
-| High | Epoch sweep and long-idle accounting | Existing cases cover ordinary rollover, claims and a 13-epoch jump, but not a full conservation model for unclaimed pools. Test 3-epoch claim-window edges, 12-slot reuse with stale user data, empty-participant rollover, partially claimed pools, and the 15/16-step normal/fast-forward boundary with donations, rounding and repeat syncs. |
+| High | Independent legacy parity | Extend opt-out coverage to owners, recipients, sponsored contributors and approved operators across other lifecycle operations. Port mixed-plane routing, link ETH splits, unequal discharge weights, amplification/flags, stabilization/reverberation and the large-contributor case from the table above. Keep the original Solidity tests running. |
+| High | Epoch sweep and long-idle accounting | Existing cases cover claims, stale user records at 12-slot reuse and long-idle jumps. Model unclaimed funds across the 3-epoch claim window, empty and partially claimed pools, and the 15/16-step rollover boundary with donations, rounding and repeated syncs. |
 | High | Stateful multi-contract invariants | Add multiple reproducible seeds and randomized NFT/link/charge/activate/discharge/vault/transfer sequences, checking principal, custody and one-time payout invariants after every action. Add overlapping governance markets plus locks, varied claim order and rounding dust. The current seeded model covers ERC20 transfers/burns only. |
 | Medium | Complete authorization and failure matrix | Expand owner/operator/third-party cases across opt-out, restrictions and in-progress batches; assert exact custom errors and unchanged balances/flags after failures. Many legacy `try/catch` checks accept any revert, and Node `h.reverts` without an error name accepts execution failures more broadly than the Remix adapter. |
 | Medium | Broader hostile dependencies and callbacks | Add malicious ERC721 collection callbacks, ERC20 transfer/mint failure variants and callback attempts during other settlement paths. Existing receiver/reentrancy actors cover specific withdrawal, claim, payout and transfer cases, not every external-call path. |

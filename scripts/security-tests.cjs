@@ -5,7 +5,7 @@
  */
 const assert = require('node:assert/strict');
 const { compile, sourcesIn, checkSizes } = require('./compile.cjs');
-const { createHarness, bootstrap, unit, floor, ethers } = require('./evm.cjs');
+const { createHarness, bootstrap, gasLimit, unit, floor, ethers } = require('./evm.cjs');
 
 async function main() {
   const contracts = compile({
@@ -44,10 +44,12 @@ async function main() {
     h.result(token, 'withdraw', await h.send(token, user, 'withdraw'));
   const mintId = (result) =>
     h.events(token, result, 'Transfer').find((event) => event.from === ethers.ZeroAddress).tokenId;
-  const proposal = async (description) => {
-    const targets = [coin.address],
-      values = [0],
-      calldatas = [coin.iface.encodeFunctionData('approve', [dave.address, 0])];
+  const proposal = async (
+    description,
+    targets = [coin.address],
+    calldatas = [coin.iface.encodeFunctionData('approve', [dave.address, 0])]
+  ) => {
+    const values = targets.map(() => 0);
     await h.send(governor, admin, 'propose', [targets, values, calldatas, description]);
     const hash = ethers.id(description);
     const id = (await h.read(governor, 'hashProposal', [targets, values, calldatas, hash]))[0];
@@ -222,6 +224,43 @@ async function main() {
     await h.send(spender, bob, 'pay', [coin.address, alice.address, unit]);
     assert.ok((await h.read(coin, 'currentEpochId'))[0] >= 14n);
     await h.reverts(coin, alice, 'claim', [0]);
+  });
+
+  test('User epoch history follows retained global slots and preserves the epoch-zero sentinel', async () => {
+    const start = (await h.read(coin, 'currentEpochStart'))[0];
+    const length = (await h.read(coin, 'EPOCH_LENGTH'))[0];
+    const read = async (user, epoch) =>
+      (await h.read(coin, 'getUserEpoch', [user.address, epoch]))[0];
+    const sync = async (epoch) => {
+      h.time = start + BigInt(epoch) * length;
+      await h.send(coin, admin, 'syncEpoch');
+      assert.equal((await h.read(coin, 'currentEpochId'))[0], BigInt(epoch));
+    };
+    await create(alice, 0n, 0n, 8);
+    await h.send(coin, admin, 'donate', [], unit);
+    const earned = (await read(alice, 0)).points;
+    assert.ok(earned > 0n);
+    assert.ok((await read(dave, 0)).every((field) => field === 0n));
+    await sync(1);
+    await h.send(coin, bob, 'claimMany', [[0]]);
+    await h.reverts(coin, bob, 'claim', [0], 0n, 'AlreadyClaimed');
+    await h.send(coin, alice, 'claim', [0]);
+    assert.equal((await h.read(coin, 'totalClaimedEth'))[0], unit);
+    for (const epoch of [4, 11]) {
+      await sync(epoch);
+      assert.equal((await read(alice, 0)).points, earned);
+      assert.equal((await read(bob, 0)).flags, 1n);
+      assert.ok((await read(dave, 0)).every((field) => field === 0n));
+      await h.reverts(coin, admin, 'getUserEpoch', [dave.address, epoch], 0n, 'NothingToClaim');
+    }
+    await sync(12);
+    for (const user of [alice, bob, dave]) {
+      await h.reverts(coin, admin, 'getUserEpoch', [user.address, 0], 0n, 'EpochNotFound');
+    }
+    await create(carol, 0n, 0n, 8);
+    assert.ok((await read(carol, 12)).points > 0n);
+    await sync(40); // A single jump exceeds the normal rollover threshold.
+    await h.reverts(coin, admin, 'getUserEpoch', [carol.address, 12], 0n, 'EpochNotFound');
   });
 
   test('Welcome gifts require paid creation and share eligibility with paid vaulting', async () => {
@@ -414,6 +453,42 @@ async function main() {
     await h.reverts(token, alice, 'unlinkToken', [source, targets[0]]);
   });
 
+  test('Linked pricing skips an overflowing destination and settles the other shares', async () => {
+    const price = unit; // One ETH per DIGIL.
+    const source = await create(alice);
+    const first = await create(bob);
+    const priced = await create(bob, price);
+    const last = await create(bob);
+    await h.send(token, alice, 'activateToken', [source]);
+    for (const id of [first, priced, last]) {
+      await h.send(token, alice, 'linkToken', [source, id, 100], id === priced ? price : 0n);
+    }
+    await withdraw(alice); // Clear the source owner's creation and activation payouts.
+
+    // Each link receives one DIGIL and one ETH. The priced link accepts its exact quote.
+    await h.send(token, bob, 'chargeToken', [source, 3n * unit], 3n * price);
+    const paid = await h.read(token, 'tokenContribution', [priced, bob.address]);
+    assert.equal(paid.charge, unit);
+    assert.equal(paid.value, price);
+
+    // Use a fixture-minted balance to exercise the upper bound at the same ordinary price.
+    const share = 1n << 200n;
+    const deposit = 3n * share;
+    await h.send(coin, admin, 'mint', [carol.address, deposit]);
+    const before = await balance(carol);
+    await h.send(token, carol, 'chargeToken', [source, deposit], 3n * price + 1n);
+    assert.equal(before - (await balance(carol)), deposit);
+    assert.equal((await h.read(token, 'tokenCharge', [source])).activeCharge, share);
+    assert.equal((await h.read(token, 'tokenContribution', [priced, carol.address])).exists, false);
+    for (const id of [first, last]) {
+      const received = await h.read(token, 'tokenContribution', [id, carol.address]);
+      assert.equal(received.charge, share);
+      assert.equal(received.value, price);
+    }
+    const unusedETH = price + 1n; // Skipped share plus the one-wei split remainder.
+    assert.equal((await withdraw(alice))[1], unusedETH - unusedETH / 20n); // Default 5% fee.
+  });
+
   test('Affinity arithmetic preserves strong, moderate, weak, ethereal, and stronger-destination bounds', async () => {
     await h.send(coin, admin, 'mint', [alice.address, 100000000n * unit]);
     const pairs = [
@@ -575,6 +650,18 @@ async function main() {
     await h.reverts(token, bob, 'activateToken', [empty]);
   });
 
+  test('A temporarily underfunded DIGIL refund pays ETH and can be funded and collected once', async () => {
+    const id = await create(alice, floor);
+    await h.send(coin, admin, 'revokeRole', [ethers.id('MINTER_ROLE'), token.address]);
+    await h.send(token, bob, 'chargeToken', [id, unit], floor);
+    assert.equal((await withdraw(alice))[0], unit); // The existing welcome credit uses available DIGIL.
+    await h.send(token, alice, 'dischargeToken', [id], floor);
+    assert.deepEqual(Array.from(await withdraw(bob)), [0n, floor]);
+    await h.send(coin, carol, 'transfer', [token.address, unit]);
+    assert.deepEqual(Array.from(await withdraw(bob)), [unit, 0n]);
+    assert.deepEqual(Array.from(await withdraw(bob)), [0n, 0n]);
+  });
+
   test('Exact batch endpoints complete once and preserve starter authorization and keeper totals', async () => {
     await h.send(token, admin, 'configure', [100, floor, 95000000000000n, 32]);
     for (const count of [31, 32, 64]) {
@@ -608,6 +695,94 @@ async function main() {
     }
   });
 
+  test('Recommended settlement batches fit Osaka with fresh payouts and ten outgoing links', async () => {
+    const recommendedBatch = 256;
+    const count = 3 * recommendedBatch;
+    const configure = (size) =>
+      h.send(token, admin, 'configure', [100, floor, (floor * 95n) / 100n, size]);
+    await h.reverts(token, admin, 'configure', [100, floor, (floor * 95n) / 100n, 31]);
+    await configure(2048);
+    await h.reverts(token, admin, 'configure', [100, floor, (floor * 95n) / 100n, 2049]);
+    const id = await create(alice, floor);
+    await h.send(token, alice, 'activateToken', [id]);
+    await h.send(token, alice, 'overchargeToken', [id, 100n * unit], 200n * floor);
+    await h.send(token, alice, 'deactivateToken', [id]);
+    for (let i = 0; i < 10; i++) {
+      const peer = await create(alice);
+      await h.send(token, alice, 'linkToken', [id, peer, 1], floor);
+    }
+    const funding = BigInt(count) * floor;
+    await h.send(token, admin, 'createValue', [id, funding], funding);
+    await h.send(token, alice, 'approve', [bob.address, id]);
+    const [first, last] = h.users.slice(10, 12);
+    for (let i = 0; i < count; i++) {
+      const beneficiary =
+        i === 0 ? first.address : i === count - 1 ? last.address : ethers.toBeHex(10000 + i, 20);
+      await h.send(token, admin, 'chargeTokenAs', [beneficiary, id, unit], floor);
+    }
+    const share = (await h.read(token, 'tokenCharge', [id])).value / BigInt(count);
+    for (const method of ['activateToken', 'dischargeToken']) {
+      const discharge = method === 'dischargeToken';
+      const keeperBudget = discharge ? floor : (BigInt(count) * unit) / 100n;
+      for (const [initial, following] of [
+        [128, 128],
+        [recommendedBatch, recommendedBatch],
+        [recommendedBatch + 1, 128],
+      ]) {
+        const { time, height } = h;
+        await h.vm.stateManager.checkpoint();
+        try {
+          await configure(initial);
+          const gas = [];
+          let processed = 0;
+          while (processed < count) {
+            const starting = processed === 0;
+            const result = await h.send(
+              token,
+              starting ? bob : carol,
+              method,
+              [id],
+              starting && discharge ? 10n * floor : 0n
+            );
+            gas.push(result.totalGasSpent);
+            processed = Math.min(count, processed + (starting ? initial : following));
+            assert.equal(h.result(token, method, result)[0], processed === count);
+            if (starting && initial !== following) {
+              const coinsBefore = await balance(bob);
+              const pointsBefore = await points(bob);
+              if (discharge) {
+                await h.reverts(token, bob, 'stabilizeToken', [id]);
+                assert.equal(await balance(bob), coinsBefore);
+                assert.equal(await points(bob), pointsBefore);
+              } else {
+                await h.send(token, bob, 'stabilizeToken', [id]);
+                assert.ok((await balance(bob)) < coinsBefore);
+                assert.ok((await points(bob)) > pointsBefore);
+              }
+              await configure(following);
+            }
+          }
+          assert.ok(gas.every((used) => used <= gasLimit));
+          if (initial === following)
+            console.log(`${method} at batch ${initial}, gas per receipt: ${gas.join(', ')}`);
+          const asset = discharge ? 1 : 0;
+          const starter = (await withdraw(bob))[asset];
+          assert.equal(starter, (keeperBudget * BigInt(initial)) / BigInt(count));
+          assert.equal(starter + (await withdraw(carol))[asset], keeperBudget);
+          for (const user of [first, last]) {
+            const refund = await withdraw(user);
+            assert.equal(refund[0], discharge ? unit : (share / floor) * unit);
+            assert.equal(refund[1], discharge ? floor : share - share / 20n);
+          }
+        } finally {
+          await h.vm.stateManager.revert();
+          h.time = time;
+          h.height = height;
+        }
+      }
+    }
+  });
+
   test('Markets refund early cancellations even when first claimed after the deadline', async () => {
     const p = await proposal('Early cancellation');
     await h.send(governor, alice, 'stake', [p.id, true, 100n * unit]);
@@ -634,6 +809,83 @@ async function main() {
     await h.reverts(governor, alice, 'claim', [p.id], 0n, 'NoStake');
     await h.reverts(governor, admin, 'burn', [p.id], 0n, 'NoOrphanedStakes');
     await h.reverts(governor, admin, 'finalizeMarket', [123], 0n, 'GovernorNonexistentProposal');
+  });
+
+  test('Executed governance protects DIGIL custody and recovers unrelated tokens', async () => {
+    const amount = 100n * unit;
+    await h.send(governor, carol, 'lockCoins', [amount, 7n * 86400n]);
+    // Even no-op DIGIL calls must be refused, irrespective of their selector.
+    for (const [method, args] of [
+      ['transfer', [alice.address, 0]],
+      ['approve', [alice.address, 0]],
+      ['delegate', [ethers.ZeroAddress]],
+    ]) {
+      const relay = governor.iface.encodeFunctionData('relay', [
+        coin.address,
+        0,
+        coin.iface.encodeFunctionData(method, args),
+      ]);
+      const p = await proposal('DIGIL custody policy: ' + method, [governor.address], [relay]);
+      await h.send(governor, bob, 'stake', [p.id, true, amount]);
+      await finishVote(p);
+      await queue(p);
+      h.time = (await h.read(governor, 'proposalEta', [p.id]))[0];
+      await h.reverts(governor, dave, 'execute(uint256)', [p.id], 0n, 'ProtectedToken');
+      assert.equal(await balance(governor), 2n * amount);
+      assert.equal((await h.read(coin, 'allowance', [governor.address, alice.address]))[0], 0n);
+      const before = await balance(bob);
+      await h.send(governor, bob, 'claim', [p.id]);
+      assert.equal((await balance(bob)) - before, amount);
+    }
+    const unrelated = await h.deploy('FailingCoin', [], false, 'tests/SecurityActors.sol');
+    await h.send(unrelated, admin, 'mint', [governor.address, amount]);
+    await h.send(coin, admin, 'mint', [timelock.address, amount]);
+    const recovery = governor.iface.encodeFunctionData('relay', [
+      unrelated.address,
+      0,
+      unrelated.iface.encodeFunctionData('transfer', [alice.address, amount]),
+    ]);
+    const p = await proposal(
+      'Recover the test asset and spend treasury DIGIL',
+      [governor.address, coin.address],
+      [recovery, coin.iface.encodeFunctionData('transfer', [alice.address, amount])]
+    );
+    await finishVote(p);
+    await queue(p);
+    h.time = (await h.read(governor, 'proposalEta', [p.id]))[0];
+    const before = await balance(alice);
+    await h.send(governor, dave, 'execute(uint256)', [p.id]);
+    assert.equal((await balance(alice)) - before, amount);
+    assert.equal((await h.read(unrelated, 'balanceOf', [alice.address]))[0], amount);
+    assert.equal(await balance(governor), amount);
+    const locked = await balance(carol);
+    await h.send(governor, carol, 'unlockCoins');
+    assert.equal((await balance(carol)) - locked, amount);
+    assert.equal(await balance(governor), 0n);
+  });
+
+  test('Large winning stakes use full-precision payouts with the same floor rounding', async () => {
+    const share = (1n << 144n) + 1n;
+    const lost = share + 2n;
+    const p = await proposal('Proportional settlement');
+    for (const [user, side, amount] of [
+      [alice, false, share],
+      [bob, false, 2n * share],
+      [carol, true, lost],
+    ]) {
+      await h.send(coin, admin, 'mint', [user.address, amount]);
+      await h.send(governor, user, 'stake', [p.id, side, amount]);
+    }
+    await finishVote(p, null);
+    for (const [user, amount] of [
+      [bob, 2n * share],
+      [alice, share],
+    ]) {
+      const before = await balance(user);
+      await h.send(governor, user, 'claim', [p.id]);
+      assert.equal((await balance(user)) - before, amount + (amount * lost) / (3n * share));
+    }
+    assert.equal(await balance(governor), lost - lost / 3n - (2n * lost) / 3n);
   });
 
   test('Late timelock cancellation cannot reopen refunds before or after winner claims', async () => {
