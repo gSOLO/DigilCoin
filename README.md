@@ -28,6 +28,7 @@ Conceptually, a Digil behaves like a **rechargeable node** that can power neighb
 - [Admin & Security Notes](#admin--security-notes)
 - [Economics & Costs Summary](#economics--costs-summary)
 - [Local Validation](#local-validation)
+- [Test Coverage](#test-coverage)
 - [Script Maintenance](#script-maintenance)
 - [Remix VM Deployment and Tests](#remix-vm-deployment-and-tests)
 - [How it Works: End-to-End Examples](#how-it-works-end-to-end-examples)
@@ -420,6 +421,107 @@ Solidity suites retain source order, honor sender/value annotations and all four
 DigilToken's size optimizations preserve its public ABI and protocol behavior. Dynamic bytes/string arguments use memory to share compiler-generated decoding and storage-copy routines; whitelist arrays remain in calldata. This trades some copying gas for smaller bytecode. Arithmetic-check reductions are limited to documented bounds and guarded subtractions. Regression tests cover metadata storage-word boundaries through 4,096 bytes, maximum link efficiency/count, buff expiry, and exact batch endpoints. Deployment headroom is tight, so rerun the normal size gate after every contract change.
 
 Deployment bootstrap remains: deploy DigilCoin, deploy DigilToken with that coin and 18 decimals, then grant the token `MINTER_ROLE` on DigilCoin and set its spend weight to `10000`. Minting permission enables rewards payouts; spend weight separately enables donor-reward eligibility for fees. These changes target fresh deployments, not migration of live contract storage.
+
+## Test Coverage
+
+### Which Tests Run Automatically?
+
+**`npm test` already runs `DigilTokenA_test.sol` and all the other `tests/*_test.sol` suites. No separate manual run is needed for full local validation.** Run `npm run test:remix` to execute just those Solidity suites in Node. Despite its name, that command does not open Remix or use your existing Remix deployment.
+
+There are two different Remix-related workflows:
+
+| Invocation | What actually runs |
+| --- | --- |
+| `npm test` in a system terminal | Security, legacy Solidity, shared functional, extended, and deployment-adapter groups, in that order. |
+| `npm run test:remix` in a system terminal | All 13 top-level `tests/*_test.sol` files: DigilCoin, DigilToken A-K, and the runner-hook self-test. |
+| **Run Script** on `scripts/remix/test.js` in Remix | Only the 14 shared JavaScript smoke scenarios, or the IDs selected by `only`. It does **not** discover or run `tests/*.sol`. |
+| Remix's Solidity Unit Testing plugin | A separate manual compatibility workflow for the Solidity files you select; not required in addition to `npm test`. It needs the helper addresses/bootstrap described in the repository guidance, and the oversized harness limitation below still applies. |
+
+Solidity discovery is **not recursive**: a new suite must be directly inside `tests/`, end in `_test.sol`, and contain exactly one suite contract for the Node runner. Test functions must be public/external, take no arguments, and start with `test`; the four lifecycle hook names are recognized separately. Tests retain source order and shared state **within** each suite, with protocol state isolated **between** suites. Sender/value annotations are honored, and fixture addresses are substituted in memory rather than edited on disk. Hooks and methods beginning `testPrepare` or `testChargeBatch` are counted as setup, not behavioral calls.
+
+`tests/SecurityActors.sol` supplies adversarial fixtures, `tests/RunnerFailureProbe.sol` supplies deliberately failing runner checks, and `tests/remix_tests.sol` / `tests/remix_accounts.sol` supply harness support. They are not independent auto-discovered suites. The failure probes are expected to fail internally; the adapter suite passes only when it detects their failures correctly. There is no separate `DigilGovernor_test.sol`: governance coverage currently lives in the JavaScript groups.
+
+### Legacy Inventory and Independent Equivalents
+
+Baseline: September 29, 2026. Counts below are **executed test methods**, not individual assertions. The 72 behavioral calls include two runner self-tests; 77 additional calls are setup/hooks. Every DigilToken suite also contains a `testWithdrawl` payout sequence. Those repeated checks still run, but should not be counted as eleven distinct feature areas.
+
+The last column identifies existing JavaScript overlap and the assertions still worth porting. **Overlap is not a claim of complete replacement.** Keep the Solidity suites enabled for compatibility while adding independent cases.
+
+| Solidity suite | Behavioral / setup calls | Existing coverage | Newer overlap and remaining replication work |
+| --- | --- | --- | --- |
+| `tests/DigilCoin_test.sol` | 5 / 1 | Initial metadata/supply, internal mint, allowances and transfers. | `deployment-bootstrap`, `erc20-allowance-burn-pause`, `roles-and-configuration`, and `seeded-erc20-conservation` cover the public behaviors with stronger permission/conservation checks. The inherited harness's internal `_mint` is not a public-API test. |
+| `tests/DigilTokenA_test.sol` | 8 / 1 | Creation defaults, direct/sponsored charge, ETH floor/excess, discharge, activation and restrictions. | Functional lifecycle/refund cases and security settlement cases overlap. Port the exact initial-field, incremental-value and contributor accounting assertions as isolated scenarios. |
+| `tests/DigilTokenB_test.sol` | 7 / 8 | Multi-batch activation, four-plane charge routing, invalid charges and upgrades at ten links. | Security tests independently cover exact batch endpoints and maximum link count/efficiency. Port the full mixed-plane routing sequence and its per-destination charge/value assertions. |
+| `tests/DigilTokenC_test.sol` | 3 / 1 | Metadata/config updates, overpayment/charged-token rejection, and read-only `IDigilToken` fields. | Payload-boundary and interface-signature tests overlap. Port the complete fresh-token getter tuple/default URI checks and exact update failure cases. |
+| `tests/DigilTokenD_test.sol` | 10 / 23 | 1,050 sponsored contributors, discharge continuation and final epoch/charge/value reset. | Smaller security cases independently check keeper payouts, authorization, rounding and repeat cycles. A JavaScript equivalent of this large-contributor stress case is still missing. |
+| `tests/DigilTokenE_test.sol` | 7 / 1 | Restricted links/unlinking, opt-out and re-entry, deactivation, and three link ETH pricing/split combinations. | NFT transfer/whitelist and link arithmetic cases overlap. `setOptStatus` currently has **only legacy execution coverage**; port it and the complete restricted-routing/ETH-split matrix. |
+| `tests/DigilTokenF_test.sol` | 7 / 10 | Multi-batch activation, unequal affinity-weighted discharge to four destinations, and deactivation loss. | Security covers equal-weight ten-link discharge; functional tests cover deactivation state. Port the unequal distribution amounts and exact active-charge loss. |
+| `tests/DigilTokenG_test.sol` | 4 / 1 | Planar link base/affinity values, sponsored contributor records and contribution epoch reuse. | Affinity arithmetic and sponsored-principal regressions overlap. Port the complete contributor-field and deactivate/recharge epoch sequence. |
+| `tests/DigilTokenH_test.sol` | 5 / 8 | Multi-batch activation, buff cost and buffed charge routing across four planes. | Buff bounds/expiry and affinity persistence are independently tested. Port the mixed-plane buffed routing amounts. |
+| `tests/DigilTokenI_test.sol` | 5 / 8 | Buff, deactivate/reactivate, overcharge, stabilization and later discharge charge-loss sequence. | Feature-fee and buff-bound tests overlap, but do not reproduce all intermediate balances in this sequence. |
+| `tests/DigilTokenJ_test.sol` | 4 / 1 | Priming, multi-field buffs/flags/appearance, link upgrades and exact amplification cost/gain. | JavaScript checks prime fees, buff bounds and permanent affinity; it does not yet independently reproduce the priming/amplification and combined-flag assertions. |
+| `tests/DigilTokenK_test.sol` | 5 / 8 | Buff/stabilization lifecycle and reverberated source/destination charge accounting. | Fee/expiry tests overlap; the complete reverberation and lifecycle balance sequence still needs a JavaScript equivalent. |
+| `tests/RunnerHooks_test.sol` | 2 / 6 | Hook ordering, sender/value annotations and boolean test returns. | Adapter tests also check rejection of false assertion events, false returns and EVM failures. This is runner validation, not protocol coverage. |
+
+Alpha (A), Beta (B), Foxtrot (F), and Gamma (G) are oversized **test harnesses**. The Node runner narrowly exempts those harness deployments, not DigilCoin, DigilToken, DigilGovernor or DigilTimelock. Their successful execution does not mean those harnesses can be deployed in the normal Remix VM. Do not disable production size limits or change compiler settings to run them manually.
+
+### Shared Smoke Scenarios
+
+These exact IDs live in `scripts/functional-scenarios.js`. All run directly in Node and through the deployment adapter under ethers v5 and v6; `scripts/remix/test.js` runs the same registry in Remix. Repetition across adapters validates portability, not additional distinct protocol behavior.
+
+| Scenario ID | Assertions covered |
+| --- | --- |
+| `deployment-bootstrap` | Initial metadata/supply, 21 planar owners, roles, spend weight, governance wiring/defaults, interfaces, and rejection of zero-owner/EOA-coin token deployments. |
+| `roles-and-configuration` | Unauthorized configuration/mint/pause calls, parameter bounds, ownership and role changes. |
+| `public-configuration-and-receiver-policies` | Constants, role administration, EIP-712 domains, Governor metadata and ERC721/ERC1155 receiver policies. |
+| `erc20-allowance-burn-pause` | Finite/infinite allowances, delegated transfer/burn, supply accounting and paused operations. |
+| `delegation-and-checkpoints` | Delegation, vote changes, checkpoint creation and future-query rejection. |
+| `paid-fees-versus-deposits` | Metadata fees earn points; charge principal and ordinary transfers do not; zero spend weight disables points. |
+| `metadata-payload-boundaries` | Create/update payloads of 0, 1, 31, 32, 33, 1,024 and 4,096 bytes, URI updates and unauthorized-update rejection. |
+| `nft-approval-transfer-restrictions` | Owner/operator approvals, both safe-transfer overloads, cleared approvals and persistent recipient auto-whitelisting. |
+| `ownership-renunciation-is-explicit-and-final` | Unauthorized renunciation rejection and loss of former-owner administrative authority. |
+| `inactive-refund-and-activation` | Sponsored contribution, activation/discharge authorization, principal refund, active charging and deactivation. |
+| `vault-payload-recall-and-rewrap` | Pending custody/recall/redeposit, authorized wrapping, payload boundaries, activation-gated recall and cleared custody. |
+| `missing-minter-and-best-effort-retry` | Failed reward mint preserves entitlement; restoring the role permits a single payout. |
+| `governor-unauthorized-entry-points` | Unauthorized governance configuration/relay, unknown proposals, invalid voting/locking/staking/claiming and timelock scheduling. These are negative cases, not successful governance execution. |
+| `seeded-erc20-conservation` | A deterministic 48-action transfer/burn model checks balances and total supply using seed `0xD1611`. |
+
+### Security, Extended and Deployment Coverage
+
+| Area | Existing checks and location |
+| --- | --- |
+| Fee and reward accounting | `security-tests.cjs`: weighted fee attribution including paid alignment; no rewards for refundable/sponsored/active principal; daily caps, rollover, claims/replay, paid welcome eligibility and failed-creation rollback. `extended-tests.cjs`: active-day boundaries, parameter snapshots, atomic `claimMany`, ETH conservation and forced-ETH synchronization. |
+| NFT lifecycle and settlement | `security-tests.cjs`: stale-wrapper custody, genuine versus no-op inactivity resets, metadata boundaries, permanent affinity, maximum efficiency/ten links, exact buff expiry, keeper fee allocation, direct-deposit activation rewards, rounding, authorization and batch endpoints. Legacy suites add the larger and mixed-mechanic sequences above. |
+| Voting and markets | `security-tests.cjs`: early cancellation refunds, immutable late outcomes, orphan burns, preserved lock principal, deadline/quorum/replay/bounds. `extended-tests.cjs`: permit/delegation/ballot signatures, nonce/domain/expiry checks, historical votes, NFT reuse/operator checks, lock extension/rollback/unlock boundaries. |
+| External-call failures | `extended-tests.cjs`: failed/reentrant ETH withdrawals and claims, ERC721 receiver rejection with approval/custody rollback, and false-returning ERC20 payout retry without duplicate entitlement. Collector-yield interval, saturation and transfer boundaries are also tested there. |
+| Timelock and governance handoff | `extended-tests.cjs`: delay/predecessor/cancellation/role revocation, and real proposal/vote/queue/execute sequences before and after bootstrap roles are removed. This is a disposable **Node rehearsal**, not an approved handoff of a user's Remix deployment. |
+| Deployment and tooling | `remix-runtime-tests.cjs`: actual workflow modules through simulated Remix plugin/RPC boundaries; ethers v5/v6, compiler/source freshness, structured-clone safety, VM-only guards, code/constructor size checks, deployment verification, interrupted deployment/resume, idempotent seeding, stale journals/VM reset, role drift and handoff blocking. Negative-call checks reject transport failures, out-of-gas and invalid-opcode failures as substitutes for a proven revert. |
+
+The deployment adapter is local integration testing, not browser/desktop UI automation. The maintainer-confirmed Desktop result is the 14-case smoke subset. Production contracts are actually deployed under normal limits by the Node fixtures; deployment size checks alone do not prove every constructor validation branch, network environment or operator workflow.
+
+### What the Coverage Numbers Mean
+
+The current full-run inventory records DigilCoin **64/64**, DigilToken **44/44**, DigilGovernor **57/57**, and DigilTimelock **28/28** ABI function signatures exercised: **193/193** in total. Removing the legacy contribution from that inventory leaves **192/193**; `DigilToken.setOptStatus(bool)` is the remaining legacy-only entry point. This comparison does **not** show assertion-level parity: many additional outcomes in the legacy table lack independent JavaScript checks even though the same functions are called elsewhere.
+
+`scripts/test-all.cjs` combines `.remix/coverage/{security-tests,remix-tests,functional-tests,extended-tests}.cjs.json` into ignored `.remix/coverage/inventory.json`. The deployment-adapter runs are not added to that inventory. Records must share the current run ID; missing/stale records or failed suites cause failure. `calls` maps each signature to scenario names and `unexercised` lists missing signatures. Run **`npm test`** to refresh the combined file; an individual runner updates only its own file.
+
+This is execution tracking, **not statement, branch, path, assertion or mutation coverage**. Negative calls and nested calls count; a getter or unauthorized call can exercise an entry point without testing its successful behavior. Constructors, receive/fallback handling, event payloads and internal functions are not measured as separate ABI function signatures. There is currently **no coverage-percentage gate**: unexercised signatures are reported but do not by themselves fail `npm test`. No defensible percentage of all protocol behavior is currently available.
+
+### Missing and Incomplete Tests
+
+These are test gaps, not findings that the contracts are necessarily defective. Existing overlapping coverage is identified so that adding tests does not accidentally remove protections already supplied by the legacy suites.
+
+| Priority | Gap | Concrete additional checks |
+| --- | --- | --- |
+| High | Independent legacy parity | Add opt-out/re-entry tests first, including opted-out owners, recipients, sponsored contributors and approved operators. Port mixed-plane routing, link ETH splits, unequal discharge weights, amplification/flags, stabilization/reverberation and the large-contributor case from the table above. Keep the original Solidity tests running. |
+| High | Epoch sweep and long-idle accounting | Existing cases cover ordinary rollover, claims and a 13-epoch jump, but not a full conservation model for unclaimed pools. Test 3-epoch claim-window edges, 12-slot reuse with stale user data, empty-participant rollover, partially claimed pools, and the 15/16-step normal/fast-forward boundary with donations, rounding and repeat syncs. |
+| High | Stateful multi-contract invariants | Add multiple reproducible seeds and randomized NFT/link/charge/activate/discharge/vault/transfer sequences, checking principal, custody and one-time payout invariants after every action. Add overlapping governance markets plus locks, varied claim order and rounding dust. The current seeded model covers ERC20 transfers/burns only. |
+| Medium | Complete authorization and failure matrix | Expand owner/operator/third-party cases across opt-out, restrictions and in-progress batches; assert exact custom errors and unchanged balances/flags after failures. Many legacy `try/catch` checks accept any revert, and Node `h.reverts` without an error name accepts execution failures more broadly than the Remix adapter. |
+| Medium | Broader hostile dependencies and callbacks | Add malicious ERC721 collection callbacks, ERC20 transfer/mint failure variants and callback attempts during other settlement paths. Existing receiver/reentrancy actors cover specific withdrawal, claim, payout and transfer cases, not every external-call path. |
+| Medium | Deployment and runner matrices | Expand invalid constructor/configuration combinations and interruption points, maintain repeatable Desktop smoke validation for supported Remix versions, and add gas-regression budgets at configured batch limits. Size and per-transaction gas limits are already enforced; wallet-backed/live-network deployment remains intentionally out of scope. |
+| Medium | Coverage quality and automated enforcement | Add statement/branch measurement in a separate diagnostic setup without changing the production compiler profile, mutation checks for key accounting assertions, and an explicit coverage-regression gate. Add CI invocation of size/full-suite/format checks; no checked-in CI workflow currently runs these commands automatically on commits. |
+
+For independent replicas, use one fresh fixture per scenario and reference the originating `File_test.sol.testMethod` in a short source comment. Preserve each meaningful expected balance, field and lifecycle transition, then add boundary, unauthorized, rollback and repeated-call checks. Use `scripts/functional-scenarios.js` for portable cases and the Node security/extended registries for time-dependent, high-volume or adversarial cases; see [Script Maintenance](#script-maintenance). A port is complete when its assertions stand alone without relying on an earlier legacy method, not merely when it calls the same functions. This documentation inventories the remaining work; it does not add or disable test cases.
 
 ## Script Maintenance
 
