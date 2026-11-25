@@ -357,73 +357,20 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
     /// @param epochId The completed epoch identifier to claim against.
     function claim(uint32 epochId) external nonReentrant {
         _syncEpoch();
-
-        // Must be a completed epoch.
-        if (epochId >= currentEpochId) revert EpochNotClaimable();
-
-        // Enforce claim window: [currentEpochId-CLAIMABLE_EPOCHS, currentEpochId-1]
-        if (currentEpochId > uint32(CLAIMABLE_EPOCHS)) {
-            if (epochId < currentEpochId - uint32(CLAIMABLE_EPOCHS)) revert EpochNotClaimable();
-        }
-
-        uint8 slot = _epochSlot(epochId);
-        EpochSnap storage ep = _epochs[slot];
-        if (ep.epochId != epochId) revert EpochNotFound();
-
-        UserEpoch storage ue = _userEpoch[slot][msg.sender];
-        if (ue.epochId != epochId) revert NothingToClaim();
-        if ((ue.flags & 0x01) != 0) revert AlreadyClaimed();
-
-        uint256 pool = ep.poolEth;
-        uint256 totalEff = ep.totalEff;
-
-        // Mark claimed even if payout is 0, to prevent repeated calls.
-        ue.flags |= 0x01;
-
-        if (pool == 0 || totalEff == 0) {
-            emit Claim(msg.sender, epochId, 0, 0, totalEff);
-            return;
-        }
-
-        // User effective points = points * (BASE + activeDays*dayBonusBps)
-        uint256 userEff = ue.points * (uint256(BASE_BPS) + uint256(ue.activeDays) * uint256(ep.dayBonusBps));
-        if (userEff == 0) {
-            emit Claim(msg.sender, epochId, 0, 0, totalEff);
-            return;
-        }
-
-        // Pro-rata payout (rounded down).
-        uint256 payout = (pool * userEff) / totalEff;
-
-        // Ensure we never exceed remaining pool due to rounding edge-cases.
-        uint256 remaining = pool - ep.claimedEth;
-        if (payout > remaining) payout = remaining;
-
-        // Update epoch + global accounting.
-        ep.claimedEth += payout;
-        totalClaimedEth += payout;
-
-        if (payout != 0) {
-            (bool ok,) = payable(msg.sender).call{value: payout}("");
-            if (!ok) revert ClaimTransferFailed();
-        }
-
-        emit Claim(msg.sender, epochId, payout, userEff, totalEff);
+        _claimNoSync(epochId);
     }
 
     /// @notice Claims multiple epochs in one call.
     /// @dev Convenience helper for UX; each epoch is validated individually.
     /// @param epochIds Array of epoch ids to claim.
     function claimMany(uint32[] calldata epochIds) external nonReentrant {
-        // `_syncEpoch()` is called in `claim` for each epoch; doing it once here is cheaper and safe.
         _syncEpoch();
         for (uint256 i = 0; i < epochIds.length; i++) {
-            // Call internal logic for each epoch (avoid re-sync).
             _claimNoSync(epochIds[i]);
         }
     }
 
-    /// @dev Internal claim used by `claimMany` to avoid repeated `_syncEpoch()` cost.
+    /// @dev Settles one epoch after the caller has synchronized the current epoch.
     function _claimNoSync(uint32 epochId) internal {
         if (epochId >= currentEpochId) revert EpochNotClaimable();
         if (currentEpochId > uint32(CLAIMABLE_EPOCHS)) {
@@ -438,6 +385,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
         if (ue.epochId != epochId) revert NothingToClaim();
         if ((ue.flags & 0x01) != 0) revert AlreadyClaimed();
 
+        // Even a zero payout consumes this epoch's claim.
         ue.flags |= 0x01;
 
         uint256 pool = ep.poolEth;
@@ -453,6 +401,7 @@ contract DigilCoin is ERC20, ERC20Burnable, ERC20Pausable, AccessControl, ERC20P
             return;
         }
 
+        // Round down the user's share and cap it at the remaining pool.
         uint256 payout = (pool * userEff) / totalEff;
         uint256 remaining = pool - ep.claimedEth;
         if (payout > remaining) payout = remaining;

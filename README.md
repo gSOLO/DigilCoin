@@ -392,7 +392,7 @@ npm test
 
 Adjust the directory if your checkout is elsewhere. `node --version` should show `v24.x`. `npm ci` installs the versions in `package-lock.json`; rerun it on a fresh checkout or after the lockfile changes. The first installation needs internet access, but the tests themselves run locally. If PowerShell blocks `npm.ps1`, use `npm.cmd` in place of `npm` rather than weakening your execution policy.
 
-`npm test` runs all five groups in order and exits nonzero if any group fails, even if later groups pass. Check `$LASTEXITCODE` immediately afterward (`0` means success). The output distinguishes behavioral assertions from setup/hooks and ends with an ABI exercise inventory. At the documented baseline, the groups contain 29 security scenarios, 72 Solidity behavioral calls plus 77 setup/hooks, 14 shared functional scenarios, 14 extended scenarios, and deployment-adapter checks including all 14 shared scenarios under both ethers versions. Counts will grow as tests are added; they are not a measure of exhaustive coverage.
+`npm test` runs all five groups in order and exits nonzero if any group fails, even if later groups pass. Check `$LASTEXITCODE` immediately afterward (`0` means success). The output distinguishes behavioral assertions from setup/hooks and ends with an ABI exercise inventory. At the documented baseline, the groups contain 32 security scenarios, 72 Solidity behavioral calls plus 77 setup/hooks, 14 shared functional scenarios, 14 extended scenarios, and deployment-adapter checks including all 14 shared scenarios under both ethers versions. Counts will grow as tests are added; they are not a measure of exhaustive coverage.
 
 ### Individual Commands
 

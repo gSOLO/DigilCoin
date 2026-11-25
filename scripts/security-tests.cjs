@@ -205,6 +205,34 @@ async function main() {
     assert.equal((await h.read(coin, 'totalClaimedEth'))[0], 0n);
   });
 
+  test('Exact protocol ETH fees reject short and excess payments and credit the full fee', async () => {
+    const id = await create(alice, 3n * floor);
+    await h.send(token, bob, 'chargeToken', [id, unit], 3n * floor);
+    h.time += 90n * 86400n;
+
+    async function checkFee(user, method, args, fee) {
+      for (const value of [fee - 1n, fee + 1n]) {
+        const failed = await h.send(token, user, method, args, value, true);
+        assert.equal(failed.execResult.exceptionError?.error, 'revert');
+        assert.equal(
+          ethers.hexlify(failed.execResult.returnValue),
+          token.iface.encodeErrorResult('InsufficientFunds', [fee])
+        );
+      }
+      await h.send(token, user, method, args, fee);
+      // Spend the protocol credit on a different token. Each check starts with an empty pool.
+      await h.reverts(token, admin, 'createValue', [0, fee + 1n], 0n, 'InsufficientFunds');
+      await h.send(token, admin, 'createValue', [0, fee]);
+    }
+
+    await checkFee(bob, 'setOptStatus', [true], 100n * floor);
+    await checkFee(bob, 'setOptStatus', [false], 100n * floor);
+    await checkFee(bob, 'reclaimContribution', [id], 3n * floor);
+    assert.equal((await withdraw(bob))[1], 3n * floor);
+    await checkFee(admin, 'overchargeToken', [1, 3n * unit], 6n * floor);
+    assert.equal((await h.read(token, 'tokenCharge', [1])).activeCharge, 3n * unit);
+  });
+
   test('Epoch caps, rollover, claims, and replay guards still apply to explicit fees', async () => {
     await h.send(coin, admin, 'setSpendWeight', [spender.address, 10000]);
     await h.send(coin, alice, 'approve', [spender.address, ethers.MaxUint256]);
@@ -242,9 +270,20 @@ async function main() {
     assert.ok(earned > 0n);
     assert.ok((await read(dave, 0)).every((field) => field === 0n));
     await sync(1);
-    await h.send(coin, bob, 'claimMany', [[0]]);
+    const zeroClaim = await h.send(coin, bob, 'claimMany', [[0]]);
+    const [zeroEvent] = h.events(coin, zeroClaim, 'Claim');
+    assert.equal(zeroEvent.account.toLowerCase(), bob.address);
+    assert.equal(zeroEvent.epochId, 0n);
+    assert.equal(zeroEvent.amount, 0n);
+    assert.equal(zeroEvent.userEff, 0n);
     await h.reverts(coin, bob, 'claim', [0], 0n, 'AlreadyClaimed');
-    await h.send(coin, alice, 'claim', [0]);
+    const paidClaim = await h.send(coin, alice, 'claim', [0]);
+    const [paidEvent] = h.events(coin, paidClaim, 'Claim');
+    assert.equal(paidEvent.account.toLowerCase(), alice.address);
+    assert.equal(paidEvent.epochId, 0n);
+    assert.equal(paidEvent.amount, unit);
+    assert.equal(paidEvent.userEff, paidEvent.totalEff);
+    assert.equal(paidEvent.totalEff, zeroEvent.totalEff);
     assert.equal((await h.read(coin, 'totalClaimedEth'))[0], unit);
     for (const epoch of [4, 11]) {
       await sync(epoch);
@@ -567,6 +606,39 @@ async function main() {
     assert.equal(await balance(alice), beforeCoins);
     assert.equal((await h.read(token, 'tokenData', [depleted]))[4], 0n);
     assert.equal((await h.read(token, 'tokenCharge', [depleted]))[1], 0n);
+  });
+
+  test('Buff discounts preserve link upgrade rounding and the stabilization price floor', async () => {
+    for (const [charge, bonus, expire] of [
+      [1000n * unit, 0n, false],
+      [1000n * unit, 37n, false],
+      [10000n * unit + 23n, 37n, false],
+      [10000n * unit + 23n, 37n, true],
+    ]) {
+      const source = await create(alice);
+      const peer = await create(alice);
+      await h.send(token, alice, 'activateToken', [source]);
+      await h.send(token, alice, 'overchargeToken', [source, charge], (2n * floor * charge) / unit);
+      if (bonus) await h.send(token, alice, 'buffToken', [source, bonus, 0, 0, 0, 0, 1]);
+
+      let before = await balance(alice);
+      await h.send(token, alice, 'linkToken', [source, peer, 7]);
+      assert.equal(before - (await balance(alice)), linkCost(7, 1, true, bonus));
+      before = await balance(alice);
+      await h.send(token, alice, 'linkToken', [source, peer, 11]);
+      assert.equal(
+        before - (await balance(alice)),
+        linkCost(11, 1, false, bonus) - linkCost(7, 1, false, bonus)
+      );
+
+      if (expire) h.time = (await h.read(token, 'tokenBuff', [source])).expiresAt - 1n;
+      const { activeCharge } = await h.read(token, 'tokenCharge', [source]);
+      const baseCost = activeCharge / 4n > 1000n * unit ? activeCharge / 4n : 1000n * unit;
+      const expected = (baseCost * 100n) / (100n + (expire ? 0n : bonus));
+      before = await balance(alice);
+      await h.send(token, alice, 'stabilizeToken', [source]);
+      assert.equal(before - (await balance(alice)), expected);
+    }
   });
 
   test('Discharge keepers share only the fixed ETH fee, including final batches across repeated cycles', async () => {
@@ -925,6 +997,73 @@ async function main() {
     await h.reverts(governor, dave, 'burn', [p.id], 0n, 'NoOrphanedStakes');
     assert.equal(await balance(governor), 1000n * unit);
     await h.send(governor, carol, 'unlockCoins');
+  });
+
+  test('Vote buckets preserve quorum boundaries, ties, replay guards and invalid-ballot retries', async () => {
+    const quorum = (await h.read(governor, 'quorum', [h.time - 1n]))[0];
+    const voters = h.users.slice(5, 11);
+    const weights = [5n, quorum - 5n, 3n, 2n, 1n, 1n];
+    const choices = [0, 1, 2, 0, 1, 2]; // Two ballots in each bucket.
+    const ballot = (id, support, nft) => [
+      id,
+      support,
+      '',
+      ethers.AbiCoder.defaultAbiCoder().encode(['uint256'], [nft]),
+    ];
+    // Transfer existing coins so the snapshot supply (and hence quorum) stays fixed.
+    for (const [i, voter] of voters.entries()) {
+      await h.send(coin, admin, 'transfer', [voter.address, weights[i] ** 2n]);
+      await h.send(coin, voter, 'delegate', [voter.address]);
+      await h.send(token, admin, 'approve', [voter.address, i + 1]);
+    }
+    await h.send(token, admin, 'approve', [voters[0].address, 7]);
+
+    const below = (await proposal('One vote below quorum')).id;
+    const exact = (await proposal('Exactly at quorum')).id;
+    const tied = (await proposal('Tied majority with quorum')).id;
+    h.time = (await h.read(governor, 'proposalSnapshot', [tied]))[0];
+    const method = 'castVoteWithReasonAndParams';
+    for (const invalid of [3, 255]) {
+      await h.reverts(
+        governor,
+        voters[0],
+        method,
+        ballot(exact, invalid, 1),
+        0n,
+        'InvalidVoteType'
+      );
+    }
+    assert.deepEqual(Array.from(await h.read(governor, 'proposalVotes', [exact])), [0n, 0n, 0n]);
+    assert.equal((await h.read(governor, 'hasVoted', [exact, voters[0].address]))[0], false);
+
+    for (const [id, count] of [
+      [below, 5],
+      [exact, 6],
+    ]) {
+      for (let i = 0; i < count; i++) {
+        await h.send(governor, voters[i], method, ballot(id, choices[i], i + 1));
+      }
+      const totals = await h.read(governor, 'proposalVotes', [id]);
+      const expected = [7n, quorum - 4n, id === below ? 3n : 4n];
+      assert.deepEqual(Array.from(totals), expected);
+      assert.deepEqual([totals.againstVotes, totals.forVotes, totals.abstainVotes], expected);
+    }
+    await h.reverts(governor, voters[0], method, ballot(exact, 1, 7), 0n, 'AlreadyCastVote');
+    await h.reverts(governor, voters[1], method, ballot(exact, 1, 1), 0n, 'AlreadyUsedNft');
+
+    // One For, one Against, and sufficient Abstain votes to reach quorum.
+    for (const [i, support] of [
+      [4, 1],
+      [5, 0],
+      [1, 2],
+      [0, 2],
+    ]) {
+      await h.send(governor, voters[i], method, ballot(tied, support, i + 1));
+    }
+    h.time = (await h.read(governor, 'proposalDeadline', [tied]))[0] + 1n;
+    assert.equal((await h.read(governor, 'state', [below]))[0], 3n); // Defeated
+    assert.equal((await h.read(governor, 'state', [exact]))[0], 4n); // Succeeded
+    assert.equal((await h.read(governor, 'state', [tied]))[0], 3n); // Defeated
   });
 
   test('Deadline boundary, no-quorum defeat, voting replay, and lock bounds remain enforced', async () => {

@@ -31,9 +31,7 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
     /// - `hasVoted[address]` prevents multiple ballots per address for that proposal.
     /// - `nftUsed[tokenId]` prevents using the same NFT tokenId more than once for that proposal.
     struct ProposalVote {
-        uint256 againstVotes;
-        uint256 forVotes;
-        uint256 abstainVotes;
+        uint256[3] totals; // Indexed in VoteType order.
         mapping(address => bool) hasVoted;
         mapping(uint256 => bool) nftUsed; 
     }
@@ -287,16 +285,8 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
         uint256 finalWeight = Math.sqrt(weight);
 
         // 4. TALLY
-        // Tally the quadratic weight into the per-proposal buckets.
-        if (support == uint8(VoteType.Against)) {
-            proposalVote.againstVotes += finalWeight;
-        } else if (support == uint8(VoteType.For)) {
-            proposalVote.forVotes += finalWeight;
-        } else if (support == uint8(VoteType.Abstain)) {
-            proposalVote.abstainVotes += finalWeight;
-        } else {
-            revert InvalidVoteType();
-        }
+        if (support >= proposalVote.totals.length) revert InvalidVoteType();
+        proposalVote.totals[support] += finalWeight;
 
         return finalWeight;
     }
@@ -312,15 +302,15 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
 
     /// @dev Proposal passes if ForVotes > AgainstVotes (Abstain does not affect success).
     function _voteSucceeded(uint256 proposalId) internal view virtual override returns (bool) {
-        ProposalVote storage proposalVote = _proposalVotes[proposalId];
-        return proposalVote.forVotes > proposalVote.againstVotes;
+        uint256[3] storage totals = _proposalVotes[proposalId].totals;
+        return totals[uint8(VoteType.For)] > totals[uint8(VoteType.Against)];
     }
 
     /// @dev Quorum checks participation as (For + Abstain) against the snapshot quorum.
     /// @notice Treats abstentions as participation for quorum purposes.
     function _quorumReached(uint256 proposalId) internal view virtual override returns (bool) {
-        ProposalVote storage proposalVote = _proposalVotes[proposalId];
-        uint256 participationVotes = proposalVote.forVotes + proposalVote.abstainVotes;
+        uint256[3] storage totals = _proposalVotes[proposalId].totals;
+        uint256 participationVotes = totals[uint8(VoteType.For)] + totals[uint8(VoteType.Abstain)];
         return participationVotes >= quorum(proposalSnapshot(proposalId));
     }
 
@@ -331,8 +321,12 @@ contract DigilGovernor is Governor, GovernorStorage, GovernorVotes, GovernorTime
 
     /// @notice Returns current tallies for a proposal (Against, For, Abstain).
     function proposalVotes(uint256 proposalId) external view virtual returns (uint256 againstVotes, uint256 forVotes, uint256 abstainVotes) {
-        ProposalVote storage proposalVote = _proposalVotes[proposalId];
-        return (proposalVote.againstVotes, proposalVote.forVotes, proposalVote.abstainVotes);
+        uint256[3] storage totals = _proposalVotes[proposalId].totals;
+        return (
+            totals[uint8(VoteType.Against)],
+            totals[uint8(VoteType.For)],
+            totals[uint8(VoteType.Abstain)]
+        );
     }
 
     /// @notice Declares this Governor’s counting configuration for off-chain tooling.

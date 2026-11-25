@@ -719,6 +719,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         revert InsufficientFunds(required);
     }
 
+    /// @dev Credits an exact ETH fee in full to the protocol's pending distribution.
+    function _collectProtocolEthFee(uint256 required) private {
+        if (msg.value != required) _revertInsufficientFunds(required);
+        _addValue(required);
+    }
+
     /// @dev    Internal helper that adds native value to the contract’s own pending distribution bucket.
     /// @param  value The amount of Ether (in wei) to add.
     function _addValue(uint256 value) internal {
@@ -924,13 +930,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(_blacklisted[account] != optOut, "DIGIL: No Change");
         require(account != owner(), "DIGIL: Owner Cannot Opt Out");
 
-        // Calculate required minimum funds for opting in/out.
-        // This ties the opt decision to the current economic scale of the system.
-        uint256 required = _incrementalValue * _coinRate / _coinMultiplier;        
-        if (msg.value != required) _revertInsufficientFunds(required);
-        
-        // Add the sent value to the contract’s distribution (not to any specific token).
-        _addValue(required);
+        _collectProtocolEthFee(_incrementalValue * _coinRate / _coinMultiplier);
 
         // Update the accounts blacklist status.
         _blacklisted[account] = optOut;
@@ -995,11 +995,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Penalty: require one incremental unit of ETH.
         // Use the greater of the token's incrementalValue or the global minimum
-        uint256 required = _max(t.incrementalValue, _incrementalValue);
-        if (msg.value != required) _revertInsufficientFunds(required);
-
-        // Route the penalty into the system’s value pool.
-        _addValue(required);
+        _collectProtocolEthFee(_max(t.incrementalValue, _incrementalValue));
 
         TokenContribution storage c = t.contributions[addr];
         _touchContribution(t, c);
@@ -2679,14 +2675,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             uint256 e = efficiency > linkScale ? efficiency - linkScale : 0;
             scale = uint256(efficiency) + (e * (e + 1) / 2);
         }
-        cost = scale * _coinRate;
-
-        // Apply buff discount first
-        if (buffBonus > 0) {
-            uint256 denominator;
-            unchecked { denominator = 100 + uint256(buffBonus); } // A uint8 bonus makes this at most 355.
-            cost = cost * 100 / denominator;
-        }
+        cost = _applyBuffDiscount(scale * _coinRate, buffBonus);
 
         if (isNewLink && linkCount <= 2) {
             // Discount applies only when this new link leaves the token with
@@ -2694,6 +2683,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             // counts toward that total.
             cost = cost / AFFINITY_REDUCTION;
         }
+    }
+
+    /// @dev Applies the active buff's price reduction, rounded down in coin units.
+    function _applyBuffDiscount(uint256 cost, uint8 bonus) private pure returns (uint256) {
+        if (bonus == 0) return cost;
+        return cost * 100 / (100 + uint256(bonus));
     }
 
     /// @notice Links two tokens together to facilitate coin generation or transfers.
@@ -3229,14 +3224,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint256 floor = 10 * _coinRate;
         uint256 calculatedCost = ac / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
         
-        uint256 cost = _max(calculatedCost, floor);
-
-        // Apply Discount if Buff is active
-        uint8 bonus = _activeBuffBonus(t);
-        if (bonus > 0) {
-            // Active buffs reduce stabilization cost: cost *= 100 / (100 + bonus).
-            cost = cost * 100 / (100 + uint256(bonus));
-        }
+        uint256 cost = _applyBuffDiscount(_max(calculatedCost, floor), _activeBuffBonus(t));
 
         // Transfer Coins from the user to the contract
         _coinsFromSender(cost);
@@ -3281,10 +3269,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Premium cost: 2x the normal ETH-per-coin-unit rate.
         // `coins` is in "coin units" (scaled by _coinMultiplier), so we normalize by _coinMultiplier.
         uint256 required = (iv * coins * AFFINITY_BOOST) / _coinMultiplier;
-        if (msg.value != required) _revertInsufficientFunds(required);
-
-        // Required ETH becomes contract-level value / system fuel.
-        _addValue(required);
+        _collectProtocolEthFee(required);
 
         // Grant raw activeCharge to the token.
         _addActiveCharge(tokenId, t, coins);

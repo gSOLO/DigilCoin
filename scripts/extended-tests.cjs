@@ -338,7 +338,15 @@ async function main() {
       0n,
       'duplicate batch rolls back its earlier claim'
     );
-    await h.send(coin, alice, 'claimMany', [[0, 1]]);
+    const paid = await h.send(coin, alice, 'claimMany', [[0, 1]]);
+    const claims = h.events(coin, paid, 'Claim');
+    assert.deepEqual(
+      claims.map((event) => [event.epochId, event.amount]),
+      [
+        [0n, first],
+        [1n, second],
+      ]
+    );
     assert.equal((await h.read(coin, 'totalClaimedEth'))[0], first + second);
     assert.equal((await h.read(coin, 'totalDonatedEth'))[0], first + second);
     assert.equal(await ethBalance(coin.address), 0n);
