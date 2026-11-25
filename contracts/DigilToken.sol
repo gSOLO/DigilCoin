@@ -25,6 +25,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private immutable _coinMultiplier;  // Multiplier based on the ERC20 token's decimals to handle calculations correctly
     
     // Coin rate and bonus rate
+    uint256 private _coinRate;                                  // Mutable coin rate for various operations, set by the owner
     uint256 private constant BONUS_RATE_DIVISOR = 100;          // Divisor for calculating bonus coins when value is added
     uint256 private constant MIN_COIN_RATE = 10;                // The minimum coin rate for operations
     uint256 private constant MAX_COIN_RATE = 1000000000;        // The maximum coin rate for operations
@@ -34,9 +35,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     uint256 private constant BONUS_INTERVAL = 15 minutes;       // Collector-yield interval. Each full interval earns 1% of the checkpoint cap; yield saturates at the cap until the next checkpoint.
     uint256 private constant VALUE_MULTIPLIER = 1000 gwei;      // A base unit to simplify setting minimum value
 
-    // Economic configuration used by new settlements and direct charges.
+    // Configuration values for incremental and transfer values
     uint256 private constant MAX_INCREMENTAL_VALUE = 1 ether;   // Upper bound on the global incremental value
-    PayoutRates private _payoutRates = PayoutRates(0, 100 * VALUE_MULTIPLIER, 95 * VALUE_MULTIPLIER);
+    uint256 private _incrementalValue = 100 * VALUE_MULTIPLIER; // Minimum incremental ETH value required for charging
+    uint256 private _transferValue = 95 * VALUE_MULTIPLIER;     // The portion of incremental value distributed to users
 
     // Planar token policy
     uint256 private constant PLANAR_MAX_ID = 18;                // Highest user-alignable plane ID.
@@ -60,7 +62,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     // Buff configuration
     uint256 private constant MAX_BUFF_BONUS = 100;               // Maximum temporary bonus
     uint256 private constant MAX_BUFF_DURATION_MIN = 7 * 24 * 60;// Maximum duration of buffs (7 days)
-    uint256 private constant LINK_BUFF_COST_FACTOR = 24 * 60;    // Minutes per pricing unit; 1440 means one magnitude-point-day per link costs _payoutRates.coinRate.
+    uint256 private constant LINK_BUFF_COST_FACTOR = 24 * 60;    // Minutes per pricing unit; 1440 means one magnitude-point-day per link costs _coinRate.
 
     // Mappings for token data, blacklisted addresses, distributions, and contract tokens
     mapping(uint256 => Token) private _tokens;                                      // Mapping from token ID to its detailed Token struct
@@ -128,12 +130,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         uint8 amplification;    // Incoming active-charge multiplier (percentage). 20 => +20% boost; 100 => +100% (double)
     }
 
-    struct PayoutRates {
-        uint256 coinRate;
-        uint256 incrementalValue;
-        uint256 transferValue;
-    }
-
     struct Token {
         // Core economic properties
         uint256 charge;             // Accumulated charge from direct contributions
@@ -174,8 +170,6 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Metadata
         string uri;                 // Token metadata URI
         bytes data;                 // Arbitrary data stored with the token
-
-        PayoutRates distributionRates; // Saved only while a multi-batch settlement is open.
     }
 
     // Counter for generating unique token IDs
@@ -308,7 +302,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     constructor(address initialOwner, address coins, uint256 coinDecimals) ERC721("Digital Sigils", "DIGILS") Ownable(initialOwner) {
         _coins = IDigilCoin(coins);
         _coinMultiplier = 10 ** coinDecimals;
-        _payoutRates.coinRate = 100 * _coinMultiplier;
+        _coinRate = 100 * _coinMultiplier;
         _coins.approve(address(this), type(uint256).max); // Approve this contract to spend its own coins for distributions.
         
         string memory baseURI = "https://api.digil.xyz/v1/tokens/";
@@ -455,10 +449,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         economic scale for the system:
     ///         - `coinRate` defines how many ERC20 Coins are minted / required
     ///           for key operations.
-    ///         - `_payoutRates.incrementalValue` defines the global minimum ETH-per-coin
+    ///         - `_incrementalValue` defines the global minimum ETH-per-coin
     ///           used by charging and other value-based flows and also acts as
     ///           a lower bound for per-token incrementalValue.
-    ///         - `_payoutRates.transferValue` defines what portion of the incremental
+    ///         - `_transferValue` defines what portion of the incremental
     ///           value is routed back to users vs. retained as a protocol fee.
     ///         - `_batchSize` controls how many contributors are processed per
     ///           transaction during batch activation / discharge.
@@ -473,11 +467,8 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///           between 1% and 10%.
     ///         - `batchSize` is outside the inclusive `[MIN_BATCH_SIZE, MAX_BATCH_SIZE]` range.
     ///
-    ///         Ongoing settlements keep their initial payout rates. The batch size
-    ///         remains adjustable between calls.
-    ///
     /// @param  coins             Base coin rate (unscaled), later multiplied by
-    ///                           `_coinMultiplier` to produce `_payoutRates.coinRate`. This
+    ///                           `_coinMultiplier` to produce `_coinRate`. This
     ///                           rate is used to:
     ///                           - Cap time-based bonus Coins in {withdraw}.
     ///                           - Price Token URI updates.
@@ -510,7 +501,9 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         uint256 coinRate = coins * _coinMultiplier;
         
-        _payoutRates = PayoutRates(coinRate, incrementalValue, transferValue);
+        _coinRate = coinRate;
+        _incrementalValue = incrementalValue;
+        _transferValue = transferValue;
         _batchSize = batchSize;
 
         emit Configure(coinRate, incrementalValue, transferValue, batchSize);
@@ -558,7 +551,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///      Only accounts with a nonzero eligible Digil balance accrue collector-yield.
     ///      A zero-balance account may still have its timer reset, but it does not earn
-    ///      the base `_payoutRates.coinRate` bonus.
+    ///      the base `_coinRate` bonus.
     ///
     ///      Welcome gifts are separate: only paid creation or vault wrapping qualifies.
     ///
@@ -583,7 +576,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             uint256 intervals = (nowTs - oldTime) / BONUS_INTERVAL;
 
             if (intervals != 0 && balance != 0) {
-                uint256 checkpointCap = _payoutRates.coinRate + (balance * _coinMultiplier / YIELD_PERIOD);
+                uint256 checkpointCap = _coinRate + (balance * _coinMultiplier / YIELD_PERIOD);
                 uint256 bonus = intervals * checkpointCap / BONUS_RATE_DIVISOR;
 
                 d.coins += bonus < checkpointCap ? bonus : checkpointCap;
@@ -614,7 +607,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///           no collector-yield is credited and that partial interval is
     ///           discarded because the timer is reset at checkpoint time.
     ///         - For each full `BONUS_INTERVAL`, the account accrues 1% of its
-    ///           checkpoint cap (`_payoutRates.coinRate + balance * _coinMultiplier / YIELD_PERIOD`).
+    ///           checkpoint cap (`_coinRate + balance * _coinMultiplier / YIELD_PERIOD`).
     ///         - Accrual saturates at the checkpoint cap for that checkpoint.
     ///         - `_checkpointYield` always resets the timer to `block.timestamp`,
     ///           even when no bonus is accrued (including zero-balance checkpoints).
@@ -752,19 +745,49 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         }
     }
 
-    /// @dev Credits the protocol fee to its value pool and the rest to the recipient.
-    ///      Calculates fees on the full ETH amount and awards DIGIL for whole increments.
-    /// @param addr Recipient to credit.
-    /// @param value Gross ETH amount in wei.
-    /// @param rates Current rates for active charging or the fixed rates for a settlement.
-    function _addDistributedValue(address addr, uint256 value, PayoutRates storage rates) internal {
-        uint256 incrementalValue = rates.incrementalValue;
+    /// @dev    Internal function that calculates and assigns distribution amounts between the contract and a specified address.
+    ///         It correctly calculates fees based on the entire value provided, preventing precision loss from integer division.
+    ///         Adds a percentage of the value to be distributed to the contract, and the rest to the address specified.
+    ///         Adds a number of bonus coins based on the value to be distributed to "reward" the contributor for contributing value to the contract.
+    ////         Example:
+    ///             If `_incrementalValue = 0.0001 ETH`, `_transferValue = 0.000095 ETH`,
+    ///             `_coinRate = 100 * _coinMultiplier`, and `value = 1 ETH`, then:
+    ///             - 5% (0.05 ETH) is added to the contract's distribution.
+    ///             - 95% (0.95 ETH) is added to `addr`'s distribution.
+    ///             - `value / _incrementalValue = 10,000` full increments are counted,
+    ///               so `10,000 * (_coinRate / BONUS_RATE_DIVISOR)` coin units are
+    ///               credited to `addr`.
+    /// @param  addr The address to credit the distribution.
+    /// @param  value The amount of native value (in wei) to add.
+    function _addDistributedValue(address addr, uint256 value) internal {
+        uint256 contractFee;
+        uint256 userValue;
+        uint256 bonusCoins;
+
         unchecked {
-            uint256 contractFee = value * (incrementalValue - rates.transferValue) / incrementalValue;
-            uint256 bonusCoins = (rates.coinRate / BONUS_RATE_DIVISOR) * (value / incrementalValue);
-            _addValue(contractFee);
-            _addValue(addr, value - contractFee, bonusCoins);
+
+            // 1. Calculate the contract's fee based on the total value.
+            // We multiply first to maintain precision before dividing.
+            // This correctly calculates the fee even if `value` is less than `_incrementalValue`.
+            // Formula: fee = value * ((_incrementalValue - _transferValue) / _incrementalValue)
+            contractFee = (value * (_incrementalValue - _transferValue)) / _incrementalValue;
+
+            // 2. Calculate the value that goes to the user.
+            // This is simply the original value minus the fee we just calculated.
+            userValue = value - contractFee;
+
+            // 3. Calculate bonus coins based on full `_incrementalValue` steps in the original `value`.
+            // Only complete increments earn rewards; partial increments are ignored by design.
+            bonusCoins = (_coinRate / BONUS_RATE_DIVISOR) * (value / _incrementalValue);
+
         }
+
+        // 4. Add the calculated amounts to their respective distributions.
+        // The contract gets its fee.
+        _addValue(contractFee);
+
+        // The user gets the remaining value and any bonus coins.
+        _addValue(addr, userValue, bonusCoins);
     }
 
     /// @dev    Internal function that adds value to a token.
@@ -907,7 +930,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(_blacklisted[account] != optOut, "DIGIL: No Change");
         require(account != owner(), "DIGIL: Owner Cannot Opt Out");
 
-        _collectProtocolEthFee(_payoutRates.incrementalValue * _payoutRates.coinRate / _coinMultiplier);
+        _collectProtocolEthFee(_incrementalValue * _coinRate / _coinMultiplier);
 
         // Update the accounts blacklist status.
         _blacklisted[account] = optOut;
@@ -931,7 +954,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///         Penalty:
     ///         - The caller must send one unit of "penalty" value:
-    ///               required = max(token.incrementalValue, _payoutRates.incrementalValue)
+    ///               required = max(token.incrementalValue, _incrementalValue)
     ///           If `msg.value` is not exactly this value, the call reverts with
     ///           {InsufficientFunds}.
     ///         - The penalty is added to the protocol’s value pool via {_addValue}
@@ -972,7 +995,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Penalty: require one incremental unit of ETH.
         // Use the greater of the token's incrementalValue or the global minimum
-        _collectProtocolEthFee(_max(t.incrementalValue, _payoutRates.incrementalValue));
+        _collectProtocolEthFee(_max(t.incrementalValue, _incrementalValue));
 
         TokenContribution storage c = t.contributions[addr];
         _touchContribution(t, c);
@@ -1043,7 +1066,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///  2) The depositor calls this function to finalize the vault:
     ///     - Requires the caller is the recorded depositor.
     ///     - Requires the caller is not opted out (blacklisted).
-    ///     - Charges a Coin vault fee (`vaultFee = _payoutRates.coinRate * 10`) from the caller.
+    ///     - Charges a Coin vault fee (`vaultFee = _coinRate * 10`) from the caller.
     ///       This nonrefundable fee earns donor-reward points when the spender weight is enabled.
     ///     - Grants the caller's one-time paid-creation welcome gift if not previously claimed.
     ///     - Marks the external token as fully vaulted:
@@ -1095,12 +1118,12 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Transfer rights to the contract (mark as permanently vaulted)
         vaulters[externalTokenId] = address(this);
 
-        uint256 vaultFee = _payoutRates.coinRate * 10;
+        uint256 vaultFee = _coinRate * 10;
         _coinsFromSender(vaultFee);
 
         require(IERC721(account).ownerOf(externalTokenId) == address(this), "DIGIL: Contract Token Not Received");
 
-        uint256 tokenId = _createToken(user, _payoutRates.incrementalValue, 0, data);
+        uint256 tokenId = _createToken(user, _incrementalValue, 0, data);
         _contractTokens[account][tokenId].tokenId = externalTokenId;
         // Reverse index used by recall lookup.
         _vaultedTokenIds[account][externalTokenId] = tokenId;
@@ -1501,7 +1524,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     /// @param  incrementalValue The incremental value (in wei) required with each coin used for charging.
     ///                          Must be 0 or at least the global minimum incremental value.
-    ///                          Creation always requires at least the global floor (`_payoutRates.incrementalValue`).
+    ///                          Creation always requires at least the global floor (`_incrementalValue`).
     ///                          If `restricted == true` and this value is higher than the global floor,
     ///                          creation requires at least this higher value; otherwise unrestricted
     ///                          creation keeps the global floor minimum even when this value is higher.
@@ -1517,17 +1540,17 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function createToken(uint256 incrementalValue, uint256 activationThreshold, bool restricted, uint256 plane, bytes memory data) external payable returns(uint256) {
         // 1. INPUT VALIDATION
         // Ensure if they set a value, it isn't below the global floor (unless it's 0).
-        if (incrementalValue > 0 && incrementalValue < _payoutRates.incrementalValue) {
+        if (incrementalValue > 0 && incrementalValue < _incrementalValue) {
             // Use a short string or custom error to save bytes
             revert("DIGIL: Invalid Incremental Value");
         }
 
         // 2. CALCULATE DEPOSIT REQUIREMENT
         // Start with the Global Floor (Sybil Defense)
-        uint256 required = _payoutRates.incrementalValue;
+        uint256 required = _incrementalValue;
 
         // If Restricted, we must match the Token's Incremental Value if it is higher than the floor.
-        // This preserves your original logic: max(incrementalValue, _payoutRates.incrementalValue)
+        // This preserves your original logic: max(incrementalValue, _incrementalValue)
         if (restricted && incrementalValue > required) {
             required = incrementalValue;
         }
@@ -1568,7 +1591,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 tier = 1;
             }
             if (tier != 0) {
-                _coinsFromSender(tier * _payoutRates.coinRate);
+                _coinsFromSender(tier * _coinRate);
             }
 
             // Record the plane link as the immutable foundational plane (index 0 in links[]).
@@ -1647,7 +1670,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
                 // Switching into restricted mode requires paying at least the higher
                 // of token.incrementalValue or the global minimum.
-                uint256 required = _max(t.incrementalValue, _payoutRates.incrementalValue);
+                uint256 required = _max(t.incrementalValue, _incrementalValue);
                 if (value < required) _revertInsufficientFunds(required);
 
                 emit Restrict(tokenId);
@@ -1692,11 +1715,11 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     ///         Incremental value rules:
     ///         - `incrementalValue` may be 0 (meaning “use global minimum where applicable”),
-    ///           otherwise it must be >= `_payoutRates.incrementalValue`.
+    ///           otherwise it must be >= `_incrementalValue`.
     ///
     ///         URI / Data update fees:
-    ///         - Updating `uri` (non-empty string) charges `1000 * _payoutRates.coinRate` coins.
-    ///         - Updating `data` (non-empty bytes) charges `1000 * _payoutRates.coinRate` coins.
+    ///         - Updating `uri` (non-empty string) charges `1000 * _coinRate` coins.
+    ///         - Updating `data` (non-empty bytes) charges `1000 * _coinRate` coins.
     ///           If both are updated in the same call, both fees are charged.
     ///         - For planar tokens (IDs 0..PLANAR_TRANSFER_MAX_ID), `data` must have length
     ///           >= 5 to preserve planar affinity encoding.
@@ -1704,7 +1727,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         ETH requirement:
     ///         - If neither `uri` nor `data` is updated (both empty), required ETH is exactly 0.
     ///         - If either `uri` or `data` is updated, the call must send exactly:
-    ///               minimumValue = max(t.incrementalValue, incrementalValue, _payoutRates.incrementalValue)
+    ///               minimumValue = max(t.incrementalValue, incrementalValue, _incrementalValue)
     ///           The required ETH is routed into the protocol value pool via {_addValue}
     ///           rather than being stored directly on the token.
     ///
@@ -1716,7 +1739,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///
     /// @param  tokenId The ID of the Token to update.
     /// @param  incrementalValue New incremental value (wei) required per `_coinMultiplier` of charge.
-    ///                          Must be 0 or >= `_payoutRates.incrementalValue` (and must be 0 for planar tokens).
+    ///                          Must be 0 or >= `_incrementalValue` (and must be 0 for planar tokens).
     /// @param  activationThreshold New activation threshold in coin units (must be 0 for planar tokens).
     /// @param  data New token data (applied only if `data.length > 0`).
     /// @param  uri New token URI (applied only if `bytes(uri).length > 0`).
@@ -1737,13 +1760,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Require minimum incremental value
         if (incrementalValue > 0) {
-            require(incrementalValue >= _payoutRates.incrementalValue, "DIGIL: Invalid Incremental Value");
+            require(incrementalValue >= _incrementalValue, "DIGIL: Invalid Incremental Value");
         }
 
         bool overwriteUri = bytes(uri).length > 0;
         if (overwriteUri) {
             // Updating the URI requires a coin fee to ensure token integrity.
-            _coinsFromSender(_payoutRates.coinRate * 1000);
+            _coinsFromSender(_coinRate * 1000);
         }
 
         bool overwriteData = data.length > 0;
@@ -1753,14 +1776,14 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 require(data.length >= 5, "DIGIL: Invalid Data Length");
             }
             // Updating data requires a coin fee to preserve the token's original intention.
-            _coinsFromSender(_payoutRates.coinRate * 1000);
+            _coinsFromSender(_coinRate * 1000);
         }
 
         // Calculate the minimum required Ether value based on whether data or URI is updated.
         uint256 minimumValue = 0;
         if (overwriteData || overwriteUri) {
-            // base = max(old, new, _payoutRates.incrementalValue)
-            minimumValue = _max(t.incrementalValue, _max(incrementalValue, _payoutRates.incrementalValue));
+            // base = max(old, new, _incrementalValue)
+            minimumValue = _max(t.incrementalValue, _max(incrementalValue, _incrementalValue));
         }
         if (msg.value != minimumValue) _revertInsufficientFunds(minimumValue);
 
@@ -1929,7 +1952,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
 
         // Any remaining value is added to the owner's pending distribution.
         if (value > 0) {
-            _addDistributedValue(ownerOf(tokenId), value, _payoutRates);
+            _addDistributedValue(ownerOf(tokenId), value);
         }
     }
 
@@ -1973,7 +1996,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Proxy contributions require a value contribution
         if (!link && contributor != _msgSender()) {
             // Determine the minimum required value for a proxy contribution.
-            uint256 requiredValue = _max(t.incrementalValue, _payoutRates.incrementalValue);
+            uint256 requiredValue = _max(t.incrementalValue, _incrementalValue);
 
             // For direct proxy calls, we revert if funds are insufficient.
             if (value < requiredValue) _revertInsufficientFunds(requiredValue);
@@ -2121,14 +2144,13 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// High-level behavior (post-Fusaka optimized version):
     /// - Captures the full remaining `charge` and `value` into `distributionCharge`
     ///   and `distributionValue` **once per cycle** (on the very first call).
-    /// - Fixes payout rates and keeper eligibility at bootstrap. The configured batch size remains live.
-    ///   Every progressing batch in a multi-batch settlement earns a keeper reward, including the last.
+    /// - Fixes multi-batch keeper eligibility at bootstrap and pays every progressing batch, including the last.
     ///   Activation rewards use only directly deposited DIGIL; discharge rewards use its reserved ETH fee.
-    /// - Processes contributors up to the current batch size using cached storage
+    /// - Processes contributors in fixed-size batches using cached storage
     ///   references for the contributors array and contribution mapping.
-    /// - Activation and active discharge: pay proportional value to each contributor and
+    /// - Activation path: pays proportional value to each contributor and
     ///   accumulates the remainder for the final owner distribution.
-    /// - Inactive discharge: returns the contributor’s full recorded value and
+    /// - Discharge path: returns the contributor’s full recorded value and
     ///   discharge coins.
     /// - Uses `distributionIndex` as a persistent cursor so the operation can
     ///   safely span multiple transactions.
@@ -2146,20 +2168,18 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     function _distribute(uint256 tokenId, bool discharge) internal returns (bool completed) {
         Token storage t = _tokens[tokenId];
 
-        uint256 distributionIndex = t.distributionIndex;
-        bool continuing = distributionIndex != 0;
-        PayoutRates storage rates = _payoutRates;
-
-        if (!continuing) {
+        // Snapshot once; continuation calls cannot change reward eligibility.
+        if (t.distributionIndex == 0) {
             t.distributionCharge = t.charge;
             t.charge = 0;
             t.distributionValue = t.value;
             t.keeperEligible = t.contributors.length > _batchSize;
-            // A single-batch settlement uses the live rates within this call.
-            if (t.keeperEligible) t.distributionRates = _payoutRates;
-        } else {
-            rates = t.distributionRates;
         }
+
+        // Cache expensive external call once
+        address tokenOwner = ownerOf(tokenId);
+
+        uint256 distributionIndex = t.distributionIndex;
         uint256 contributorsCount = t.contributors.length;
 
         uint256 ownerDistributionAmount;
@@ -2174,16 +2194,16 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                 incrementalValuePerCharge = (t.distributionValue * _coinMultiplier) / t.distributionCharge;
             }
             uint256 batchVolume;
-            (ownerDistributionAmount, batchVolume) = _processBatch(
-                t, distributionIndex, count, incrementalValuePerCharge, discharge, rates
-            );
+            (ownerDistributionAmount, batchVolume) = _processBatch(t, distributionIndex, count, incrementalValuePerCharge, discharge);
             // Credit the final batch too, before any cycle state is cleared.
             _rewardBatch(t, distributionIndex, count, batchVolume);
             unchecked { distributionIndex += count; } // count is capped at contributorsCount - distributionIndex.
         }
-        completed = distributionIndex == contributorsCount;
-        if (completed) {
-            // Reset the settlement state. The rates are cleared after the owner is credited.
+        t.distributionIndex = distributionIndex;
+
+        // === FINAL BATCH COMPLETED? ===
+        if (distributionIndex >= contributorsCount) {
+            // Reset all batch state
             t.distributionIndex = 0;
             uint256 capturedCharge = t.distributionCharge;
             t.distributionCharge = 0;
@@ -2191,10 +2211,16 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             t.keeperBudget = 0;
             t.keeperEligible = false;
 
-            ownerDistributionAmount += t.value;
+            uint256 remainingTokenValue = t.value;
             t.value = 0;
-            if (!discharge && capturedCharge > 0) {
-                _addActiveCharge(tokenId, t, capturedCharge);
+
+            if (discharge) {
+                _addDistributedValue(tokenOwner, remainingTokenValue);
+            } else {
+                if (capturedCharge > 0) {
+                    _addActiveCharge(tokenId, t, capturedCharge);
+                }
+                _addDistributedValue(tokenOwner, ownerDistributionAmount + remainingTokenValue);
             }
 
             // Contract-token recallable logic
@@ -2204,15 +2230,19 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     ct.recallable = (t.active || t.activating);
                 }
             }
-        } else {
-            t.distributionIndex = distributionIndex;
-            emit Batch(tokenId);
+
+            return true;   // cycle complete
         }
 
-        if (ownerDistributionAmount != 0) {
-            _addDistributedValue(ownerOf(tokenId), ownerDistributionAmount, rates);
+        // Partial progress (activation path only)
+        if (!discharge && ownerDistributionAmount > 0) {
+            _addDistributedValue(tokenOwner, ownerDistributionAmount);
         }
-        if (completed && continuing) delete t.distributionRates;
+
+        // Emit the batch progress event
+        emit Batch(tokenId);
+
+        return false;   // more calls needed
     }
 
     /// @dev Discharge uses a reserved ETH fee; activation uses committed direct deposits.
@@ -2236,18 +2266,10 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     /// @param toProcess Number of contributors to process in this batch.
     /// @param incrementalValuePerCharge Value per coin unit (activation path only).
     /// @param discharge True = discharge mode, false = activation mode.
-    /// @param rates Economic rates fixed for this settlement.
     /// @return ownerDistributionAmount Total value accumulated for the token owner
     ///                                 in activation mode; always 0 in discharge mode.
     /// @return batchVolume Actual directly deposited DIGIL committed by this batch (activation only).
-    function _processBatch(
-        Token storage t,
-        uint256 startIndex,
-        uint256 toProcess,
-        uint256 incrementalValuePerCharge,
-        bool discharge,
-        PayoutRates storage rates
-    ) private returns (uint256 ownerDistributionAmount, uint256 batchVolume) {
+    function _processBatch(Token storage t, uint256 startIndex, uint256 toProcess, uint256 incrementalValuePerCharge, bool discharge) private returns (uint256 ownerDistributionAmount, uint256 batchVolume) {
         // Cache both storage references once at the function entry.
         // This eliminates repeated slot derivations inside the hot loop.
         address[] storage contributors = t.contributors;
@@ -2288,7 +2310,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
                     batchVolume += contribution.fundedCoins;
                 }
 
-                _addDistributedValue(contributor, distributableValue, rates);
+                _addDistributedValue(contributor, distributableValue);
             }
         }
 
@@ -2330,7 +2352,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         Fee behavior:
     ///         - On the first call only, the caller must provide exactly the required
     ///           amount of ETH proportional to the token’s complexity:
-    ///               required = max(_payoutRates.incrementalValue, token.incrementalValue)
+    ///               required = max(_incrementalValue, token.incrementalValue)
     ///                          × max(1, links.length)
     ///           If `msg.value` is not exactly this amount, the call reverts.
     ///         - Subsequent calls in the same discharge cycle must send exactly 0 ETH.
@@ -2406,7 +2428,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         if (!t.discharging) {
             // Determine the required minimum value for discharge, scaled by number of links.
             // This scales the "fee" with the complexity of the token's graph.
-            uint256 required = _max(t.incrementalValue, _payoutRates.incrementalValue) * _max(t.links.length, 1);
+            uint256 required = _max(t.incrementalValue, _incrementalValue) * _max(t.links.length, 1);
             if (msg.value != required) _revertInsufficientFunds(required);
             // Reserve the fixed keeper share before crediting the protocol pool.
             if (t.contributors.length > _batchSize) t.keeperBudget = msg.value / 10;
@@ -2651,7 +2673,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
             uint256 e = efficiency > linkScale ? efficiency - linkScale : 0;
             scale = uint256(efficiency) + (e * (e + 1) / 2);
         }
-        cost = _applyBuffDiscount(scale * _payoutRates.coinRate, buffBonus);
+        cost = _applyBuffDiscount(scale * _coinRate, buffBonus);
 
         if (isNewLink && linkCount <= 2) {
             // Discount applies only when this new link leaves the token with
@@ -2793,20 +2815,20 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - duration: duration in whole minutes
     ///         - linkCount: number of affected links
     ///         Uses the calibrated cost model:
-    ///             cost ≈ bonus * duration * linkCount * _payoutRates.coinRate / LINK_BUFF_COST_FACTOR
-    ///         and enforces a minimum cost of `_payoutRates.coinRate`, so tiny buffs are never effectively free.
+    ///             cost ≈ bonus * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR
+    ///         and enforces a minimum cost of `_coinRate`, so tiny buffs are never effectively free.
     /// @param  bonus The temporary buff bonus (0–100).
     /// @param  duration The duration in minutes.
     /// @param  linkCount The number of outgoing links affected.
     /// @return cost The activeCharge cost in coin units.
     function _buffCost(uint256 bonus, uint256 duration, uint256 linkCount) internal view returns (uint256 cost) {
         unchecked {
-            cost = bonus * duration * linkCount * _payoutRates.coinRate / LINK_BUFF_COST_FACTOR;
+            cost = bonus * duration * linkCount * _coinRate / LINK_BUFF_COST_FACTOR;
         }
 
-        // Enforce "minimum cost = _payoutRates.coinRate" rule for any buff.
-        if (cost < _payoutRates.coinRate) {
-            cost = _payoutRates.coinRate;
+        // Enforce "minimum cost = _coinRate" rule for any buff.
+        if (cost < _coinRate) {
+            cost = _coinRate;
         }
     }
 
@@ -3019,7 +3041,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///         - Cost uses {_buffCost(magnitude, duration, linkCount)} where:
     ///             * duration is in minutes
     ///             * linkCount is `max(1, t.links.length)`
-    ///             * minimum cost is `_payoutRates.coinRate` (so non-zero buffs are never free)
+    ///             * minimum cost is `_coinRate` (so non-zero buffs are never free)
     ///
     ///         Flag rules:
     ///         - Callers cannot set STABILIZED or PRIMED via this function (they are masked off).
@@ -3197,7 +3219,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         // Bleed is 50% (ac / 2). We set insurance cost to 25% (ac / 4).
         // This makes paying the fee mathematically rational.
         // We enforce a minimum floor of 10 * coinRate to prevent dust spam.
-        uint256 floor = 10 * _payoutRates.coinRate;
+        uint256 floor = 10 * _coinRate;
         uint256 calculatedCost = ac / (AFFINITY_REDUCTION * AFFINITY_REDUCTION);
         
         uint256 cost = _applyBuffDiscount(_max(calculatedCost, floor), _activeBuffBonus(t));
@@ -3224,7 +3246,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
     ///           contract’s own distribution via {_addValue}.
     ///
     ///         The cost per `_coinMultiplier` units of `coins` is:
-    ///             cost = 2x * max(token.incrementalValue, _payoutRates.incrementalValue)
+    ///             cost = 2x * max(token.incrementalValue, _incrementalValue)
     ///
     ///         where `2x` is provided by the AFFINITY_BOOST constant.
     ///
@@ -3240,7 +3262,7 @@ contract DigilToken is ERC721, Ownable, IERC721Receiver, ReentrancyGuard {
         require(t.active, "DIGIL: Token Not Active");
 
         // Use the greater of the token's incremental value or the global minimum.
-        uint256 iv = _max(t.incrementalValue, _payoutRates.incrementalValue);
+        uint256 iv = _max(t.incrementalValue, _incrementalValue);
 
         // Premium cost: 2x the normal ETH-per-coin-unit rate.
         // `coins` is in "coin units" (scaled by _coinMultiplier), so we normalize by _coinMultiplier.

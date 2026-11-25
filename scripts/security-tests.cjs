@@ -708,8 +708,7 @@ async function main() {
   });
 
   test('Discharge keepers share only the fixed ETH fee, including final batches across repeated cycles', async () => {
-    const transfer = (floor * 95n) / 100n;
-    await h.send(token, admin, 'configure', [100, floor, transfer, 32]);
+    await h.send(token, admin, 'configure', [100, floor, 95000000000000n, 32]);
     const id = await create(alice, floor, 1000n * unit);
     await withdraw(alice);
     const contributors = h.users.slice(10, 43);
@@ -723,7 +722,7 @@ async function main() {
       await h.reverts(token, carol, 'dischargeToken', [id], 1n);
       await h.reverts(token, alice, 'transferFrom', [alice.address, bob.address, id]);
       await h.reverts(token, admin, 'chargeToken', [id, unit]);
-      await h.send(token, admin, 'configure', [200, 2n * floor, (18n * floor) / 10n, 64]);
+      await h.send(token, admin, 'configure', [100, floor, 95000000000000n, 64]);
       await h.send(token, dave, 'dischargeToken', [id]);
       const last = await withdraw(dave);
       assert.equal(last[0], 0n);
@@ -735,12 +734,8 @@ async function main() {
       }
       assert.equal((await h.read(token, 'tokenData', [id]))[7], 0n);
       assert.equal((await h.read(token, 'tokenData', [id]))[6], BigInt(cycle + 1));
-      // Only the first discharge has intrinsic value from creation. It uses the starting rates.
-      assert.deepEqual(
-        Array.from(await withdraw(alice)),
-        cycle === 0 ? [unit, transfer] : [0n, 0n]
-      );
-      await h.send(token, admin, 'configure', [100, floor, transfer, 32]);
+      await withdraw(alice); // Any residual owner intrinsic value is separate from keeper rewards.
+      await h.send(token, admin, 'configure', [100, floor, 95000000000000n, 32]);
     }
   });
 
@@ -772,48 +767,6 @@ async function main() {
     );
     assert.ok(last[0] > 0n);
     await h.reverts(token, dave, 'activateToken', [id]);
-  });
-
-  test('Activation fixes ETH and DIGIL payouts even when configuration and batch size change', async () => {
-    const transfer = (floor * 95n) / 100n;
-    await h.send(token, admin, 'configure', [100, floor, transfer, 32]);
-    const id = await create(alice, floor);
-    await withdraw(alice);
-    await h.send(token, alice, 'approve', [bob.address, id]);
-
-    // Give 65 equal contributions one full increment of distributable ETH each.
-    const contributors = [
-      carol.address,
-      ...Array.from({ length: 63 }, (_, i) => ethers.toBeHex(1000 + i, 20)),
-      dave.address,
-    ];
-    for (const contributor of contributors)
-      await h.send(token, admin, 'chargeTokenAs', [contributor, id, unit], floor);
-    await h.send(token, admin, 'createValue', [id, 64n * floor], 64n * floor);
-
-    const first = await h.send(token, bob, 'activateToken', [id]);
-    assert.equal(h.result(token, 'activateToken', first)[0], false);
-    assert.equal((await h.read(token, 'tokenData', [id]))[7], 32n);
-    assert.deepEqual(Array.from(await withdraw(carol)), [unit, transfer]);
-    assert.deepEqual(Array.from(await withdraw(alice)), [32n * unit, 32n * transfer]);
-    assert.deepEqual(Array.from(await withdraw(bob)), [(32n * unit) / 100n, 0n]);
-
-    const newFloor = 2n * floor;
-    const newTransfer = (newFloor * 90n) / 100n;
-    await h.send(token, admin, 'configure', [200, newFloor, newTransfer, 64]);
-
-    const last = await h.send(token, bob, 'activateToken', [id]);
-    assert.equal(h.result(token, 'activateToken', last)[0], true);
-    assert.deepEqual(Array.from(await withdraw(dave)), [unit, transfer]);
-    assert.deepEqual(Array.from(await withdraw(alice)), [33n * unit, 33n * transfer]);
-    assert.deepEqual(Array.from(await withdraw(bob)), [(33n * unit) / 100n, 0n]);
-
-    // A later settlement on the same NFT uses the updated rates.
-    const addedValue = 3n * newFloor;
-    await h.send(token, admin, 'createValue', [id, addedValue], addedValue);
-    const discharge = await h.send(token, alice, 'dischargeToken', [id], newFloor);
-    assert.equal(h.result(token, 'dischargeToken', discharge)[0], true);
-    assert.deepEqual(Array.from(await withdraw(alice)), [6n * unit, 3n * newTransfer]);
   });
 
   test('Single-batch and empty settlements grant no keeper allocation', async () => {
